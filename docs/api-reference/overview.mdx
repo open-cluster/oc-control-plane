@@ -70,6 +70,13 @@ and Relay gRPC traffic are not part of the product OpenAPI surface.
 OSS v0.1 is pre-release. Use the OpenAPI document shipped with the exact source or release
 you deploy; do not assume compatibility from a `latest` URL.
 
+Investigation and Conversation turn statuses are `queued`, `running`, `concluded`,
+`failed`, and `cancelled`. This replaces the earlier `investigating` with `running` and
+maps `partial` and `needs_input` to `concluded`. Clients must read `conclusionStatus`,
+limitations, and `stoppedBy` for outcomes rather than interpreting lifecycle as certainty.
+Upgrade clients and server replicas together; mixed versions may return either status
+vocabulary during a rolling upgrade. No database migration is required for this change.
+
 ## Pagination
 
 Collection operations document a bounded `limit` and an opaque cursor such as `after` or

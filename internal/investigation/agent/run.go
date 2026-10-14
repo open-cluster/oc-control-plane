@@ -13,6 +13,10 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/seal"
+	observability "github.com/open-cluster/oc-control-plane/internal/telemetry"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Store interface {
@@ -70,6 +74,7 @@ var (
 )
 
 type runState struct {
+	startedAt    time.Time
 	organization uuid.UUID
 	opened       investigation.Investigation
 	offered      []offeredSource
@@ -134,6 +139,23 @@ func (r *Agent) Run(
 	organization uuid.UUID,
 	opened investigation.Investigation,
 ) error {
+	local := *r
+	local.Logger = r.Logger.With(
+		slog.String("org_id", organization.String()),
+		slog.String("investigation_id", opened.ID.String()))
+	if opened.IncidentID != uuid.Nil {
+		local.Logger = local.Logger.With(slog.String("incident_id", opened.IncidentID.String()))
+	}
+	if opened.ConversationID != uuid.Nil {
+		local.Logger = local.Logger.With(slog.String("conversation_id", opened.ConversationID.String()))
+	}
+	if r.telemetry != nil {
+		measured := *r.telemetry
+		measured.logger = local.Logger
+		local.telemetry = &measured
+	}
+	local.Logger = observability.LoggerFor(ctx, local.Logger, "")
+	r = &local
 
 	events := investigation.NewEventStream(
 		func(ctx context.Context, org uuid.UUID, id uuid.UUID, event investigation.Event) error {
@@ -141,8 +163,18 @@ func (r *Agent) Run(
 		}, r.RuntimeTelemetry, organization, opened.ID)
 
 	startedAt := time.Now()
+	failureOutcome := "execution_failed"
 	failRun := func(reason string, usage investigation.Usage) error {
-		return r.persistFailure(ctx, organization, opened.ID, opened.ClaimToken, reason, usage)
+		if err := r.persistFailure(ctx, organization, opened.ID, opened.ClaimToken, reason, usage); err != nil {
+			return err
+		}
+		trace.SpanFromContext(ctx).SetAttributes(attribute.String("oc.investigation.status", "failed"))
+		trace.SpanFromContext(ctx).SetStatus(codes.Error, "investigation execution failed")
+		r.Logger.ErrorContext(ctx, "investigation failed",
+			slog.String("error", "investigation execution failed"),
+			slog.String("failure_class", failureOutcome),
+			slog.Duration("duration", time.Since(startedAt)))
+		return nil
 	}
 
 	var origin *investigation.ConversationOrigin
@@ -184,6 +216,7 @@ func (r *Agent) Run(
 		}
 	}
 	state := &runState{
+		startedAt:    startedAt,
 		organization: organization,
 		opened:       opened,
 		offered:      offered,
@@ -400,6 +433,7 @@ func (r *Agent) Run(
 				"the answer was truncated or carried no usable call twice")
 		}
 		if err != nil {
+			failureOutcome = failureClass(err)
 			terminalErr := failRun(failureReason(err), state.usage)
 			r.RuntimeTelemetry.Ended(time.Since(startedAt), investigation.StatusFailed.String(), "")
 			return terminalErr
@@ -418,13 +452,7 @@ func (r *Agent) Run(
 				done()
 				return fmt.Errorf("recording investigation conclusion: %w", err)
 			}
-			r.Logger.Info("investigation concluded",
-				slog.String("investigation_id", opened.ID.String()),
-				slog.Int("turns", state.turns),
-				slog.Int("tool_runs", state.executed),
-				slog.String("stopped_by", stoppedBy),
-				slog.Int64("input_tokens", state.usage.InputTokens),
-				slog.Int64("output_tokens", state.usage.OutputTokens))
+			r.logConclusion(ctx, state, conclusion, stoppedBy)
 			done()
 			r.RuntimeTelemetry.Ended(time.Since(startedAt), investigation.StatusConcluded.String(), stoppedBy)
 			return nil
@@ -495,7 +523,11 @@ func (r *Agent) Run(
 					}
 					r.announce(ctx, events,
 						investigation.ToolCompletedPayload(run))
-					r.RuntimeTelemetry.RanTool(run)
+					canonical := "unknown"
+					if run.IntegrationID != uuid.Nil {
+						canonical = strings.TrimSuffix(call.Tool, "__"+strings.ReplaceAll(run.IntegrationID.String(), "-", ""))
+					}
+					r.RuntimeTelemetry.RanTool(run, canonical)
 					state.executed++
 					fresh = run.Outcome == investigation.RunSucceeded
 					executedRead = true

@@ -42,6 +42,13 @@ func (s Status) String() string {
 	}
 }
 
+func (s Status) PublicStatus(claimed bool) string {
+	if s == StatusRunning && !claimed {
+		return "queued"
+	}
+	return s.String()
+}
+
 type RunOutcome int16
 
 const (
@@ -184,7 +191,7 @@ type Investigation struct {
 	WindowFrom     time.Time
 	WindowUntil    time.Time
 	Status         Status
-	Executing      bool
+	Claimed        bool
 	ClaimToken     uuid.UUID `json:"-"`
 	Conclusion     Conclusion
 	StoppedBy      string

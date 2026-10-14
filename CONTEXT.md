@@ -61,8 +61,10 @@ of its Alert Events is firing.
 ## Investigation
 
 One bounded evidence-gathering turn about an Incident or operator question. It progresses
-from queued to investigating and terminates as needs_input, concluded, partial,
-cancelled, or failed. It never resumes; a follow-up opens another immutable Investigation.
+from queued to running and terminates as concluded, cancelled, or failed. Running means
+assigned to a worker, including expired execution awaiting failure recovery. Assessment
+certainty and human-input requirements are separate outcomes. It never resumes; a
+follow-up opens another immutable Investigation.
 
 ## Conversation
 

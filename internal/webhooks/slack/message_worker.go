@@ -24,10 +24,7 @@ type MessageWorker struct {
 
 func (w MessageWorker) Run(ctx context.Context) {
 	for {
-		worked, err := w.ProcessOne(ctx)
-		if err != nil && !errors.Is(err, context.Canceled) {
-			w.logger().ErrorContext(ctx, "slack message processing failed", slog.String("error", err.Error()))
-		}
+		worked, _ := w.ProcessOne(ctx)
 		if worked {
 			continue
 		}
@@ -39,7 +36,12 @@ func (w MessageWorker) Run(ctx context.Context) {
 	}
 }
 
-func (w MessageWorker) ProcessOne(ctx context.Context) (bool, error) {
+func (w MessageWorker) ProcessOne(ctx context.Context) (worked bool, err error) {
+	defer func() {
+		if err != nil && !errors.Is(err, context.Canceled) {
+			w.logger().ErrorContext(ctx, "Slack Message processing could not commit", slog.String("error", "storage operation failed"))
+		}
+	}()
 	lease := w.Lease
 	if lease <= 0 {
 		lease = time.Minute
@@ -48,6 +50,8 @@ func (w MessageWorker) ProcessOne(ctx context.Context) (bool, error) {
 	if err != nil || !found {
 		return found, err
 	}
+	w.Logger = w.logger().With(slog.String("org_id", work.Organization.String()),
+		slog.String("integration_id", work.IntegrationID.String()), slog.String("delivery_id", work.DeliveryID.String()))
 	w.Counters.ObserveDelay(ctx, work.UpdatedAt.Sub(work.CreatedAt))
 	if work.Attempts >= storage.MaxSlackMessageAttempts {
 		return true, w.fail(ctx, work, errors.New("the accepted Slack message exhausted its processing budget"))
@@ -57,8 +61,14 @@ func (w MessageWorker) ProcessOne(ctx context.Context) (bool, error) {
 			return true, nil
 		}
 		if errors.Is(err, storage.ErrInvestigationCapacity) {
+			if err := w.Database.DeferSlackMessageWork(ctx, work.Organization, work, time.Second); err != nil {
+				if errors.Is(err, storage.ErrSlackMessageLeaseLost) {
+					return true, nil
+				}
+				return true, err
+			}
 			w.Counters.Count(ctx, "delayed")
-			return true, w.Database.DeferSlackMessageWork(ctx, work.Organization, work, time.Second)
+			return true, nil
 		}
 		return true, w.fail(ctx, work, err)
 	}
@@ -111,7 +121,7 @@ func (w MessageWorker) process(ctx context.Context, work storage.SlackMessageWor
 		cancel()
 		if err != nil {
 			w.logger().WarnContext(ctx, "slack message provenance lookup failed",
-				slog.String("delivery_id", work.DeliveryID.String()))
+				slog.String("error", "source reference could not be resolved"))
 		}
 	}
 	return w.Database.ApplySlackMessageWork(ctx, work.Organization, work, w.WindowLead, w.MaxWaitingTurns)
@@ -131,17 +141,26 @@ func (w MessageWorker) fail(ctx context.Context, work storage.SlackMessageWork, 
 	class := "provider-job-failed"
 	message := "the accepted webhook delivery could not be processed"
 	if err := w.Database.FailSlackMessageWork(ctx, work.Organization, work, terminal, delay,
-		class, message); err != nil && !errors.Is(err, storage.ErrSlackMessageLeaseLost) {
+		class, message); err != nil {
+		if errors.Is(err, storage.ErrSlackMessageLeaseLost) {
+			return nil
+		}
 		return err
 	}
+	level := slog.LevelWarn
 	if terminal {
 		w.Counters.Count(ctx, "failed")
+		level = slog.LevelError
 	} else {
 		w.Counters.Count(ctx, "delayed")
 	}
-	w.logger().WarnContext(ctx, message, slog.String("delivery_id", work.DeliveryID.String()),
+	failure := "Slack Message processing failed"
+	if errors.Is(cause, context.DeadlineExceeded) {
+		failure = "Slack Message processing timed out"
+	}
+	w.logger().Log(ctx, level, message,
 		slog.String("failure_class", class), slog.Int("attempt", work.Attempts),
-		slog.String("cause", cause.Error()))
+		slog.Bool("terminal", terminal), slog.String("error", failure))
 	return nil
 }
 

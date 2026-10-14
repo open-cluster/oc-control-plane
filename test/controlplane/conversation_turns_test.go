@@ -1,15 +1,81 @@
 package controlplane
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"net/http"
 	"net/url"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
+	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
+
+func TestConversationAndInvestigationStatusesFollowAssignmentUntilRecovery(t *testing.T) {
+	ctx := context.Background()
+	agent := &blockingAgentMain{started: make(chan uuid.UUID, 1)}
+	plane, _ := agentPlane(t, agent)
+	plane.openConversation(t, "hold the worker", "first question")
+	select {
+	case <-agent.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("worker did not claim the first turn")
+	}
+	conversation, id := plane.openConversation(t, "assignment lifecycle", "second question")
+	assertStatus := func(want string) {
+		t.Helper()
+		for _, path := range []string{"/investigations/" + id, "/conversations/" + conversation, "/conversations/" + conversation + "/turns"} {
+			status, body := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+path, nil)
+			if status != http.StatusOK {
+				t.Fatalf("reading %s = %d: %s", path, status, body)
+			}
+			var read struct {
+				Status string `json:"status"`
+				Turns  []struct {
+					Status string `json:"status"`
+				} `json:"turns"`
+			}
+			decodeInto(t, body, &read)
+			if len(read.Turns) == 1 {
+				read.Status = read.Turns[0].Status
+			}
+			if read.Status != want {
+				t.Fatalf("%s status = %q, want %q: %s", path, read.Status, want, body)
+			}
+		}
+	}
+	assertStatus("queued")
+	database, err := storage.OpenDatabase(ctx, plane.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(database.Close)
+	org, claimed, took, err := database.ClaimInvestigation(ctx, investigation.Claim{Worker: "lifecycle-test", LeaseFor: time.Minute})
+	if err != nil || !took || claimed.ID.String() != id {
+		t.Fatalf("claim = %s took=%v err=%v", claimed.ID, took, err)
+	}
+	assertStatus("running")
+	pool, err := pgx.Connect(ctx, plane.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pool.Close(ctx) })
+	if _, err := pool.Exec(ctx, `UPDATE investigation SET lease_expires_at = now() - interval '1 minute' WHERE org_id = $1 AND investigation_id = $2`, org, claimed.ID); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus("running")
+	if n, err := database.RecoverStale(ctx, investigation.RecoveryReason, 1); err != nil || n != 1 {
+		t.Fatalf("recovery = %d: %v", n, err)
+	}
+	assertStatus("failed")
+}
 
 func TestConversationTurnsPaginateAndRejectInvalidQueries(t *testing.T) {
 	address := freeAddress(t)

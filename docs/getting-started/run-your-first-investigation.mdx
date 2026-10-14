@@ -16,7 +16,7 @@ an Incident and checks whether its result is safe to use.
 
 1. Open the Incident created by an alert.
 2. Select **Investigate**.
-3. Watch progress move from `queued` to `investigating` while OpenCluster reads the
+3. Watch progress move from `queued` to `running` while OpenCluster reads the
    connected sources.
 
 You can also ask an operational question from a new Conversation. Each follow-up Message
@@ -45,13 +45,12 @@ unavailable, the result must state that limitation instead of claiming a cause.
 
 Open each citation and confirm that its source, time window, and summary support the
 Finding. Review contradictions and truncated Tool Runs. A completed Investigation ends
-as `concluded`, `partial`, `needs_input`, `cancelled`, or `failed`:
+as `concluded`, `cancelled`, or `failed`. Assessment certainty and limitations describe
+whether the completed result answers your question:
 
 | Status | What to do |
 | --- | --- |
-| `concluded` | Review every cited Finding and Action Proposal. |
-| `partial` | Use the valid bounded result, then address the stated budget, access, or evidence limit in a follow-up. |
-| `needs_input` | Supply the requested human information in a new Message. |
+| `concluded` | Review cited Findings, Action Proposals, `conclusionStatus`, and limitations. Address evidence limits or requested human input in a new Message. |
 | `cancelled` | Start a new Investigation only if the question is still useful. |
 | `failed` | Correct the reported provider or processing failure before retrying. |
 

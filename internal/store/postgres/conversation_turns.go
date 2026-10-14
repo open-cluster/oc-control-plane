@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
 func (p *Database) ConversationTurns(
@@ -40,7 +41,7 @@ func readConversationTurns(
 	}
 	limit = pageLimit(limit)
 	rows, err := queries.Query(ctx, `
-		SELECT investigation_id, turn, status, stopped_by, error, created_at, concluded_at
+		SELECT investigation_id, turn, status, stopped_by, error, created_at, concluded_at, lease_worker <> ''
 		  FROM investigation
 		 WHERE org_id = $1 AND conversation_id = $2
 		   AND ($3::integer = 0 OR (turn, investigation_id) > ($3, $4::uuid))
@@ -54,12 +55,13 @@ func readConversationTurns(
 	for rows.Next() {
 		var turn conversation.Turn
 		var status int16
+		var claimed bool
 		var concludedAt *time.Time
 		if err := rows.Scan(&turn.InvestigationID, &turn.Ordinal, &status,
-			&turn.StoppedBy, &turn.Error, &turn.CreatedAt, &concludedAt); err != nil {
+			&turn.StoppedBy, &turn.Error, &turn.CreatedAt, &concludedAt, &claimed); err != nil {
 			return conversation.TurnPage{}, fmt.Errorf("scanning conversation turn: %w", err)
 		}
-		turn.Status = investigationStatusWord(status)
+		turn.Status = investigation.Status(status).PublicStatus(claimed)
 		if concludedAt != nil {
 			turn.ConcludedAt = *concludedAt
 		}

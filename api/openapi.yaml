@@ -1533,7 +1533,7 @@ components:
       required: [id, status, subject, windowFrom, windowUntil, impact, findings, hypotheses, actions, limitations, usage, createdAt]
       properties:
         id: { $ref: "#/components/schemas/UUID" }
-        status: { type: string, enum: [queued, investigating, needs_input, partial, concluded, cancelled, failed] }
+        status: { type: string, enum: [queued, running, concluded, failed, cancelled] }
         subject: { type: string, minLength: 1, maxLength: 1024 }
         incidentId: { $ref: "#/components/schemas/UUID" }
         windowFrom: { $ref: "#/components/schemas/Timestamp" }
@@ -1779,7 +1779,7 @@ components:
       properties:
         investigationId: { $ref: "#/components/schemas/UUID" }
         turn: { type: integer, minimum: 1 }
-        status: { type: string, enum: [queued, investigating, needs_input, partial, concluded, cancelled, failed] }
+        status: { type: string, enum: [queued, running, concluded, failed, cancelled] }
         stoppedBy: { type: string, enum: [tool_runs, reasoner_turns, wall_clock, context] }
         error: { type: string, maxLength: 4096 }
         createdAt: { $ref: "#/components/schemas/Timestamp" }

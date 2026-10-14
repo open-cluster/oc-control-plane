@@ -16,7 +16,9 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/correlation"
 	"github.com/open-cluster/oc-control-plane/internal/seal"
+	observability "github.com/open-cluster/oc-control-plane/internal/telemetry"
 )
 
 const (
@@ -157,7 +159,7 @@ func (h Handlers) create(writer http.ResponseWriter, request *http.Request) {
 		h.fail(writer, request, err)
 		return
 	}
-	h.Logger.InfoContext(ctx, "integration created",
+	observability.LoggerFor(ctx, h.Logger, correlation.From(ctx)).InfoContext(ctx, "integration created",
 		slog.String("org_id", organization.String()),
 		slog.String("integration_id", created.ID.String()),
 		slog.String("type", string(definition.Key)))
@@ -695,6 +697,12 @@ func (h Handlers) decode(
 }
 
 func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err error) {
+	logger := observability.LoggerFor(request.Context(), h.Logger, correlation.From(request.Context())).With(
+		slog.String("org_id", authz.MustPrincipal(request.Context()).Organization().String()),
+		slog.String("method", request.Method))
+	if id, parseErr := uuid.Parse(request.PathValue("integration")); parseErr == nil {
+		logger = logger.With(slog.String("integration_id", id.String()))
+	}
 	switch {
 	case errors.Is(err, authz.ErrNotAMember):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
@@ -710,15 +718,15 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusServiceUnavailable, errorView{
 			Error: "this deployment has no sealing key and cannot hold a credential"})
 	case errors.Is(err, audit.ErrWriteFailed):
-		h.Logger.ErrorContext(request.Context(), "an operation was rolled back unrecorded",
-			slog.String("path", request.URL.Path),
-			slog.String("error", err.Error()))
+		logger.ErrorContext(request.Context(), "mutation did not commit because audit recording failed",
+			slog.String("resource", "integration"),
+			slog.String("error", "audit record could not be written"))
 		writeJSON(writer, http.StatusServiceUnavailable, errorView{
 			Error: "the change was refused because it could not be recorded"})
 	default:
-		h.Logger.ErrorContext(request.Context(), "integration request failed",
-			slog.String("path", request.URL.Path),
-			slog.String("error", err.Error()))
+		logger.ErrorContext(request.Context(), "integration request failed",
+			slog.String("resource", "integration"),
+			slog.String("error", "storage operation failed"))
 		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
 	}
 }

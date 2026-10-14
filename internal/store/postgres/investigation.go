@@ -23,7 +23,7 @@ const investigationColumns = `investigation_id, incident_id,
 	       conversation_id, turn, subject, window_from, window_until, status, conclusion,
 	       stopped_by, error, spend_input_tokens,
 	       spend_output_tokens, created_at, concluded_at,
-	       lease_worker <> '' AND lease_expires_at > now()`
+	       lease_worker <> ''`
 
 func (p *Database) CreateInvestigation(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
@@ -512,7 +512,7 @@ func scanInvestigation(row scanned) (investigation.Investigation, error) {
 		&found.Status, &conclusion, &found.StoppedBy,
 		&found.Error, &found.Usage.InputTokens,
 		&found.Usage.OutputTokens, &found.CreatedAt, &concludedAt,
-		&found.Executing); err != nil {
+		&found.Claimed); err != nil {
 		return investigation.Investigation{}, err
 	}
 	if conversationID != nil {

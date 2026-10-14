@@ -99,6 +99,12 @@ Investigation before considering the change complete.
 
 Set `OC_LOG_LEVEL` to `debug`, `info`, `warn`, or `error`; the default is `info`.
 Use `OC_OTLP_ENDPOINT` when exporting traces to a collector.
+
+Investigation execution exports one `investigation.run` span with child
+`reasoning.complete` model-call spans. Existing Investigation metric names remain stable;
+the historical duration outcome `needs_input` remains a metric dimension for requests
+requiring narrower input, while the public lifecycle status is `concluded`. Tool metrics
+group by the catalog Tool name across Integrations, without resource identifiers.
 Local authentication is always available. OIDC is enabled when its issuer, client ID, and
 client secret are all configured; a partial OIDC configuration stops startup. Relay is
 optional and listens separately from HTTP;

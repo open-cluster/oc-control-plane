@@ -113,7 +113,7 @@ func (s *SessionService) open(ctx context.Context, identity relayIdentity) *sess
 		peer:           peerAddress(ctx),
 	}
 	session.logger = s.logger.With(
-		slog.String("organization", session.organization.String()),
+		slog.String("org_id", session.organization.String()),
 		slog.String("registration_id", session.registrationID.String()),
 		slog.String("session_id", session.id.String()))
 	session.heard()
@@ -224,7 +224,7 @@ func (s *SessionService) run(
 			return session.ending(err)
 
 		case err := <-readFailed:
-			session.logger.Info("relay session ended", slog.String("reason", err.Error()))
+			session.logger.Info("relay session ended", slog.String("code", status.Code(err).String()))
 			return session.ending(nil)
 
 		case message := <-inbound:
@@ -285,8 +285,7 @@ func note(session *sessionState, message *relayv1.RelayToControl) {
 
 	case *relayv1.RelayToControl_ProtocolError:
 		session.logger.Error("relay refused a message from the control plane",
-			slog.String("code", body.ProtocolError.GetCode().String()),
-			slog.String("detail", body.ProtocolError.GetDetail()))
+			slog.String("code", body.ProtocolError.GetCode().String()))
 	}
 }
 
@@ -298,12 +297,10 @@ func (s *SessionService) greet(session *sessionState, hello *relayv1.Hello) erro
 		return status.Error(codes.FailedPrecondition, "unsupported protocol version")
 	}
 	session.capacity.Store(capacityFrom(session, hello))
-	session.logger.InfoContext(session.ctx, "relay said hello",
-		slog.String("relay_version", hello.GetRelayVersion()),
+	session.logger.InfoContext(session.ctx, "relay handshake received",
 		slog.Uint64("protocol_version", uint64(hello.GetProtocolVersion())),
 		slog.Int64("capacity", session.capacity.Load()),
 		slog.Int("declared_in_flight", len(hello.GetInFlight())),
-		slog.String("local_policy_hash", hello.GetLocalPolicyHash()),
 		slog.Bool("endpoint_pinning_disabled", hello.GetEndpointPinningDisabled()))
 
 	if s.adopt(session, hello.GetInFlight()) && !session.contested.Load() {

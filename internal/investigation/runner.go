@@ -2,6 +2,7 @@ package investigation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -9,6 +10,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	observability "github.com/open-cluster/oc-control-plane/internal/telemetry"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -92,6 +98,16 @@ func (r *Runner) workerLoop(ctx context.Context) {
 func (r *Runner) runClaimed(
 	ctx context.Context, organization uuid.UUID, investigation Investigation,
 ) {
+	ctx, span := otel.Tracer(meterName).Start(ctx, "investigation.run", trace.WithNewRoot(), trace.WithAttributes(
+		observability.OrganizationAttribute(organization.String()),
+		attribute.String("oc.investigation.id", investigation.ID.String())))
+	defer span.End()
+	if investigation.IncidentID != uuid.Nil {
+		span.SetAttributes(attribute.String("oc.incident.id", investigation.IncidentID.String()))
+	}
+	if investigation.ConversationID != uuid.Nil {
+		span.SetAttributes(attribute.String("oc.conversation.id", investigation.ConversationID.String()))
+	}
 	r.Telemetry.claimed(investigation.CreatedAt)
 	runCtx, cancelRun := context.WithTimeout(ctx, investigationTimeout)
 	r.trackRunning(investigation.ID, cancelRun)
@@ -110,10 +126,17 @@ func (r *Runner) runClaimed(
 	<-monitorDone
 	r.untrackRunning(investigation.ID)
 	if err != nil {
-		if ctx.Err() == nil {
-			r.logError(ctx, "an investigation could not be terminalized", err)
-		}
 		found, readErr := r.Store.Investigation(ctx, organization, investigation.ID)
+		switch {
+		case readErr == nil && found.Status == StatusCancelled:
+			span.SetAttributes(attribute.String("oc.investigation.status", "cancelled"))
+		case errors.Is(err, ErrUnknown) || ctx.Err() != nil:
+			span.SetAttributes(attribute.String("oc.investigation.interruption", "claim_lost_or_worker_stopped"))
+		default:
+			span.SetStatus(codes.Error, "investigation terminal state could not be recorded")
+			r.logError(ctx, "investigation terminal state could not be recorded", err,
+				slog.String("org_id", organization.String()), slog.String("investigation_id", investigation.ID.String()))
+		}
 		if readErr != nil || found.Status == StatusRunning {
 			return
 		}
@@ -149,7 +172,8 @@ func (r *Runner) monitorClaim(ctx context.Context,
 		case <-renew.C:
 			held, err := r.Store.Heartbeat(ctx, organization, id, claim)
 			if err != nil {
-				r.logError(ctx, "an investigation lease could not be renewed", err)
+				r.logError(ctx, "investigation lease could not be renewed", err,
+					slog.String("org_id", organization.String()), slog.String("investigation_id", id.String()))
 				continue
 			}
 			if !held {
@@ -164,12 +188,12 @@ func (r *Runner) recoverLoop(ctx context.Context) {
 	for r.wait(ctx, sweepInterval) {
 		recovered, err := r.Store.RecoverStale(ctx, RecoveryReason, sweepBatch)
 		if err != nil {
-			r.logError(ctx, "stale investigations could not be recovered", err)
+			r.logError(ctx, "expired Investigation leases could not be marked failed", err)
 			continue
 		}
 		if recovered > 0 {
 			r.Telemetry.RecoveredStale(recovered)
-			r.Logger.Warn("stale investigations were recovered", slog.Int("recovered", recovered))
+			r.Logger.WarnContext(ctx, "expired Investigation leases marked failed", slog.Int("failed_count", recovered))
 		}
 	}
 }
@@ -193,7 +217,9 @@ func (r *Runner) openNextConversationTurn(
 	defer cancel()
 	if _, err := r.Store.OpenNextConversationTurn(writeCtx, organization,
 		finished.ConversationID, r.WindowLead, r.MaxPending); err != nil {
-		r.logError(writeCtx, "a conversation's queued messages could not be taken up", err)
+		r.logError(writeCtx, "queued Conversation Messages could not be admitted", err,
+			slog.String("org_id", organization.String()), slog.String("conversation_id", finished.ConversationID.String()),
+			slog.String("investigation_id", finished.ID.String()))
 	}
 }
 
@@ -258,9 +284,14 @@ func (r *Runner) wait(ctx context.Context, duration time.Duration) bool {
 	}
 }
 
-func (r *Runner) logError(ctx context.Context, message string, err error) {
+func (r *Runner) logError(ctx context.Context, message string, err error, fields ...any) {
 	if ctx.Err() == nil && r.Logger != nil {
-		r.Logger.ErrorContext(ctx, message, slog.String("error", err.Error()))
+		classification := "storage operation failed"
+		if errors.Is(err, context.DeadlineExceeded) {
+			classification = "storage operation timed out"
+		}
+		fields = append(fields, slog.String("error", classification))
+		observability.LoggerFor(ctx, r.Logger, "").ErrorContext(ctx, message, fields...)
 	}
 }
 

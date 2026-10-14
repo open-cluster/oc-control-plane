@@ -95,7 +95,7 @@ func (p *integrationPlane) awaitInvestigation(t *testing.T, id string) string {
 			Status string `json:"status"`
 		}
 		decodeInto(t, body, &read)
-		if read.Status != "queued" && read.Status != "investigating" {
+		if read.Status != "queued" && read.Status != "running" {
 			return body
 		}
 		time.Sleep(25 * time.Millisecond)

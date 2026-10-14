@@ -206,7 +206,7 @@ func (h *receiver) recordAlertDelivery(
 
 	if outcome.Duplicate {
 		h.counters.countRequest(ctx, surfaceAlert, resultDuplicate)
-		h.Logger.InfoContext(ctx, "delivery already accepted",
+		h.Logger.DebugContext(ctx, "delivery already accepted",
 			slog.String("request_id", requestID),
 			slog.String("org_id", organization.String()),
 			slog.String("integration_id", delivery.Integration.String()))
@@ -228,9 +228,9 @@ func (h *receiver) recordAlertDelivery(
 		slog.String("request_id", requestID),
 		slog.String("org_id", organization.String()),
 		slog.String("integration_id", delivery.Integration.String()),
-		slog.Int("alertEvents", outcome.Recorded),
-		slog.Int("episodes_opened", outcome.IncidentsOpened),
-		slog.Int("episodes_joined", outcome.IncidentsJoined))
+		slog.Int("alert_events", outcome.Recorded),
+		slog.Int("incidents_opened", outcome.IncidentsOpened),
+		slog.Int("incidents_joined", outcome.IncidentsJoined))
 	writeStatus(writer, http.StatusAccepted, "accepted")
 }
 

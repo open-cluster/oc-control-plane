@@ -174,7 +174,7 @@ func (h Handlers) completeConnect(writer http.ResponseWriter, request *http.Requ
 		h.Logger.WarnContext(ctx, "an integration connect could not be proven",
 			slog.String("org_id", organization.String()),
 			slog.String("type", string(definition.Key)),
-			slog.String("reason", err.Error()))
+			slog.String("error", "provider authorization could not be verified"))
 		h.landConnect(writer, request, flow.ReturnTo, definition.Key, outcomeUnproven, "")
 		return
 	}
@@ -231,7 +231,7 @@ func (h Handlers) record(
 		h.Logger.WarnContext(ctx, "a proven integration connect did not verify",
 			slog.String("org_id", organization.String()),
 			slog.String("type", string(definition.Key)),
-			slog.String("note", verification.Note))
+			slog.String("error", "integration verification failed"))
 		h.landConnect(writer, request, returnTo, definition.Key, outcomeUnverified, "")
 		return
 	}
@@ -289,7 +289,7 @@ func (h Handlers) reconnect(
 			slog.String("org_id", organization.String()),
 			slog.String("integration_id", existing.ID.String()),
 			slog.String("type", string(definition.Key)),
-			slog.String("note", verification.Note))
+			slog.String("error", "integration verification failed"))
 		h.landConnect(writer, request, returnTo, definition.Key, outcomeUnverified, existing.ID.String())
 		return
 	}
