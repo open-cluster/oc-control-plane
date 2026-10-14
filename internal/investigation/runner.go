@@ -123,9 +123,12 @@ func (r *Runner) runClaimed(
 
 // monitorClaim keeps the lease alive and stops local execution when the
 // Investigation is cancelled or the claim is lost.
-func (r *Runner) monitorClaim(
-	ctx context.Context, cancelRun context.CancelFunc, agentDone <-chan struct{},
-	organization uuid.UUID, id uuid.UUID, claim Claim,
+func (r *Runner) monitorClaim(ctx context.Context,
+	cancelRun context.CancelFunc,
+	agentDone <-chan struct{},
+	organization uuid.UUID,
+	id uuid.UUID,
+	claim Claim,
 ) {
 	renew := time.NewTicker(heartbeatInterval)
 	cancelled := time.NewTicker(time.Second)

@@ -158,8 +158,7 @@ func recoverStaleIn(
 	}
 	for _, one := range swept {
 		if _, err = transaction.Exec(ctx, `
-			INSERT INTO investigation_event (investigation_id, org_id, sequence, type,
-			                                 payload)
+			INSERT INTO investigation_event (investigation_id, org_id, sequence, type, payload)
 			SELECT $1, $2,
 			       coalesce((SELECT max(sequence)
 			                   FROM investigation_event written
