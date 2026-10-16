@@ -144,7 +144,6 @@ func (document fileConfiguration) environment(directory string) map[string]strin
 	set(EnvPublicURL, document.Server.PublicURL)
 	set(EnvLogLevel, document.Telemetry.LogLevel)
 	set(EnvOTLPEndpoint, document.Telemetry.OTLPEndpoint)
-	secretFile(EnvDatabaseDSNFile, document.Database.DSNFile)
 	if document.Session.Lifetime != nil {
 		values[EnvSessionLifetimeSeconds] = strconv.FormatInt(
 			int64(time.Duration(*document.Session.Lifetime)/time.Second), 10)
@@ -155,7 +154,6 @@ func (document fileConfiguration) environment(directory string) map[string]strin
 	}
 	set(EnvModelProvider, document.AI.Provider)
 	set(EnvModelName, document.AI.Model)
-	secretFile(EnvModelKeyFile, document.AI.APIKeyFile)
 	integer(EnvModelContextWindowSize, document.AI.ContextWindow)
 	if document.AI.MaxOutputTokens != nil {
 		values[EnvModelMaxOutputTokens] = strconv.FormatInt(*document.AI.MaxOutputTokens, 10)
@@ -163,13 +161,17 @@ func (document fileConfiguration) environment(directory string) map[string]strin
 	integer(EnvInvestigationWorkers, document.Investigations.Workers)
 	integer(EnvInvestigationMaxPendingPerOrganization,
 		document.Investigations.MaxPendingPerOrganization)
+	set(EnvGitHubAppID, document.GitHub.AppID)
 	set(EnvOIDCIssuer, document.OIDC.Issuer)
 	set(EnvOIDCClientID, document.OIDC.ClientID)
-	secretFile(EnvOIDCClientSecretFile, document.OIDC.ClientSecretFile)
 	set(EnvSlackClientID, document.Slack.ClientID)
+
+	// ENV files ------->
+	secretFile(EnvModelKeyFile, document.AI.APIKeyFile)
+	secretFile(EnvOIDCClientSecretFile, document.OIDC.ClientSecretFile)
 	secretFile(EnvSlackClientSecretFile, document.Slack.ClientSecretFile)
 	secretFile(EnvSlackSigningSecretFile, document.Slack.SigningSecretFile)
-	set(EnvGitHubAppID, document.GitHub.AppID)
+	secretFile(EnvDatabaseDSNFile, document.Database.DSNFile)
 	secretFile(EnvGitHubAppKeyFile, document.GitHub.PrivateKeyFile)
 	secretFile(EnvSealingKeyFile, document.Security.EncryptionKeyFile)
 	secretFile(EnvBootstrapTokenFile, document.Security.BootstrapTokenFile)

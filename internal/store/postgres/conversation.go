@@ -179,7 +179,9 @@ func (p *Database) ConversationDetail(
 }
 
 func conversationMessages(
-	ctx context.Context, queries querier, organization uuid.UUID,
+	ctx context.Context,
+	queries querier,
+	organization uuid.UUID,
 	id uuid.UUID, limit int,
 ) ([]conversation.Message, error) {
 	if limit <= 0 {

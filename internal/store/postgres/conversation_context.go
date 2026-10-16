@@ -315,6 +315,11 @@ func mergeExchange(messages, answers []investigation.BriefMessage) []investigati
 				answers = append(remaining, answers[index+1:]...)
 			}
 		}
+
+		// ---------- Info ----------
+		// While the answer was created before the current message,
+		// we put that answer into the exchange first.
+		// ---------- Info ----------
 		for len(answers) > 0 && answers[0].CreatedAt.Before(message.CreatedAt) {
 			exchange = append(exchange, answers[0])
 			answers = answers[1:]
@@ -351,7 +356,11 @@ func (p *Database) ConversationOrigin(ctx context.Context, organization uuid.UUI
 	if source != conversation.SourceSlack || integration == nil || *integration == uuid.Nil || channel == "" || thread == "" {
 		return nil, errors.New("conversation provider origin is missing or inconsistent")
 	}
-	return &investigation.ConversationOrigin{IntegrationID: *integration, Channel: channel, Thread: thread}, nil
+	return &investigation.ConversationOrigin{
+		IntegrationID: *integration,
+		Channel:       channel,
+		Thread:        thread,
+	}, nil
 }
 
 func (p *Database) InvestigationMessages(ctx context.Context, org uuid.UUID, conversationID, id uuid.UUID) ([]investigation.AssignedMessage, error) {

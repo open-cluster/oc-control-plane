@@ -53,6 +53,7 @@ listeners; nothing mocks the database.
   and concise. Comments state constraints, invariants, or non-obvious reasons, in plain words — never what the next line
   does, never the history of a change. Doc comments follow Go convention. Tests assert observable behavior at real seams
   (the composed process, the wire, the database), not call sequences.
+- Do not remove user written comments that explain the part of the code. 
 
 ## Documents
 
