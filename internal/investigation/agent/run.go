@@ -193,6 +193,8 @@ func (r *Agent) Run(
 			return failRun("the Investigation's assigned Messages are missing", investigation.Usage{})
 		}
 	}
+
+	// Integrations available ----->
 	candidates, err := r.Store.InvestigationCandidates(ctx, organization)
 	if err != nil {
 		return failRun("the connected sources could not be read", investigation.Usage{})

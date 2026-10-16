@@ -119,7 +119,7 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	opened, err := h.Store.OpenConversation(ctx, principal, organization, NewConversation{
+	openedConversation, err := h.Store.OpenConversation(ctx, principal, organization, NewConversation{
 		IncidentID: incidentID,
 		Source:     SourceWeb,
 		Subject:    subject,
@@ -131,21 +131,21 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	}
 	observability.LoggerFor(ctx, h.Logger, correlation.From(ctx)).InfoContext(ctx, "conversation opened",
 		slog.String("org_id", organization.String()),
-		slog.String("conversation_id", opened.ID.String()))
+		slog.String("conversation_id", openedConversation.ID.String()))
 
 	if strings.TrimSpace(asked.Message) == "" {
-		writeJSON(writer, http.StatusCreated, conversationViewOf(opened))
+		writeJSON(writer, http.StatusCreated, conversationViewOf(openedConversation))
 		return
 	}
 
-	said, turn, queued, err := h.append(ctx, principal, organization, opened.ID,
+	said, turn, queued, err := h.append(ctx, principal, organization, openedConversation.ID,
 		asked.Message, window)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
 	writeJSON(writer, http.StatusCreated, openedView{
-		conversationView: conversationViewOf(opened),
+		conversationView: conversationViewOf(openedConversation),
 		messageAcceptedView: messageAcceptedView{
 			Message: messageViewOf(said),
 			Turn:    turn,
@@ -251,8 +251,11 @@ func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
 	}
 
 	page := Page{
-		Limit: parsed.Limit, After: parsed.Cursor, Search: parsed.Search,
-		Sort: parsed.Sort.Field, Descending: parsed.Sort.Descending,
+		Limit:      parsed.Limit,
+		After:      parsed.Cursor,
+		Search:     parsed.Search,
+		Sort:       parsed.Sort.Field,
+		Descending: parsed.Sort.Descending,
 	}
 	if incident := parsed.Filter("incidentId"); incident != "" {
 		id, parseErr := uuid.Parse(incident)
@@ -321,7 +324,9 @@ func (h Handlers) decode(
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(into); err != nil {
 		writeJSON(writer, http.StatusBadRequest,
-			errorView{Error: "the request body is not what this operation accepts"})
+			errorView{
+				Error: "the request body is not what this operation accepts",
+			})
 		return false
 	}
 	return true

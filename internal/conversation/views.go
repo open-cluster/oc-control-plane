@@ -65,17 +65,17 @@ type openedView struct {
 	messageAcceptedView
 }
 
-func conversationViewOf(found Conversation) conversationView {
+func conversationViewOf(conversation Conversation) conversationView {
 	view := conversationView{
-		ID:             found.ID.String(),
-		Subject:        found.Subject,
-		Source:         found.Source.String(),
-		CreatedBy:      found.CreatedBy,
-		CreatedAt:      stamp(found.CreatedAt),
-		LastActivityAt: stamp(found.LastActivityAt),
+		ID:             conversation.ID.String(),
+		Subject:        conversation.Subject,
+		Source:         conversation.Source.String(),
+		CreatedAt:      stamp(conversation.CreatedAt),
+		LastActivityAt: stamp(conversation.LastActivityAt),
+		CreatedBy:      conversation.CreatedBy,
 	}
-	if found.IncidentID != uuid.Nil {
-		view.IncidentID = found.IncidentID.String()
+	if conversation.IncidentID != uuid.Nil {
+		view.IncidentID = conversation.IncidentID.String()
 	}
 	return view
 }
