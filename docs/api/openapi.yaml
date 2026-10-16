@@ -3195,12 +3195,10 @@ components:
           type: string
           enum:
             - queued
-            - investigating
-            - needs_input
-            - partial
+            - running
             - concluded
-            - cancelled
             - failed
+            - cancelled
         subject:
           type: string
           minLength: 1
@@ -3888,12 +3886,10 @@ components:
           type: string
           enum:
             - queued
-            - investigating
-            - needs_input
-            - partial
+            - running
             - concluded
-            - cancelled
             - failed
+            - cancelled
         stoppedBy:
           type: string
           enum:

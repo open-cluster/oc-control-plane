@@ -1,6 +1,7 @@
 package storage_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -502,6 +503,8 @@ func TestSlackMessageRetryTerminatesAndReplayPreservesTheQuestion(t *testing.T) 
 		t.Fatal(err)
 	}
 	worker := fixture.worker
+	var logs bytes.Buffer
+	worker.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
 	worker.MaxAttempts = 3
 	worker.RetryBase = time.Minute
 	for attempt := 1; attempt <= 3; attempt++ {
@@ -533,6 +536,9 @@ func TestSlackMessageRetryTerminatesAndReplayPreservesTheQuestion(t *testing.T) 
 	if worked, err := worker.ProcessOne(ctx); err != nil || worked {
 		t.Fatalf("terminal work was reclaimed: %v, %v", worked, err)
 	}
+	if strings.Contains(logs.String(), "injected turn failure") || !strings.Contains(logs.String(), `"level":"ERROR"`) || !strings.Contains(logs.String(), organization.String()) {
+		t.Fatalf("terminal processing logs are unsafe or lack committed failure context: %s", logs.String())
+	}
 	detail, err := database.ConversationDetail(ctx, organization, fixture.conversation, 50)
 	if err != nil || len(detail.Messages) != 1 || len(detail.Turns) != 0 {
 		t.Fatalf("failed turn lost or partially processed the question: %+v, %v", detail, err)
@@ -554,6 +560,33 @@ func TestSlackMessageRetryTerminatesAndReplayPreservesTheQuestion(t *testing.T) 
 	work := readSlackMessageWork(t, fixture)
 	if work.Status != storage.SlackMessageComplete || work.Attempts != 1 {
 		t.Fatalf("recovered work: %+v", work)
+	}
+}
+
+func TestSlackMessageLostFailureWriteDoesNotReportDisposition(t *testing.T) {
+	fixture := acceptedSlackMessage(t)
+	ctx := context.Background()
+	pool, err := poolForTest(fixture.database, fixture.organization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE FUNCTION reject_turn() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN RAISE EXCEPTION 'untrusted failure detail'; END $$;
+		CREATE TRIGGER reject_turn BEFORE INSERT ON investigation FOR EACH ROW EXECUTE FUNCTION reject_turn();
+		CREATE FUNCTION refuse_disposition() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN RETURN NULL; END $$;
+		CREATE TRIGGER refuse_disposition BEFORE UPDATE ON slack_message_work
+		FOR EACH ROW WHEN (NEW.status IN (3, 4)) EXECUTE FUNCTION refuse_disposition()`); err != nil {
+		t.Fatal(err)
+	}
+	worker := fixture.worker
+	var logs bytes.Buffer
+	worker.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	if worked, err := worker.ProcessOne(ctx); err != nil || !worked {
+		t.Fatalf("processing = %v, %v", worked, err)
+	}
+	if logs.Len() != 0 {
+		t.Fatalf("uncommitted disposition was logged: %s", logs.String())
 	}
 }
 

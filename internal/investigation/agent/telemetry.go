@@ -2,9 +2,12 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
+	observability "github.com/open-cluster/oc-control-plane/internal/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -70,11 +73,11 @@ func (t *Telemetry) complete(
 	completion, err := provider.Complete(ctx, prompt)
 	elapsed := time.Since(started)
 
-	span.SetAttributes(
-		attribute.String("oc.reasoning.model_answered", completion.Model),
-		attribute.String("oc.reasoning.request_id", completion.RequestID),
-		attribute.String("oc.reasoning.stop", completion.Stop.String()),
-	)
+	span.SetAttributes(attribute.String("oc.reasoning.stop", completion.Stop.String()))
+	requestID := safeProviderRequestID(completion.RequestID)
+	if requestID != "" {
+		span.SetAttributes(attribute.String("oc.reasoning.provider_request_id", requestID))
+	}
 
 	if t.latency != nil {
 		t.latency.Record(ctx, elapsed.Seconds(), measured)
@@ -100,26 +103,79 @@ func (t *Telemetry) complete(
 	entry := []any{
 		slog.String("provider", config.Provider),
 		slog.String("model", config.Model),
-		slog.String("model_answered", completion.Model),
-		slog.String("request_id", completion.RequestID),
 		slog.String("stop", completion.Stop.String()),
-		slog.Duration("latency", elapsed),
+		slog.Duration("duration", elapsed),
 		slog.Int64("input_tokens", completion.Usage.Input.Or(0)),
 		slog.Int64("output_tokens", completion.Usage.Output.Or(0)),
 		slog.Int64("cache_read_tokens", completion.Usage.CacheRead.Or(0)),
 		slog.Int64("cache_write_tokens", completion.Usage.CacheWrite.Or(0)),
 		slog.Int64("reasoning_tokens", completion.Usage.Reasoning.Or(0)),
 	}
+	if completion.Model == config.Model {
+		entry = append(entry, slog.String("model_answered", completion.Model))
+		span.SetAttributes(attribute.String("oc.reasoning.model_answered", completion.Model))
+	}
+	if requestID != "" {
+		entry = append(entry, slog.String("provider_request_id", requestID))
+	}
+	logger := observability.LoggerFor(ctx, t.logger, "")
 	if err != nil {
-		span.SetStatus(codes.Error, "the provider call failed")
-		if outcome, named := OutcomeOf(err); named {
-			outcomeWord := outcome.String()
-			span.SetAttributes(attribute.String("oc.reasoning.outcome", outcomeWord))
-			entry = append(entry, slog.String("outcome", outcomeWord))
+		if !errors.Is(err, context.Canceled) {
+			span.SetStatus(codes.Error, "the provider call failed")
 		}
-		t.logger.WarnContext(ctx, "reasoner call failed", entry...)
+		outcome := failureClass(err)
+		span.SetAttributes(attribute.String("oc.reasoning.outcome", outcome))
+		entry = append(entry, slog.String("outcome", outcome), slog.String("error", "model call failed"))
+		if errors.Is(err, context.Canceled) {
+			logger.DebugContext(ctx, "model call cancelled", entry...)
+		} else {
+			logger.WarnContext(ctx, "model call failed", entry...)
+		}
 		return completion, err
 	}
-	t.logger.InfoContext(ctx, "reasoner call", entry...)
+	logger.DebugContext(ctx, "model call completed", entry...)
 	return completion, err
+}
+
+func failureClass(err error) string {
+	if errors.Is(err, context.Canceled) {
+		return "cancelled"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	if outcome, known := OutcomeOf(err); known {
+		return outcome.String()
+	}
+	return "unknown"
+}
+
+func safeProviderRequestID(id string) string {
+	if len(id) > 256 {
+		return ""
+	}
+	for _, c := range id {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_', c == '.':
+		default:
+			return ""
+		}
+	}
+	return id
+}
+
+func (r *Agent) logConclusion(ctx context.Context, state *runState, conclusion investigation.Conclusion, stoppedBy string) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(attribute.String("oc.investigation.status", "concluded"), attribute.String("oc.investigation.conclusion_status", string(conclusion.Status)))
+	entry := []any{
+		slog.String("conclusion_status", string(conclusion.Status)),
+		slog.Duration("duration", time.Since(state.startedAt)),
+		slog.Int("turns", state.turns), slog.Int("tool_runs", state.executed),
+		slog.Int64("input_tokens", state.usage.InputTokens), slog.Int64("output_tokens", state.usage.OutputTokens),
+	}
+	if stoppedBy != "" {
+		entry = append(entry, slog.String("stopped_by", stoppedBy))
+		span.SetAttributes(attribute.String("oc.investigation.stopped_by", stoppedBy))
+	}
+	r.Logger.InfoContext(ctx, "investigation concluded", entry...)
 }

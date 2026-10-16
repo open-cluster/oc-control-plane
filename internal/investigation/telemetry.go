@@ -26,7 +26,7 @@ func (t *Telemetry) Ended(duration time.Duration, status, stoppedBy string) {
 	t.ended(duration, status, stoppedBy)
 }
 
-func (t *Telemetry) RanTool(run ToolRun) { t.ranTool(run) }
+func (t *Telemetry) RanTool(run ToolRun, tool string) { t.ranTool(run, tool) }
 
 func NewTelemetry(logger *slog.Logger) *Telemetry {
 	meter := otel.Meter(meterName)
@@ -95,14 +95,14 @@ func (t *Telemetry) ended(since time.Duration, outcome, stoppedBy string) {
 		metric.WithAttributes(attributes...))
 }
 
-func (t *Telemetry) ranTool(run ToolRun) {
+func (t *Telemetry) ranTool(run ToolRun, tool string) {
 	if t == nil || t.toolDuration == nil {
 		return
 	}
 	t.toolDuration.Record(context.Background(),
 		run.FinishedAt.Sub(run.StartedAt).Seconds(),
 		metric.WithAttributes(
-			attribute.String("tool", run.Tool),
+			attribute.String("tool", tool),
 			attribute.String("outcome", outcomeWord(run.Outcome))))
 }
 

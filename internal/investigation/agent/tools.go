@@ -171,9 +171,9 @@ func (r *Agent) announce(
 	ctx context.Context, events *investigation.EventStream, payload investigation.EventPayload,
 ) {
 	if err := events.Emit(ctx, payload); err != nil {
-		r.Logger.Warn("an investigation event could not be written",
+		r.Logger.WarnContext(ctx, "an investigation event could not be written",
 			slog.String("event", payload.EventType().String()),
-			slog.String("error", err.Error()))
+			slog.String("error", "event could not be recorded"))
 	}
 }
 

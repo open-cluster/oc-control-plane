@@ -124,7 +124,10 @@ func (t *Telemetry) Shutdown(ctx context.Context) error {
 }
 
 func LoggerFor(ctx context.Context, logger *slog.Logger, requestID string) *slog.Logger {
-	attributes := []any{slog.String("request_id", requestID)}
+	var attributes []any
+	if requestID != "" {
+		attributes = append(attributes, slog.String("request_id", requestID))
+	}
 
 	if span := trace.SpanContextFromContext(ctx); span.IsValid() {
 		attributes = append(attributes,

@@ -64,7 +64,7 @@ func TestOversizedAssignedInputRequestsNarrowingWithoutCallingModel(t *testing.T
 	if err := json.Unmarshal([]byte(final), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != "needs_input" || len(result.Limitations) != 1 ||
+	if result.Status != "concluded" || len(result.Limitations) != 1 ||
 		result.Limitations[0].Type != "essential_human_input" || len(result.Limitations[0].MessageSequences) != 1 ||
 		result.Limitations[0].MessageSequences[0] != 1 {
 		t.Fatalf("oversized input lacks an explicit persisted sequence refusal: %s", final)
@@ -74,7 +74,7 @@ func TestOversizedAssignedInputRequestsNarrowingWithoutCallingModel(t *testing.T
 		t.Fatal(err)
 	}
 	if _, present := contract["humanConfirmationRequired"]; present {
-		t.Fatalf("needs_input response exposes a duplicate human-input flag: %s", final)
+		t.Fatalf("concluded response exposes a duplicate human-input flag: %s", final)
 	}
 	impact, ok := contract["impact"].(map[string]any)
 	if !ok || len(impact) != 2 || impact["summary"] != "Input was not processed." {

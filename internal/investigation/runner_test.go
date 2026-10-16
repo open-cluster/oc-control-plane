@@ -9,6 +9,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 type runnerStore struct {
@@ -159,9 +162,31 @@ func TestRunnerDefaultsToEightConcurrentWorkersAndWaitsForShutdown(t *testing.T)
 	}
 }
 
-type concludingAgent struct{}
+type concludingAgent struct{ run func(context.Context) }
 
-func (concludingAgent) Run(context.Context, uuid.UUID, Investigation) error { return nil }
+func (a concludingAgent) Run(ctx context.Context, _ uuid.UUID, _ Investigation) error {
+	if a.run != nil {
+		a.run(ctx)
+	}
+	return nil
+}
+
+func TestRunnerCorrelatesExecutionWithChildModelSpans(t *testing.T) {
+	collector := tracetest.NewSpanRecorder()
+	provider := trace.NewTracerProvider(trace.WithSpanProcessor(collector))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() { otel.SetTracerProvider(previous); _ = provider.Shutdown(context.Background()) })
+	runner := &Runner{Store: &runnerStore{}, Logger: slog.New(slog.DiscardHandler), Agent: concludingAgent{run: func(ctx context.Context) {
+		_, span := otel.Tracer("test-model").Start(ctx, "reasoning.complete")
+		span.End()
+	}}}
+	runner.runClaimed(context.Background(), uuid.New(), Investigation{ID: uuid.New()})
+	spans := collector.Ended()
+	if len(spans) != 2 || spans[0].Name() != "reasoning.complete" || spans[1].Name() != "investigation.run" || spans[0].Parent().SpanID() != spans[1].SpanContext().SpanID() || spans[0].SpanContext().TraceID() != spans[1].SpanContext().TraceID() {
+		t.Fatalf("execution and model spans are not correlated: %v", spans)
+	}
+}
 
 type unterminatedAgent struct{}
 

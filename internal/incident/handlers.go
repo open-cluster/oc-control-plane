@@ -12,6 +12,8 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/correlation"
+	observability "github.com/open-cluster/oc-control-plane/internal/telemetry"
 )
 
 const (
@@ -165,8 +167,8 @@ func (h Handlers) merge(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	h.Logger.InfoContext(ctx, "incident incidents merged",
-		slog.String("organization", organization.String()),
+	observability.LoggerFor(ctx, h.Logger, correlation.From(ctx)).InfoContext(ctx, "incidents merged",
+		slog.String("org_id", organization.String()),
 		slog.String("absorbed_incident_id", id.String()),
 		slog.String("surviving_incident_id", into.String()),
 		slog.String("caller", h.callerName(request)))
@@ -250,13 +252,19 @@ func (h Handlers) callerName(request *http.Request) string {
 }
 
 func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err error) {
+	logger := observability.LoggerFor(request.Context(), h.Logger, correlation.From(request.Context())).With(
+		slog.String("org_id", authz.MustPrincipal(request.Context()).Organization().String()),
+		slog.String("method", request.Method))
+	if id, parseErr := uuid.Parse(request.PathValue("incident")); parseErr == nil {
+		logger = logger.With(slog.String("incident_id", id.String()))
+	}
 	switch {
 	case errors.Is(err, authz.ErrNotAMember):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
 	case errors.Is(err, audit.ErrWriteFailed):
-		h.Logger.ErrorContext(request.Context(), "an operation was rolled back unrecorded",
-			slog.String("path", request.URL.Path),
-			slog.String("error", err.Error()))
+		logger.ErrorContext(request.Context(), "mutation did not commit because audit recording failed",
+			slog.String("resource", "incident"),
+			slog.String("error", "audit record could not be written"))
 		writeJSON(writer, http.StatusServiceUnavailable, errorView{
 			Error: "the change was refused because it could not be recorded"})
 	case errors.Is(err, ErrUnknown):
@@ -266,9 +274,9 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 	case errors.Is(err, ErrBadCursor):
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: "cursor is not one we issued"})
 	default:
-		h.Logger.ErrorContext(request.Context(), "an incident request failed",
-			slog.String("path", request.URL.Path),
-			slog.String("error", err.Error()))
+		logger.ErrorContext(request.Context(), "an incident request failed",
+			slog.String("resource", "incident"),
+			slog.String("error", "storage operation failed"))
 		writeJSON(writer, http.StatusInternalServerError, errorView{Error: "request failed"})
 	}
 }

@@ -424,6 +424,12 @@ func TestOpenAPITypesEveryInvestigationResult(t *testing.T) {
 	}
 
 	investigation := document.Components.Schemas["Investigation"]
+	for _, name := range []string{"Investigation", "ConversationTurn"} {
+		got := document.Components.Schemas[name].Properties["status"].Enum
+		if !slices.Equal(got, []string{"queued", "running", "concluded", "failed", "cancelled"}) {
+			t.Errorf("%s lifecycle statuses = %v", name, got)
+		}
+	}
 	for _, retired := range []string{"integrationId", "spend"} {
 		if _, present := investigation.Properties[retired]; present {
 			t.Errorf("Investigation schema still contains retired field %s", retired)

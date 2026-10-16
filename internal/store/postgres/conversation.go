@@ -469,7 +469,7 @@ func openTurn(
 	return conversation.Turn{
 		InvestigationID: investigationID,
 		Ordinal:         ordinal,
-		Status:          investigationStatusWord(int16(investigation.StatusRunning)),
+		Status:          investigation.StatusRunning.PublicStatus(false),
 		CreatedAt:       createdAt,
 	}, true, nil
 }
@@ -556,10 +556,6 @@ func boundedRunes(text string, limit int) string {
 		return text
 	}
 	return string(runes[:limit])
-}
-
-func investigationStatusWord(status int16) string {
-	return investigation.Status(status).String()
 }
 
 func scanConversation(row scanned) (conversation.Conversation, error) {

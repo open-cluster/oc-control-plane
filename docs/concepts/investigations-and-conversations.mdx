@@ -4,8 +4,14 @@ description: "Understand bounded Investigation turns, cited results, proposed ac
 ---
 
 An Investigation is one immutable evidence-gathering turn. It moves through `queued` and
-`investigating`, then ends as `needs_input`, `concluded`, `partial`, `cancelled`, or
-`failed`.
+`running`, then ends as `concluded`, `cancelled`, or `failed`. `queued` means waiting for
+execution; `running` means assigned to a worker. Interrupted execution remains `running`
+until failure recovery completes. `concluded` means execution completed, including an
+inconclusive assessment or a request for human input.
+
+Read `conclusionStatus`, `limitations`, `stoppedBy`, and `error` separately to understand
+the result. A `concluded` event's payload `status` describes assessment certainty;
+it is not the Investigation lifecycle status.
 
 ## Conversations and follow-ups
 
@@ -22,7 +28,8 @@ and their Investigation identities. Stored history is context rather than a curr
 or fresh evidence. Prior Findings retain their observation time and evidence window and can
 be reconsidered after a correction, refresh request, or window change.
 
-Completed and `needs_input` Investigations never resume. Send a new Message to create the next turn.
+Completed Investigations never resume, including those requiring human input. Send a new
+Message to create the next turn.
 
 To ask about a specific interval, send both `windowFrom` and `windowUntil` when posting
 a Message, or when creating a Conversation with its first Message. Use RFC3339 timestamps
@@ -57,7 +64,8 @@ Each Investigation receives the complete Messages assigned to it, in order, with
 authors and timestamps. Those assigned user Messages are the authoritative request; there
 is no separate stored question preview.
 Optional history and inventory are omitted first if the initial request is too large.
-If the complete assigned batch still cannot fit, the result is `needs_input`: its limitation
+If the complete assigned batch still cannot fit, the Investigation is `concluded` with
+`conclusionStatus: inconclusive`: its `essential_human_input` limitation
 identifies the unprocessed Message sequences and asks you to narrow or split the request.
 Those Messages stay stored; send a new Message to continue. No part of that batch is
 reported as answered.
