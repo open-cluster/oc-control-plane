@@ -69,52 +69,20 @@ Today, OpenCluster recommends actions but does not execute production changes.
 
 ## Architecture
 
-OpenCluster is split into a control plane and an optional customer-side Relay.
+![OpenCluster system architecture](./docs/assets/system-architecture.svg)
 
-### Control plane
+OpenCluster's Go control plane accepts operator requests and authenticated webhooks,
+coordinates Incidents and Conversations, and runs evidence-backed Investigations.
+Integration tools read GitHub and Slack directly or dispatch bounded Kubernetes
+capabilities through the customer-side Relay.
 
-The control plane receives API requests and webhooks, groups alerts into Incidents,
-coordinates Conversations and Investigations, selects eligible Integration Tools, runs the
-reasoning loop, records Tool Runs and results, and exposes progress and conclusions to the UI
-or Slack.
+**PostgreSQL is the durable source of truth** for product state, evidence, and
+background work, including Relay jobs. The Relay establishes an **outbound,
+bidirectional gRPC session** and keeps Kubernetes credentials and local data
+controls inside the customer environment.
 
-PostgreSQL is the durable source of truth. Customer-owned state is explicitly scoped to an
-Organization, and operational mutations are audited.
-
-### Relay
-
-The Relay runs inside the customer environment and opens an outbound gRPC session to the
-control plane.
-
-It executes approved Kubernetes capabilities close to the cluster, while Kubernetes
-credentials remain inside the customer boundary. The control plane never receives those
-cluster credentials.
-
-### Investigation flow
-
-```text
-Alert / operator question
-          │
-          ▼
-   Incident / Conversation
-          │
-          ▼
-     Investigation
-          │
-          ▼
-   Eligible Integrations
-          │
-          ▼
-       Tool Runs
-          │
-          ▼
-      Conclusion
-   ┌──────┼─────────┐
-   │      │         │
-Findings Actions Limitations
-```
-
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for the complete design.
+The diagram is a logical system overview, not a microservice or deployment topology.
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for workflow details and trust boundaries.
 
 ## Security
 
