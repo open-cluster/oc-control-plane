@@ -18,15 +18,20 @@ it is not the Investigation lifecycle status.
 A Conversation is the ordered context a person talks to. Each Message may open a new Investigation. Follow-ups reuse bounded prior Findings and citations without copying raw provider payloads or private model reasoning.
 
 Recent context includes up to 12 user and assistant Messages, oldest first, with their
-timestamps. Assistant Messages come from completed Investigations in this Conversation
-and carry their structured Conclusion for continuity; another Conversation's private
-answers are not included. Long entries are shortened and
+timestamps. Only Messages owned by earlier Investigations are included; current and
+queued requests remain separate. A previous reply is retained even if it arrived after
+the current request was queued. Recent replies provide compact text; their structured
+details, including Action Proposals and citations, are available on demand.
+Another Conversation's private answers are not included. Long entries are shortened and
 marked as truncated. This bounded context is not a complete memory of the Conversation.
 When recent context is insufficient, the investigator can read bounded older pages from
 the same Conversation. Those pages preserve Message order, corrections, canonical answers,
 and their Investigation identities. Stored history is context rather than a current request
 or fresh evidence. Prior Findings retain their observation time and evidence window and can
 be reconsidered after a correction, refresh request, or window change.
+Initial Findings, including those shared through the same Incident, must have been
+concluded before the current Investigation opened. Later evidence enters through explicit
+reads rather than silently changing prior context.
 
 Completed Investigations never resume, including those requiring human input. Send a new
 Message to create the next turn.

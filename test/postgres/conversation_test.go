@@ -70,6 +70,15 @@ func say(
 	return said
 }
 
+func startConversationTurn(t *testing.T, database *storage.Database, org, id uuid.UUID, question string) conversation.Turn {
+	t.Helper()
+	say(t, database, org, id, question)
+	turn, started, err := openTurnForTest(database, context.Background(), org, id, turnWindowLead)
+	if err != nil || !started {
+		t.Fatalf("opening Conversation turn: started=%v error=%v", started, err)
+	}
+	return turn
+}
 func TestQueuedMessagesDrainIntoOneNextTurn(t *testing.T) {
 	t.Parallel()
 
@@ -298,22 +307,23 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 		}, "", investigation.Usage{}); err != nil {
 		t.Fatalf("concluding Ada's turn: %v", err)
 	}
-	adaBrief, err := database.ConversationBrief(context.Background(), organization, ada.ID, 50)
+	adaNext := startConversationTurn(t, database, organization, ada.ID, "explain the previous answer")
+	adaBrief, err := database.ConversationBrief(context.Background(), organization, ada.ID, adaNext.InvestigationID, 50)
 	if err != nil {
 		t.Fatalf("reading Ada's own brief: %v", err)
 	}
 	if len(adaBrief.Limitations) != 1 ||
 		!slices.Contains(adaBrief.OpenHypotheses, "a traffic spike may also have contributed") ||
 		len(adaBrief.Recent) != 2 ||
-		adaBrief.Recent[1].Answer == nil || len(adaBrief.Recent[1].Answer.Actions) != 1 {
+		adaBrief.Recent[1].Answer != nil {
 		t.Fatalf("Ada's conclusion prose was not persisted into her own continuity: %+v",
 			adaBrief)
 	}
 
 	bo := openConversationAbout(t, database, organization, "why is checkout slow", incident)
-	say(t, database, organization, bo.ID, "what do we know already?")
+	boTurn := startConversationTurn(t, database, organization, bo.ID, "what do we know already?")
 
-	brief, err := database.ConversationBrief(context.Background(), organization, bo.ID, 50)
+	brief, err := database.ConversationBrief(context.Background(), organization, bo.ID, boTurn.InvestigationID, 50)
 	if err != nil {
 		t.Fatalf("reading Bo's brief: %v", err)
 	}
@@ -349,10 +359,25 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 		t.Errorf("Bo's brief carries Ada's private conclusion prose: limitations=%+v",
 			brief.Limitations)
 	}
+	if err := database.ConcludeInvestigation(context.Background(), organization, adaNext.InvestigationID,
+		claimToken(t, database, organization, adaNext.InvestigationID), investigation.Conclusion{
+			Summary: "later answer",
+			Findings: []investigation.Finding{{
+				Statement: "a later observation must require an explicit read",
+				Kind:      investigation.FindingObservation,
+				RunRefs:   []int{1},
+			}},
+		}, "", investigation.Usage{}); err != nil {
+		t.Fatal(err)
+	}
+	unchanged, err := database.ConversationBrief(context.Background(), organization, bo.ID, boTurn.InvestigationID, 50)
+	if err != nil || len(unchanged.Findings) != 1 || unchanged.Findings[0].InvestigationID != adaTurn.InvestigationID {
+		t.Fatalf("a conclusion after Bo's Investigation opened changed initial context: %+v, error=%v", unchanged.Findings, err)
+	}
 	other := recordIncident(t, database, organization, integration, "group-unrelated")
 	cass := openConversationAbout(t, database, organization, "payments are failing", other)
 	unrelated, err := database.ConversationBrief(context.Background(), organization,
-		cass.ID, 50)
+		cass.ID, startConversationTurn(t, database, organization, cass.ID, "what is known?").InvestigationID, 50)
 	if err != nil {
 		t.Fatalf("reading the unrelated brief: %v", err)
 	}
@@ -363,6 +388,22 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 	pool, err := poolForTest(database, organization)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `UPDATE investigation SET concluded_at = $3
+		WHERE org_id = $1 AND investigation_id = $2`, organization, adaNext.InvestigationID, boTurn.CreatedAt); err != nil {
+		t.Fatal(err)
+	}
+	unchanged, err = database.ConversationBrief(context.Background(), organization, bo.ID, boTurn.InvestigationID, 50)
+	if err != nil || len(unchanged.Findings) != 1 {
+		t.Fatalf("a conclusion at the opening boundary entered prior context: %+v, error=%v", unchanged.Findings, err)
+	}
+	if _, err := pool.Exec(context.Background(), `UPDATE investigation SET concluded_at = $3
+		WHERE org_id = $1 AND investigation_id = $2`, organization, adaTurn.InvestigationID, adaNext.CreatedAt); err != nil {
+		t.Fatal(err)
+	}
+	adaBrief, err = database.ConversationBrief(context.Background(), organization, ada.ID, adaNext.InvestigationID, 50)
+	if err != nil || len(adaBrief.Findings) != 0 || len(adaBrief.OpenHypotheses) != 0 || len(adaBrief.Limitations) != 0 {
+		t.Fatalf("same-Conversation context ignored the opening cutoff: %+v, error=%v", adaBrief, err)
 	}
 	if _, err = pool.Exec(context.Background(), `DELETE FROM investigation_tool_run WHERE org_id = $1 AND investigation_id = $2`, organization, adaTurn.InvestigationID); err != nil {
 		t.Fatal(err)
@@ -397,43 +438,6 @@ func openConversationAbout(
 	return opened
 }
 
-func TestTheBriefCarriesActionsWithTheirCanonicalAnswer(t *testing.T) {
-	t.Parallel()
-
-	database, organization := migratedDatabase(t)
-	opened := openConversation(t, database, organization, "checkout is slow")
-	say(t, database, organization, opened.ID, "what changed?")
-	turn, took, err := openTurnForTest(database, context.Background(), organization, opened.ID,
-		turnWindowLead)
-	if err != nil || !took {
-		t.Fatalf("opening a turn: took=%v err=%v", took, err)
-	}
-	if err = database.ConcludeInvestigation(context.Background(), organization,
-		turn.InvestigationID, claimToken(t, database, organization, turn.InvestigationID), investigation.Conclusion{
-			Summary: "the 14:02 deploy is the change",
-			Actions: []investigation.ActionProposal{
-				{Title: "roll back the 14:02 deploy"}, {Title: "watch the latency panel"},
-			},
-		}, "", investigation.Usage{}); err != nil {
-		t.Fatalf("concluding: %v", err)
-	}
-
-	brief, err := database.ConversationBrief(context.Background(), organization,
-		opened.ID, 50)
-	if err != nil {
-		t.Fatalf("reading the brief: %v", err)
-	}
-	var answer *investigation.Conclusion
-	for _, entry := range brief.Recent {
-		if entry.InvestigationID == turn.InvestigationID && !entry.FromUser {
-			answer = entry.Answer
-		}
-	}
-	if answer == nil || len(answer.Actions) != 2 || answer.Actions[0].Title != "roll back the 14:02 deploy" {
-		t.Fatalf("recommendations lost their canonical answer owner: %+v", answer)
-	}
-}
-
 func TestConversationBriefKeepsOnlyTheMostRecentBoundedCitedFindings(t *testing.T) {
 	t.Parallel()
 
@@ -456,7 +460,8 @@ func TestConversationBriefKeepsOnlyTheMostRecentBoundedCitedFindings(t *testing.
 		"", investigation.Usage{}); err != nil {
 		t.Fatalf("concluding the turn: %v", err)
 	}
-	brief, err := database.ConversationBrief(context.Background(), organization, opened.ID, 20)
+	next := startConversationTurn(t, database, organization, opened.ID, "what happened next?")
+	brief, err := database.ConversationBrief(context.Background(), organization, opened.ID, next.InvestigationID, 20)
 	if err != nil {
 		t.Fatalf("reading the bounded brief: %v", err)
 	}
@@ -467,12 +472,6 @@ func TestConversationBriefKeepsOnlyTheMostRecentBoundedCitedFindings(t *testing.
 	if first, last := brief.Findings[0].Statement, brief.Findings[len(brief.Findings)-1].Statement; first != "finding-011" || last != "finding-050" {
 		t.Fatalf("retained prior findings span %q through %q, want the newest cited facts", first, last)
 	}
-	say(t, database, organization, opened.ID, "what happened next?")
-	next, took, err := openTurnForTest(database, context.Background(), organization, opened.ID,
-		turnWindowLead)
-	if err != nil || !took {
-		t.Fatalf("opening a later turn: took=%v error=%v", took, err)
-	}
 	if err = database.ConcludeInvestigation(context.Background(), organization,
 		next.InvestigationID, claimToken(t, database, organization, next.InvestigationID), investigation.Conclusion{
 			Summary: "later finding", Findings: []investigation.Finding{
@@ -481,7 +480,8 @@ func TestConversationBriefKeepsOnlyTheMostRecentBoundedCitedFindings(t *testing.
 		}, "", investigation.Usage{}); err != nil {
 		t.Fatalf("concluding the later turn: %v", err)
 	}
-	brief, err = database.ConversationBrief(context.Background(), organization, opened.ID, 20)
+	current := startConversationTurn(t, database, organization, opened.ID, "continue")
+	brief, err = database.ConversationBrief(context.Background(), organization, opened.ID, current.InvestigationID, 20)
 	if err != nil {
 		t.Fatalf("reading the later brief: %v", err)
 	}
@@ -520,7 +520,16 @@ func TestConversationHistoryRetrievesOlderFactsBeyondOneHundredMessages(t *testi
 		say(t, database, organization, opened.ID,
 			fmt.Sprintf("later operator message %03d", sequence))
 	}
-	brief, err := database.ConversationBrief(ctx, organization, opened.ID,
+	second, took, err := openTurnForTest(database, ctx, organization, opened.ID, turnWindowLead)
+	if err != nil || !took {
+		t.Fatalf("opening second turn: took=%v error=%v", took, err)
+	}
+	if err := database.ConcludeInvestigation(ctx, organization, second.InvestigationID,
+		claimToken(t, database, organization, second.InvestigationID), conclusionSaying("still investigating"), "", investigation.Usage{}); err != nil {
+		t.Fatal(err)
+	}
+	current := startConversationTurn(t, database, organization, opened.ID, "continue")
+	brief, err := database.ConversationBrief(ctx, organization, opened.ID, current.InvestigationID,
 		investigation.BriefRecentMessages)
 	if err != nil {
 		t.Fatal(err)
@@ -535,7 +544,7 @@ func TestConversationHistoryRetrievesOlderFactsBeyondOneHundredMessages(t *testi
 	if len(brief.Limitations[1]) > investigation.BriefMessageBound {
 		t.Fatalf("a retained limitation is unbounded: %d characters", len(brief.Limitations[1]))
 	}
-	page, err := database.ConversationHistory(ctx, organization, opened.ID, 51)
+	page, err := database.ConversationHistory(ctx, organization, opened.ID, current.InvestigationID, 51)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -548,6 +557,23 @@ func TestConversationHistoryRetrievesOlderFactsBeyondOneHundredMessages(t *testi
 	}
 	if !foundFact {
 		t.Fatalf("selected older fact was not retrieved: %+v", page)
+	}
+	expected := int64(152)
+	for before := brief.HistoryBefore; before != 0; {
+		page, err := database.ConversationHistory(ctx, organization, opened.ID, current.InvestigationID, before)
+		if err != nil || len(page.Exchange) == 0 || len(page.Exchange) > investigation.BriefRecentMessages {
+			t.Fatalf("invalid history page: %+v, error=%v", page, err)
+		}
+		for index, entry := range page.Exchange {
+			if entry.Sequence != expected-int64(len(page.Exchange)-1-index) {
+				t.Fatalf("history skipped or reordered a Message: sequence=%d page=%+v", entry.Sequence, page)
+			}
+		}
+		expected = page.Exchange[0].Sequence - 1
+		if (page.NextBefore == 0) != (expected == 0) || (page.NextBefore != 0 && page.NextBefore >= before) {
+			t.Fatalf("history cursor did not advance to the next older page: %+v", page)
+		}
+		before = page.NextBefore
 	}
 }
 
@@ -570,29 +596,40 @@ func TestFreshSchemaOmitsTheRetiredSamplerIndex(t *testing.T) {
 	}
 }
 
-func TestConversationBriefIncludesCanonicalAnswerBeforeCorrection(t *testing.T) {
+func TestConversationContextKeepsInterleavedRepliesAndExcludesQueuedMessages(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	database, organization := migratedDatabase(t)
+	database, organization, other := twoOrganizationsInOneDatabase(t)
 	opened := openConversation(t, database, organization, "recent exchange")
 	say(t, database, organization, opened.ID, "is production affected?")
 	turn, took, err := openTurnForTest(database, ctx, organization, opened.ID, turnWindowLead)
 	if err != nil || !took {
 		t.Fatalf("opening turn: took=%v err=%v", took, err)
 	}
+	say(t, database, organization, opened.ID, "correction: that was staging")
 	if err = database.ConcludeInvestigation(ctx, organization, turn.InvestigationID,
 		claimToken(t, database, organization, turn.InvestigationID), investigation.Conclusion{
 			Summary:  "production appears affected",
 			Findings: []investigation.Finding{{Statement: "production appears affected", RunRefs: []int{1}}},
+			Actions: []investigation.ActionProposal{{
+				Title:        "roll back",
+				Rationale:    "the deployment preceded the latency increase",
+				Verification: "check latency",
+				RunRefs:      []int{1},
+			}},
 		}, "", investigation.Usage{}); err != nil {
 		t.Fatal(err)
 	}
-	say(t, database, organization, opened.ID, "correction: that was staging")
-	brief, err := database.ConversationBrief(ctx, organization, opened.ID, 12)
+	next, took, err := openTurnForTest(database, ctx, organization, opened.ID, turnWindowLead)
+	if err != nil || !took {
+		t.Fatalf("opening follow-up: took=%v err=%v", took, err)
+	}
+	say(t, database, organization, opened.ID, "future request")
+	brief, err := database.ConversationBrief(ctx, organization, opened.ID, next.InvestigationID, 12)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"is production affected?", "production appears affected", "correction: that was staging"}
+	want := []string{"is production affected?", "production appears affected"}
 	if len(brief.Recent) != len(want) {
 		t.Fatalf("recent exchange = %+v, want question, canonical answer, correction", brief.Recent)
 	}
@@ -601,36 +638,73 @@ func TestConversationBriefIncludesCanonicalAnswerBeforeCorrection(t *testing.T) 
 			t.Fatalf("exchange[%d] = %q, want %q", n, brief.Recent[n].Text, text)
 		}
 	}
-	if brief.Recent[0].Sequence != 1 || brief.Recent[1].Sequence != 2 || brief.Recent[2].Sequence != 3 ||
+	if brief.Recent[0].Sequence != 1 || brief.Recent[1].Sequence != 3 ||
 		brief.Recent[1].InvestigationID != turn.InvestigationID || brief.Recent[1].FromUser ||
-		brief.Recent[1].CreatedAt.IsZero() {
+		brief.Recent[1].CreatedAt.IsZero() || brief.Recent[1].Answer != nil {
 		t.Fatalf("exchange lost source identity: %+v", brief.Recent)
 	}
-	limited, err := database.ConversationBrief(ctx, organization, opened.ID, 2)
-	if err != nil || len(limited.Recent) != 2 || limited.Recent[0].Text != want[1] || limited.Recent[1].Text != want[2] {
+	limited, err := database.ConversationBrief(ctx, organization, opened.ID, next.InvestigationID, 1)
+	if err != nil || len(limited.Recent) != 1 || limited.Recent[0].Text != want[1] {
 		t.Fatalf("bounded exchange = %+v, err=%v", limited.Recent, err)
 	}
 	detail, err := database.ConversationDetail(ctx, organization, opened.ID, 12)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(detail.Messages) != 3 || detail.Messages[1].Role != conversation.RoleAssistant {
+	if len(detail.Messages) != 4 || detail.Messages[2].Role != conversation.RoleAssistant {
 		t.Fatalf("answer was not represented by one assistant Message: %+v", detail.Messages)
 	}
-	for range 14 {
-		say(t, database, organization, opened.ID, "later discussion")
+	assigned, err := database.InvestigationMessages(ctx, organization, opened.ID, next.InvestigationID)
+	if err != nil || len(assigned) != 1 || assigned[0].Sequence != 2 || assigned[0].Text != "correction: that was staging" {
+		t.Fatalf("current request changed: %+v, error=%v", assigned, err)
 	}
-	history, err := database.ConversationHistory(ctx, organization, opened.ID, 4)
+	history, err := database.ConversationHistory(ctx, organization, opened.ID, next.InvestigationID, 4)
 	if err != nil || len(history.Exchange) != len(want) {
 		t.Fatalf("older exchange = %+v, error=%v", history, err)
 	}
-	if !history.MissingEvidence || len(history.Limitations) != 1 {
-		t.Fatalf("pruned evidence was not carried as a history limitation: %+v", history)
+	missing, err := database.EvidenceMissing(ctx, organization, []investigation.EvidenceRef{{
+		InvestigationID: turn.InvestigationID,
+		ToolRunOrdinal:  1,
+	}})
+	if err != nil || !missing {
+		t.Fatalf("unavailable history evidence was not detected: missing=%v error=%v", missing, err)
 	}
 	for index, expected := range want {
 		if history.Exchange[index].Text != expected {
 			t.Fatalf("older exchange[%d] = %q, want %q", index, history.Exchange[index].Text, expected)
 		}
+	}
+	answer := history.Exchange[1].Answer
+	if answer == nil || len(answer.Actions) != 1 || answer.Actions[0].Rationale != "the deployment preceded the latency increase" ||
+		answer.Actions[0].Verification != "check latency" || !slices.Equal(answer.Actions[0].RunRefs, []int{1}) {
+		t.Fatalf("canonical action details lost: %+v", answer)
+	}
+	if _, err := database.ConversationBrief(ctx, other, opened.ID, next.InvestigationID, 12); err == nil {
+		t.Fatal("another Organization read prior context")
+	}
+	if _, err := database.ConversationHistory(ctx, other, opened.ID, next.InvestigationID, 4); err == nil {
+		t.Fatal("another Organization read history")
+	}
+	sibling := openConversation(t, database, organization, "other Conversation")
+	if _, err := database.ConversationBrief(ctx, organization, sibling.ID, next.InvestigationID, 12); err == nil {
+		t.Fatal("mismatched Conversation and Investigation read prior context")
+	}
+	if _, err := database.ConversationHistory(ctx, organization, sibling.ID, next.InvestigationID, 4); err == nil {
+		t.Fatal("mismatched Conversation and Investigation read history")
+	}
+	if brief.HistoryBefore != 4 || limited.NextBefore != 3 {
+		t.Fatalf("history range lost the interleaved reply: brief=%+v limited=%+v", brief, limited)
+	}
+	if err := database.ConcludeInvestigation(ctx, organization, next.InvestigationID,
+		claimToken(t, database, organization, next.InvestigationID), conclusionSaying("staging confirmed"), "", investigation.Usage{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, started, err := openTurnForTest(database, ctx, organization, opened.ID, turnWindowLead); err != nil || !started {
+		t.Fatalf("opening future turn: started=%v error=%v", started, err)
+	}
+	repeated, err := database.ConversationHistory(ctx, organization, opened.ID, next.InvestigationID, 100)
+	if err != nil || len(repeated.Exchange) != 2 || repeated.Exchange[1].Sequence != 3 || repeated.NextBefore != 0 {
+		t.Fatalf("current or later turns changed previous history: %+v, error=%v", repeated, err)
 	}
 }
 
@@ -648,7 +722,8 @@ func TestRecentAnswerMarksOptionalTextTruncation(t *testing.T) {
 		claimToken(t, database, organization, turn.InvestigationID), investigation.Conclusion{Summary: strings.Repeat("界", 2000)}, "", investigation.Usage{}); err != nil {
 		t.Fatal(err)
 	}
-	brief, err := database.ConversationBrief(ctx, organization, opened.ID, 1)
+	current := startConversationTurn(t, database, organization, opened.ID, "continue")
+	brief, err := database.ConversationBrief(ctx, organization, opened.ID, current.InvestigationID, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -675,7 +750,16 @@ func TestRecentExchangePreservesMessageSequenceWhenTransactionTimesDisagree(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	brief, err := database.ConversationBrief(ctx, organization, opened.ID, 2)
+	prior, took, err := openTurnForTest(database, ctx, organization, opened.ID, turnWindowLead)
+	if err != nil || !took {
+		t.Fatalf("opening prior turn: took=%v error=%v", took, err)
+	}
+	if err := database.FailInvestigation(ctx, organization, prior.InvestigationID,
+		claimToken(t, database, organization, prior.InvestigationID), "telemetry unavailable", investigation.Usage{}); err != nil {
+		t.Fatal(err)
+	}
+	current := startConversationTurn(t, database, organization, opened.ID, "continue")
+	brief, err := database.ConversationBrief(ctx, organization, opened.ID, current.InvestigationID, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -713,10 +797,14 @@ func TestProviderConversationRequiresAnIntactOriginBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	current, took, err := openTurnForTest(database, ctx, org, chat.Conversation, turnWindowLead)
+	if err != nil || !took {
+		t.Fatalf("opening Slack turn: took=%v error=%v", took, err)
+	}
 	if _, err := pool.Exec(ctx, `ALTER TABLE conversation_message RENAME TO unavailable_history`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.ConversationBrief(ctx, org, chat.Conversation, 10); err == nil {
+	if _, err := database.ConversationBrief(ctx, org, chat.Conversation, current.InvestigationID, 10); err == nil {
 		t.Fatal("history remained available after its table was renamed")
 	}
 	independent, err := database.ConversationOrigin(ctx, org, chat.Conversation)

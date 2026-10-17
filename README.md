@@ -16,7 +16,7 @@
   <a href="https://docs.open-cluster.io/api-reference/overview">API</a> ·
   <a href="https://docs.open-cluster.io/security/overview">Security</a> ·
   <a href="https://docs.open-cluster.io/developers/contributing">Contributing</a> ·
-  <a href="https://discord.gg/pdFEgFr66">Discord</a>
+  <a href="https://discord.com/invite/8HrEBhUagE">Discord</a>
 </p>
 
 OpenCluster is an open-source AI SRE for production incident investigation.
@@ -41,7 +41,8 @@ Uncertainty, missing telemetry, and unresolved assumptions remain explicit.
 7. Resolved Incidents can produce reviewed **Postmortems**.
 
 An Investigation is immutable once completed. Follow-ups create new Investigations while
-retaining bounded Conversation context and previously cited Findings.
+retaining bounded Conversation context and cited Findings established before the new
+Investigation opened. Earlier reply details and older Messages are loaded on demand.
 
 ## Integrations
 
