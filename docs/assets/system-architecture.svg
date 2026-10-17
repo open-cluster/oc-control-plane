@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1100" viewBox="0 0 1800 1100" role="img" aria-labelledby="title desc">
+<title id="title">OpenCluster system architecture</title>
+<desc id="desc">Web console, alerts, and Slack enter the OpenCluster Go control plane. Coordination, investigation workers, and integration tools use PostgreSQL, external AI providers, provider APIs, and the customer-side Relay, which opens outbound gRPC sessions for bounded Kubernetes reads.</desc>
+<defs>
+<marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M1,1 L8,5 L1,9" fill="none" stroke="#4165A5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></marker>
+<marker id="arrowGrey" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M1,1 L8,5 L1,9" fill="none" stroke="#60788C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></marker>
+<filter id="softShadow" x="-20%" y="-30%" width="140%" height="180%"><feDropShadow dx="0" dy="4" stdDeviation="7" flood-color="#162641" flood-opacity=".065"/></filter>
+<style>
+text {font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif}
+.top {font-size:40px;font-weight:740;fill:#14253D;letter-spacing:-1.25px}
+.intro {font-size:18px;fill:#627387}
+.tiny {font-size:14px;fill:#708197}
+.section {font-size:19px;font-weight:730;letter-spacing:1.5px;fill:#5A6F87}
+.sectionBlue {font-size:19px;font-weight:740;letter-spacing:1.3px;fill:#345B9D}
+.boxTitle {font-size:24px;font-weight:720;fill:#17324F;letter-spacing:-.4px}
+.boxSub {font-size:17px;fill:#5E7085}
+.boxSubSmall {font-size:16px;fill:#5E7085}
+.badge {font-size:15px;font-weight:680;letter-spacing:.65px;fill:#4467A3}
+.flowLabel {font-size:15px;font-weight:650;fill:#526983}
+.dbTitle {font-size:24px;font-weight:740;fill:#244D88}
+</style>
+</defs><rect x="0" y="0" width="1800" height="1100" fill="#FFFFFF"/>
+<rect x="64" y="51" width="11" height="50" rx="5" fill="#3869C4"/>
+<text x="96" y="88" class="top" text-anchor="start">OpenCluster system architecture</text>
+<text x="97" y="124" class="intro" text-anchor="start">Evidence-first investigation  •  Current implementation</text>
+<rect x="1455" y="67" width="277" height="39" rx="19" fill="#F3F6FB" stroke="#E1EAF4" stroke-width="1"/>
+<text x="1594" y="93" class="badge" text-anchor="middle">HIGH-LEVEL OVERVIEW</text>
+<rect x="391" y="184" width="836" height="871" rx="26" fill="#F9FBFE" stroke="#C4D7ED" stroke-width="2" stroke-dasharray="9 7"/>
+<rect x="418" y="255" width="783" height="633" rx="23" fill="#F2F7FD" stroke="#B5CCEA" stroke-width="2"/>
+<text x="419" y="219" class="sectionBlue" text-anchor="start">OPENCLUSTER BACKEND</text>
+<text x="453" y="290" class="sectionBlue" text-anchor="start">CONTROL PLANE  ·  GO SERVICE</text>
+<text x="74" y="221" class="section" text-anchor="start">ENTRY POINTS</text>
+<text x="1350" y="305" class="section" text-anchor="start">EXTERNAL SERVICES</text>
+<rect x="66" y="300" width="258" height="113" rx="16" fill="#F8FAFD" stroke="#CBD9EA" stroke-width="2"/>
+<text x="90" y="347" class="boxTitle" text-anchor="start">Web console</text>
+<text x="90" y="377" class="boxSub" text-anchor="start">Operator UI · Next.js</text>
+<rect x="66" y="471" width="258" height="113" rx="16" fill="#F8FAFD" stroke="#CBD9EA" stroke-width="2"/>
+<text x="90" y="518" class="boxTitle" text-anchor="start">Alertmanager</text>
+<text x="90" y="548" class="boxSub" text-anchor="start">Alert notifications</text>
+<rect x="66" y="642" width="258" height="113" rx="16" fill="#F8FAFD" stroke="#CBD9EA" stroke-width="2"/>
+<text x="90" y="689" class="boxTitle" text-anchor="start">Slack</text>
+<text x="90" y="719" class="boxSub" text-anchor="start">Messages &amp; events</text>
+<rect x="457" y="321" width="280" height="112" rx="16" fill="#FFFFFF" stroke="#CFDCEC" stroke-width="2" filter="url(#softShadow)"/>
+<text x="481" y="368" class="boxTitle" text-anchor="start">HTTP API</text>
+<text x="481" y="398" class="boxSub" text-anchor="start">REST · auth · event streams</text>
+<rect x="457" y="500" width="280" height="112" rx="16" fill="#FFFFFF" stroke="#CFDCEC" stroke-width="2" filter="url(#softShadow)"/>
+<text x="481" y="547" class="boxTitle" text-anchor="start">Webhook intake</text>
+<text x="481" y="577" class="boxSub" text-anchor="start">Alerts · Slack events</text>
+<rect x="795" y="321" width="375" height="112" rx="16" fill="#EFF5FF" stroke="#A9C3EC" stroke-width="2" filter="url(#softShadow)"/>
+<text x="819" y="368" class="boxTitle" text-anchor="start">Coordination</text>
+<text x="819" y="398" class="boxSub" text-anchor="start">Incidents · conversations · postmortems</text>
+<rect x="795" y="488" width="375" height="123" rx="16" fill="#EFF5FF" stroke="#A9C3EC" stroke-width="2" filter="url(#softShadow)"/>
+<text x="819" y="518" class="badge" text-anchor="start">DURABLE EXECUTION</text>
+<text x="819" y="550" class="boxTitle" text-anchor="start">Investigation workers</text>
+<text x="819" y="576" class="boxSub" text-anchor="start">AI reasoning · cited findings</text>
+<rect x="795" y="666" width="375" height="103" rx="16" fill="#FFFFFF" stroke="#CFDCEC" stroke-width="2" filter="url(#softShadow)"/>
+<text x="819" y="713" class="boxTitle" text-anchor="start">Integration tools</text>
+<text x="819" y="743" class="boxSub" text-anchor="start">Kubernetes · GitHub · Slack</text>
+<rect x="795" y="793" width="375" height="77" rx="16" fill="#FFFFFF" stroke="#CFDCEC" stroke-width="2" filter="url(#softShadow)"/>
+<text x="819" y="840" class="boxTitle" text-anchor="start">Relay gRPC endpoint</text>
+<text x="819" y="870" class="boxSub" text-anchor="start">Session · job dispatch</text>
+<rect x="1344" y="475" width="386" height="105" rx="16" fill="#FFFFFF" stroke="#D4DFE7" stroke-width="2"/>
+<text x="1368" y="522" class="boxTitle" text-anchor="start">AI model providers</text>
+<text x="1368" y="552" class="boxSub" text-anchor="start">Anthropic · Z.AI</text>
+<rect x="1344" y="656" width="386" height="105" rx="16" fill="#FFFFFF" stroke="#D4DFE7" stroke-width="2"/>
+<text x="1368" y="703" class="boxTitle" text-anchor="start">GitHub / Slack APIs</text>
+<text x="1368" y="733" class="boxSub" text-anchor="start">Changes · messages · context</text>
+<rect x="1274" y="801" width="456" height="251" rx="25" fill="#F9FCFF" stroke="#9EB8D7" stroke-width="2" stroke-dasharray="8 6"/>
+<text x="1300" y="826" class="section" text-anchor="start">CUSTOMER ENVIRONMENT</text>
+<rect x="1299" y="846" width="183" height="91" rx="16" fill="#F5F9FF" stroke="#B7CAE5" stroke-width="2" filter="url(#softShadow)"/>
+<text x="1323" y="893" class="boxTitle" text-anchor="start">Relay</text>
+<text x="1323" y="923" class="boxSub" text-anchor="start">Policy · redaction</text>
+<rect x="1513" y="846" width="193" height="91" rx="16" fill="#FFFFFF" stroke="#D4DFE7" stroke-width="2"/>
+<text x="1537" y="893" class="boxTitle" text-anchor="start">K8s API server</text>
+<text x="1537" y="923" class="boxSub" text-anchor="start">Authorized reads</text>
+<rect x="1513" y="956" width="193" height="78" rx="15" fill="#FFFFFF" stroke="#D4DFE7" stroke-width="2"/>
+<text x="1530" y="985" class="boxSub" text-anchor="start">Pods &amp; workloads</text>
+<text x="1530" y="1011" class="boxSubSmall" text-anchor="start">Events · logs</text>
+<path d="M809,960 C809,947 877,938 954,938 C1031,938 1099,947 1099,960 L1099,1015 C1099,1030 1031,1039 954,1039 C877,1039 809,1030 809,1015 Z" fill="#EAF2FE" stroke="#91B2E0" stroke-width="2.5"/>
+<ellipse cx="954" cy="960" rx="145" ry="23" fill="#F8FBFF" stroke="#91B2E0" stroke-width="2.5"/>
+<text x="954" y="1002" class="dbTitle" text-anchor="middle">PostgreSQL</text>
+<text x="954" y="1026" class="boxSubSmall" text-anchor="middle">State · evidence · durable jobs</text>
+<path d="M324 357 H454" fill="none" stroke="#4165A5" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M324 527 H454" fill="none" stroke="#4165A5" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M324 699 H412 V580 H454" fill="none" stroke="#4165A5" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M737 373 H792" fill="none" stroke="#4165A5" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M737 557 H764 V400 H792" fill="none" stroke="#4165A5" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M980 433 V485" fill="none" stroke="#4165A5" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M980 611 V663" fill="none" stroke="#4165A5" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M980 769 V790" fill="none" stroke="#4165A5" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M1170 547 H1292 V527 H1341" fill="none" stroke="#4165A5" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M1170 716 H1341" fill="none" stroke="#4165A5" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M1170 829 H1246 V892 H1296" fill="none" stroke="#4165A5" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+<path d="M1482 891 H1510" fill="none" stroke="#60788C" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowGrey)"/>
+<path d="M1610 937 V953" fill="none" stroke="#60788C" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowGrey)"/>
+<path d="M955 871 V934" fill="none" stroke="#60788C" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowGrey)" marker-start="url(#arrowGrey)"/>
+<rect x="325" y="323" width="60" height="28" rx="7" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0"/>
+<text x="333" y="343" class="flowLabel" text-anchor="start">HTTP</text>
+<rect x="322" y="490" width="80.10000000000001" height="28" rx="7" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0"/>
+<text x="330" y="510" class="flowLabel" text-anchor="start">Webhook</text>
+<rect x="321" y="664" width="63.5" height="28" rx="7" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0"/>
+<text x="329" y="684" class="flowLabel" text-anchor="start">Event</text>
+<rect x="1216" y="491" width="113.30000000000001" height="28" rx="7" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0"/>
+<text x="1224" y="511" class="flowLabel" text-anchor="start">Model calls</text>
+<rect x="1185" y="683" width="138.20000000000002" height="28" rx="7" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0"/>
+<text x="1193" y="703" class="flowLabel" text-anchor="start">Provider reads</text>
+<rect x="1125" y="776" width="188" height="28" rx="7" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0"/>
+<text x="1133" y="796" class="flowLabel" text-anchor="start">gRPC · bidirectional</text>
+<rect x="979" y="898" width="60" height="28" rx="7" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0"/>
+<text x="987" y="918" class="flowLabel" text-anchor="start">SQL</text>
+<line x1="66" y1="1075" x2="1730" y2="1075" stroke="#E2E9F0" stroke-width="2"/>
+<text x="72" y="1093" class="tiny" text-anchor="start">Solid arrows show logical interactions, not separate deployable services. Relay connects outbound; Kubernetes credentials remain customer-side.</text>
+</svg>
