@@ -22,8 +22,8 @@ import (
 type Store interface {
 	InvestigationCandidates(context.Context, uuid.UUID) ([]integrations.Integration, error)
 	TriggerIncident(context.Context, uuid.UUID, uuid.UUID) (investigation.Trigger, error)
-	ConversationBrief(context.Context, uuid.UUID, uuid.UUID, int) (investigation.Brief, error)
-	ConversationHistory(context.Context, uuid.UUID, uuid.UUID, int64) (investigation.HistoryPage, error)
+	ConversationBrief(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, int) (investigation.Brief, error)
+	ConversationHistory(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, int64) (investigation.HistoryPage, error)
 	ConversationOrigin(context.Context, uuid.UUID, uuid.UUID) (*investigation.ConversationOrigin, error)
 	InvestigationMessages(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) ([]investigation.AssignedMessage, error)
 	WorkloadInventory(context.Context, uuid.UUID, int) ([]string, error)
@@ -205,8 +205,8 @@ func (r *Agent) Run(
 		investigation.StartedPayload(opened, true))
 
 	oriented := r.orientation(ctx, organization, opened, offered, brief)
-	if len(messages) > 0 {
-		oriented.HistoryBefore = messages[0].Sequence
+	if brief != nil {
+		oriented.HistoryBefore = brief.HistoryBefore
 	}
 	if opened.ConversationID != uuid.Nil {
 		if len(messages) > 0 {
@@ -268,7 +268,7 @@ func (r *Agent) Run(
 	state.tools = exchangeTools(oriented)
 	var priorEvidence []investigation.EvidenceRef
 	if oriented.Brief != nil {
-		for _, finding := range oriented.Brief.Findings {
+		for _, finding := range dedupeFindings(oriented.Brief.Findings) {
 			priorEvidence = append(priorEvidence, finding.References()...)
 		}
 	}
@@ -476,8 +476,8 @@ func (r *Agent) Run(
 				if page, ok := result.Run.Content.(investigation.HistoryPage); ok {
 					priorEvidence = append(priorEvidence, historyEvidence(page)...)
 					state.missingEvidence = state.missingEvidence || page.MissingEvidence
+					freshRead = freshRead || (result.Run.Outcome == investigation.RunSucceeded && len(page.Exchange) > 0)
 				}
-				freshRead = freshRead || result.Run.Outcome == investigation.RunSucceeded
 				results = append(results, result)
 				continue
 			}

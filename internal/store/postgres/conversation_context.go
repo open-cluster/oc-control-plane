@@ -15,44 +15,27 @@ import (
 )
 
 func (p *Database) ConversationBrief(
-	ctx context.Context, organization uuid.UUID, id uuid.UUID, tail int,
+	ctx context.Context, organization, id, current uuid.UUID, tail int,
 ) (investigation.Brief, error) {
 	if tail <= 0 || tail > investigation.BriefRecentMessages {
 		tail = investigation.BriefRecentMessages
-	}
-	_, err := p.conversationByID(ctx, organization, id)
-	if err != nil {
-		return investigation.Brief{}, err
 	}
 	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return investigation.Brief{}, err
 	}
-
-	brief := investigation.Brief{}
-	messages, err := conversationMessages(ctx, pool, organization, id, tail)
+	page, err := readConversationMessages(ctx, pool, organization, id, current, 0, tail, false)
 	if err != nil {
 		return investigation.Brief{}, err
 	}
-	for _, message := range messages {
-		brief.Recent = append(brief.Recent, investigation.BriefMessage{
-			FromUser:        message.Role == conversationRoleUser,
-			Author:          message.AuthorName,
-			Text:            briefExchangeText(message.Text),
-			Sequence:        message.Sequence,
-			CreatedAt:       message.CreatedAt,
-			InvestigationID: message.InvestigationID,
-		})
+	brief := investigation.Brief{
+		Recent:     page.Exchange,
+		NextBefore: page.NextBefore,
 	}
-	answers, err := readRecentAnswers(ctx, pool, organization, id, tail)
-	if err != nil {
-		return investigation.Brief{}, err
+	if len(brief.Recent) > 0 {
+		brief.HistoryBefore = brief.Recent[len(brief.Recent)-1].Sequence + 1
 	}
-	brief.Recent = mergeExchange(brief.Recent, answers)
-	if len(brief.Recent) > tail {
-		brief.Recent = brief.Recent[len(brief.Recent)-tail:]
-	}
-	if err = readPriorTurns(ctx, pool, organization, id, &brief); err != nil {
+	if err = readPriorTurns(ctx, pool, organization, id, current, &brief); err != nil {
 		return investigation.Brief{}, err
 	}
 	var refs []investigation.EvidenceRef
@@ -69,35 +52,6 @@ func (p *Database) ConversationBrief(
 	return brief, nil
 }
 
-func readRecentAnswers(ctx context.Context, pool querier, organization uuid.UUID,
-	id uuid.UUID, limit int,
-) ([]investigation.BriefMessage, error) {
-	rows, err := pool.Query(ctx, `
-		SELECT investigation_id, concluded_at, COALESCE(conclusion->>'summary', ''), conclusion
-		  FROM investigation
-		 WHERE org_id = $1 AND conversation_id = $2 AND status = 2
-		 ORDER BY turn DESC
-		 LIMIT $3`, organization, id, limit)
-	if err != nil {
-		return nil, fmt.Errorf("reading recent answers: %w", err)
-	}
-	defer rows.Close()
-	var answers []investigation.BriefMessage
-	for rows.Next() {
-		var answer investigation.BriefMessage
-		if err = rows.Scan(&answer.InvestigationID, &answer.CreatedAt, &answer.Text, &answer.Answer); err != nil {
-			return nil, fmt.Errorf("scanning recent answer: %w", err)
-		}
-		answer.Text = briefExchangeText(answer.Text)
-		answers = append(answers, answer)
-	}
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("reading recent answers: %w", err)
-	}
-	slices.Reverse(answers)
-	return answers, nil
-}
-
 func briefExchangeText(text string) string {
 	if len([]rune(text)) <= investigation.BriefMessageBound {
 		return text
@@ -106,10 +60,8 @@ func briefExchangeText(text string) string {
 	return boundedRunes(text, investigation.BriefMessageBound-len(suffix)) + suffix
 }
 
-const conversationRoleUser = 1
-
 func readPriorTurns(
-	ctx context.Context, pool querier, organization uuid.UUID, id uuid.UUID,
+	ctx context.Context, pool querier, organization, id, current uuid.UUID,
 	brief *investigation.Brief,
 ) error {
 	rows, err := pool.Query(ctx, `
@@ -117,16 +69,18 @@ func readPriorTurns(
 		       turn.investigation_id, turn.conclusion, turn.concluded_at,
 		       turn.window_from, turn.window_until
 		  FROM investigation turn
+		  JOIN investigation current ON current.org_id = turn.org_id
+		   AND current.conversation_id = $2 AND current.investigation_id = $3
 		 WHERE turn.org_id = $1
 		   AND turn.status = 2
+		   AND turn.investigation_id <> $3
+		   AND turn.concluded_at < current.created_at
+		   AND (turn.conversation_id IS DISTINCT FROM $2 OR turn.turn < current.turn)
 		   AND (turn.conversation_id = $2
 		        OR (turn.incident_id IS NOT NULL
-		            AND turn.incident_id = (SELECT incident_id
-		                                     FROM conversation
-		                                    WHERE org_id          = $1
-		                                      AND conversation_id = $2)))
+		            AND turn.incident_id = current.incident_id))
 		 ORDER BY turn.conversation_id = $2 DESC, turn.turn DESC, turn.created_at DESC
-		 LIMIT $3`, organization, id, investigation.BriefMaxFindings)
+		 LIMIT $4`, organization, id, current, investigation.BriefMaxFindings)
 	if err != nil {
 		return fmt.Errorf("reading a conversation's prior findings: %w", err)
 	}
@@ -198,69 +152,24 @@ func readPriorTurns(
 	return nil
 }
 
-func (p *Database) ConversationHistory(ctx context.Context, org uuid.UUID, id uuid.UUID, before int64) (investigation.HistoryPage, error) {
-	page := investigation.HistoryPage{Exchange: []investigation.BriefMessage{}}
+func (p *Database) ConversationHistory(
+	ctx context.Context, org, id, current uuid.UUID, before int64,
+) (investigation.HistoryPage, error) {
 	pool, err := p.poolForOrganization(org)
 	if err != nil {
-		return page, err
+		return investigation.HistoryPage{}, err
 	}
-	rows, err := pool.Query(ctx, `SELECT sequence, role, author_name, text, created_at, investigation_id
-		FROM conversation_message WHERE org_id=$1 AND conversation_id=$2 AND sequence<$3
-		ORDER BY sequence DESC LIMIT $4`, org, id, before, investigation.BriefRecentMessages+1)
-	if err != nil {
-		return page, fmt.Errorf("reading older Messages: %w", err)
-	}
-	var messages []investigation.BriefMessage
-	for rows.Next() {
-		var message investigation.BriefMessage
-		var role int16
-		var owner *uuid.UUID
-		if err = rows.Scan(&message.Sequence, &role, &message.Author, &message.Text, &message.CreatedAt, &owner); err != nil {
-			rows.Close()
-			return page, err
-		}
-		message.FromUser = role == conversationRoleUser
-		message.Text = briefExchangeText(message.Text)
-		if owner != nil {
-			message.InvestigationID = *owner
-		}
-		messages = append(messages, message)
-	}
-	rows.Close()
-	if err = rows.Err(); err != nil {
-		return page, err
-	}
-	if len(messages) == 0 {
-		return page, nil
-	}
-	if len(messages) > investigation.BriefRecentMessages {
-		messages = messages[:investigation.BriefRecentMessages]
-		page.NextBefore = messages[len(messages)-1].Sequence
-	}
-	slices.Reverse(messages)
-	ids := make([]uuid.UUID, 0, len(messages))
-	for _, message := range messages {
-		if message.InvestigationID != uuid.Nil && !slices.Contains(ids, message.InvestigationID) {
-			ids = append(ids, message.InvestigationID)
-		}
-	}
-	answers, err := historyAnswers(ctx, pool, org, id, ids, messages[len(messages)-1].Sequence)
+	page, err := readConversationMessages(ctx, pool, org, id, current, before, investigation.BriefRecentMessages, true)
 	if err != nil {
 		return page, err
 	}
-	page.Exchange = mergeExchange(messages, answers)
 	var refs []investigation.EvidenceRef
-	for _, entry := range answers {
-		if entry.Answer == nil {
-			continue
-		}
-		for _, finding := range entry.Answer.Findings {
-			refs = append(refs, finding.EvidenceRefs...)
-			for _, ordinal := range finding.RunRefs {
-				refs = append(refs, investigation.EvidenceRef{
-					InvestigationID: entry.InvestigationID, ToolRunOrdinal: ordinal,
-				})
-			}
+	for _, entry := range page.Exchange {
+		if entry.Answer != nil {
+			refs = append(refs, resultEvidence(investigation.Investigation{
+				ID:         entry.InvestigationID,
+				Conclusion: *entry.Answer,
+			})...)
 		}
 	}
 	page.MissingEvidence, err = evidenceMissing(ctx, pool, org, refs)
@@ -273,60 +182,55 @@ func (p *Database) ConversationHistory(ctx context.Context, org uuid.UUID, id uu
 	return page, nil
 }
 
-func historyAnswers(ctx context.Context, pool querier, org uuid.UUID, id uuid.UUID, ids []uuid.UUID, through int64) ([]investigation.BriefMessage, error) {
-	if len(ids) == 0 {
-		return nil, nil
+func readConversationMessages(
+	ctx context.Context, pool querier, org, id, current uuid.UUID, before int64, limit int, details bool,
+) (investigation.HistoryPage, error) {
+	page := investigation.HistoryPage{Exchange: []investigation.BriefMessage{}}
+	var turn int
+	err := pool.QueryRow(ctx, `SELECT turn FROM investigation
+		WHERE org_id = $1 AND conversation_id = $2 AND investigation_id = $3`,
+		org, id, current).Scan(&turn)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return page, investigation.ErrUnknown
 	}
-	rows, err := pool.Query(ctx, `SELECT turn.investigation_id, turn.concluded_at, COALESCE(turn.conclusion->>'summary',''), turn.conclusion,
-		(SELECT MAX(message.sequence) FROM conversation_message message WHERE message.org_id=$1
-			AND message.conversation_id=$2 AND message.investigation_id=turn.investigation_id)
-		FROM investigation turn WHERE turn.org_id=$1 AND turn.conversation_id=$2
-		AND turn.investigation_id=ANY($3) AND turn.status=2
-		AND NOT EXISTS (SELECT 1 FROM conversation_message message WHERE message.org_id=$1
-			AND message.conversation_id=$2 AND message.investigation_id=turn.investigation_id AND message.sequence>$4)
-		ORDER BY turn.concluded_at, turn.turn`, org, id, ids, through)
 	if err != nil {
-		return nil, fmt.Errorf("reading older answers: %w", err)
+		return page, fmt.Errorf("reading current Investigation: %w", err)
+	}
+	rows, err := pool.Query(ctx, `
+		SELECT message.sequence, message.role, message.author_name, message.text,
+		       message.created_at, owner.investigation_id,
+		       CASE WHEN $6 AND message.role = 2 AND owner.status = 2 THEN owner.conclusion END
+		  FROM conversation_message message
+		  JOIN investigation owner ON owner.org_id = message.org_id
+		   AND owner.conversation_id = message.conversation_id
+		   AND owner.investigation_id = message.investigation_id
+		 WHERE message.org_id = $1 AND message.conversation_id = $2
+		   AND owner.turn < $3 AND ($4::bigint = 0 OR message.sequence < $4)
+		 ORDER BY message.sequence DESC LIMIT $5`, org, id, turn, before, limit+1, details)
+	if err != nil {
+		return page, fmt.Errorf("reading prior Messages: %w", err)
 	}
 	defer rows.Close()
-	var answers []investigation.BriefMessage
 	for rows.Next() {
-		var answer investigation.BriefMessage
-		if err = rows.Scan(&answer.InvestigationID, &answer.CreatedAt, &answer.Text, &answer.Answer, &answer.Sequence); err != nil {
-			return nil, err
+		var message investigation.BriefMessage
+		var role int16
+		if err = rows.Scan(&message.Sequence, &role, &message.Author, &message.Text,
+			&message.CreatedAt, &message.InvestigationID, &message.Answer); err != nil {
+			return page, fmt.Errorf("scanning prior Message: %w", err)
 		}
-		answer.Text = briefExchangeText(answer.Text)
-		answers = append(answers, answer)
+		message.FromUser = role == int16(conversation.RoleUser)
+		message.Text = briefExchangeText(message.Text)
+		page.Exchange = append(page.Exchange, message)
 	}
-	return answers, rows.Err()
-}
-
-func mergeExchange(messages, answers []investigation.BriefMessage) []investigation.BriefMessage {
-	exchange := make([]investigation.BriefMessage, 0, len(messages)+len(answers))
-	for _, message := range messages {
-		if !message.FromUser && message.InvestigationID != uuid.Nil {
-			index := slices.IndexFunc(answers, func(answer investigation.BriefMessage) bool {
-				return answer.InvestigationID == message.InvestigationID
-			})
-			if index >= 0 {
-				message.Answer = answers[index].Answer
-				remaining := make([]investigation.BriefMessage, 0, len(answers)-1)
-				remaining = append(remaining, answers[:index]...)
-				answers = append(remaining, answers[index+1:]...)
-			}
-		}
-
-		// ---------- Info ----------
-		// While the answer was created before the current message,
-		// we put that answer into the exchange first.
-		// ---------- Info ----------
-		for len(answers) > 0 && answers[0].CreatedAt.Before(message.CreatedAt) {
-			exchange = append(exchange, answers[0])
-			answers = answers[1:]
-		}
-		exchange = append(exchange, message)
+	if err = rows.Err(); err != nil {
+		return page, fmt.Errorf("reading prior Messages: %w", err)
 	}
-	return append(exchange, answers...)
+	if len(page.Exchange) > limit {
+		page.Exchange = page.Exchange[:limit]
+		page.NextBefore = page.Exchange[limit-1].Sequence
+	}
+	slices.Reverse(page.Exchange)
+	return page, nil
 }
 
 func (p *Database) ConversationOrigin(ctx context.Context, organization uuid.UUID, id uuid.UUID) (*investigation.ConversationOrigin, error) {

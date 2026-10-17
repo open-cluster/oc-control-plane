@@ -41,7 +41,8 @@ Uncertainty, missing telemetry, and unresolved assumptions remain explicit.
 7. Resolved Incidents can produce reviewed **Postmortems**.
 
 An Investigation is immutable once completed. Follow-ups create new Investigations while
-retaining bounded Conversation context and previously cited Findings.
+retaining bounded Conversation context and cited Findings established before the new
+Investigation opened. Earlier reply details and older Messages are loaded on demand.
 
 ## Integrations
 

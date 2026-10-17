@@ -83,6 +83,8 @@ func (p PriorFinding) Reference() string {
 }
 
 type Brief struct {
+	HistoryBefore   int64
+	NextBefore      int64
 	MissingEvidence bool
 	Turn            int
 	Recent          []BriefMessage

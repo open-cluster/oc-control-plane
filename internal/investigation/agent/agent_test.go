@@ -127,11 +127,11 @@ func (r *records) RecordCredentialUnseal(context.Context, uuid.UUID, uuid.UUID, 
 func (r *records) WorkloadInventory(context.Context, uuid.UUID, int) ([]string, error) {
 	return nil, nil
 }
-func (r *records) ConversationBrief(context.Context, uuid.UUID, uuid.UUID, int) (investigation.Brief, error) {
+func (r *records) ConversationBrief(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, int) (investigation.Brief, error) {
 	return r.brief, r.briefErr
 }
 
-func (r *records) ConversationHistory(context.Context, uuid.UUID, uuid.UUID, int64) (investigation.HistoryPage, error) {
+func (r *records) ConversationHistory(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, int64) (investigation.HistoryPage, error) {
 	return r.history, nil
 }
 
@@ -206,6 +206,187 @@ func validUncertainConclusion(t *testing.T, refs []int) json.RawMessage {
 func configuredTestAgent(t *testing.T, store *records, completer Completer, catalog integrations.Catalog) *Agent {
 	t.Helper()
 	return &Agent{completer: completer, modelConfig: ModelConfig{Provider: "scripted", Model: "test", ContextWindowTokens: 128_000, MaxOutputTokens: 1024}, Store: store, Catalog: catalog, Logger: slog.New(slog.DiscardHandler)}
+}
+
+func TestRunLoadsRecentReplyDetailsAndStopsRepeatedHistoryReads(t *testing.T) {
+	prior := uuid.New()
+	store := &records{
+		messages: []investigation.AssignedMessage{{Sequence: 2, Text: "why roll back?"}},
+		brief: investigation.Brief{
+			HistoryBefore: 4,
+			Recent: []investigation.BriefMessage{{
+				Sequence:        3,
+				Text:            "latency rose after deployment",
+				InvestigationID: prior,
+			}},
+		},
+		history: investigation.HistoryPage{Exchange: []investigation.BriefMessage{{
+			Sequence:        3,
+			Text:            "latency rose after deployment",
+			InvestigationID: prior,
+			Answer: &investigation.Conclusion{
+				Findings: []investigation.Finding{{Statement: "latency increased", RunRefs: []int{1}}},
+				Actions: []investigation.ActionProposal{{
+					Title:        "roll back",
+					Rationale:    "deployment preceded increased latency",
+					Verification: "check latency",
+					RunRefs:      []int{1},
+				}},
+			},
+		}}},
+	}
+	model := &scriptedModel{next: func(step int, prompt Prompt) (Completion, error) {
+		if step == 1 {
+			if !strings.Contains(prompt.Content[0].Text, "latency rose after deployment") ||
+				strings.Contains(prompt.Content[0].Text, "deployment preceded increased latency") {
+				t.Fatalf("initial context did not stay compact: %s", prompt.Content[0].Text)
+			}
+			found := false
+			for _, tool := range prompt.Tools {
+				if tool.Name == historyToolName {
+					found = true
+					if !strings.Contains(tool.Description, "4") {
+						t.Errorf("recent reply cursor is not explained: %s", tool.Description)
+					}
+				}
+			}
+			if !found {
+				t.Fatal("recent structured details are unavailable")
+			}
+		}
+		if step == 2 && !strings.Contains(prompt.Turns[0].Results[0].Content, "deployment preceded increased latency") {
+			t.Fatalf("recent action details were not retrieved: %+v", prompt.Turns)
+		}
+		if step < 4 {
+			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
+				ID:        fmt.Sprint(step),
+				Name:      historyToolName,
+				Arguments: json.RawMessage(`{"beforeSequence":4}`),
+			}}}, nil
+		}
+		if step != 4 || prompt.ForceTool != ConcludeToolName {
+			t.Fatalf("repeated history reads counted as progress: step=%d force=%s", step, prompt.ForceTool)
+		}
+		var document map[string]any
+		if err := json.Unmarshal(validConclusion(t, nil), &document); err != nil {
+			t.Fatal(err)
+		}
+		document["findings"] = []map[string]any{{
+			"statement":     "latency increased",
+			"kind":          "observation",
+			"mechanism":     "",
+			"run_refs":      []int{},
+			"evidence_refs": []investigation.EvidenceRef{{InvestigationID: prior, ToolRunOrdinal: 1}},
+		}}
+		encoded, err := json.Marshal(document)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
+			ID:        "done",
+			Name:      ConcludeToolName,
+			Arguments: encoded,
+		}}}, nil
+	}}
+	agent := configuredTestAgent(t, store, model, integrations.Catalog{})
+	if err := agent.Run(context.Background(), uuid.New(), investigation.Investigation{
+		ID:             uuid.New(),
+		ConversationID: uuid.New(),
+		Turn:           2,
+		Subject:        "latency",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if store.status != investigation.StatusConcluded || len(store.runs) != 0 || len(store.conclusion.Findings) != 1 {
+		t.Fatalf("history did not retain prior evidence without creating new Tool Runs: %+v", store)
+	}
+}
+
+func TestRunBoundsHistoryWithoutAdmittingOmittedEvidence(t *testing.T) {
+	prior := uuid.New()
+	large := investigation.BriefMessage{
+		Sequence:        1,
+		Text:            "earlier reply",
+		InvestigationID: prior,
+		Answer: &investigation.Conclusion{Findings: []investigation.Finding{{
+			Statement: strings.Repeat("<", maxStatementLength),
+			RunRefs:   []int{1},
+		}, {
+			Statement: strings.Repeat("&", maxStatementLength),
+			RunRefs:   []int{1},
+		}}},
+	}
+	for _, single := range []bool{false, true} {
+		t.Run(fmt.Sprintf("single_reply_%v", single), func(t *testing.T) {
+			entries := []investigation.BriefMessage{large}
+			if !single {
+				entries = append(entries, investigation.BriefMessage{Sequence: 3, Text: "latest reply"})
+			}
+			store := &records{
+				messages: []investigation.AssignedMessage{{Sequence: 2, Text: "explain"}},
+				brief:    investigation.Brief{HistoryBefore: 4},
+				history:  investigation.HistoryPage{Exchange: entries},
+			}
+			model := &scriptedModel{next: func(step int, prompt Prompt) (Completion, error) {
+				if step == 1 {
+					return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
+						ID:        "history",
+						Name:      historyToolName,
+						Arguments: json.RawMessage(`{"beforeSequence":4}`),
+					}}}, nil
+				}
+				content := prompt.Turns[0].Results[0].Content
+				_, encoded, found := strings.Cut(content, "\n")
+				var page investigation.HistoryPage
+				if !found || len(encoded) > maxRunContentBytes || json.Unmarshal([]byte(encoded), &page) != nil ||
+					!page.Truncated || len(page.Exchange) != 1 || page.Exchange[0].Answer != nil {
+					t.Fatalf("history feedback is unbounded or invalid: %s", content)
+				}
+				if single {
+					if page.NextBefore != 0 || !strings.Contains(page.Exchange[0].Text, "structured answer omitted") {
+						t.Fatalf("oversized reply lost its omission marker or end cursor: %+v", page)
+					}
+				} else if page.NextBefore != 3 || page.Exchange[0].Sequence != 3 {
+					t.Fatalf("truncation skipped omitted older Messages: %+v", page)
+				}
+				var document map[string]any
+				if err := json.Unmarshal(validConclusion(t, nil), &document); err != nil {
+					t.Fatal(err)
+				}
+				document["findings"] = []map[string]any{{
+					"statement":     "not supplied",
+					"kind":          "observation",
+					"mechanism":     "",
+					"run_refs":      []int{},
+					"evidence_refs": []investigation.EvidenceRef{{InvestigationID: prior, ToolRunOrdinal: 1}},
+				}}
+				encodedConclusion, err := json.Marshal(document)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
+					ID:        "done",
+					Name:      ConcludeToolName,
+					Arguments: encodedConclusion,
+				}}}, nil
+			}}
+			agent := configuredTestAgent(t, store, model, integrations.Catalog{})
+			if err := agent.Run(context.Background(), uuid.New(), investigation.Investigation{
+				ID:             uuid.New(),
+				ConversationID: uuid.New(),
+				Turn:           2,
+				Subject:        "history bounds",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if store.status != investigation.StatusFailed || !strings.Contains(store.failure, "unavailable prior evidence") {
+				t.Fatalf("omitted evidence was admitted: status=%s failure=%s", store.status, store.failure)
+			}
+			if store.history.Exchange[0].Answer == nil {
+				t.Fatal("bounding mutated the stored canonical reply")
+			}
+		})
+	}
 }
 
 func TestRunAcceptsACustomModelWithExplicitLimits(t *testing.T) {

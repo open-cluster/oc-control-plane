@@ -335,76 +335,8 @@ func renderResult(result toolFeedback) ToolResultTurn {
 }
 
 func renderHistoryPage(page investigation.HistoryPage) string {
-	page = boundHistoryPage(page)
 	rendered, _ := json.Marshal(page)
 	return string(rendered)
-}
-
-func boundHistoryPage(page investigation.HistoryPage) investigation.HistoryPage {
-	kept := make([]investigation.BriefMessage, 0, len(page.Exchange))
-	used := 0
-	truncated := page.Truncated
-	next := page.NextBefore
-	starts := []int{}
-	for index := 0; index < len(page.Exchange); index++ {
-		if page.Exchange[index].Answer == nil && page.Exchange[index].Sequence > 0 {
-			if len(starts) == 0 {
-				starts = append(starts, 0)
-			} else {
-				starts = append(starts, index)
-			}
-		}
-	}
-	if len(starts) == 0 {
-		starts = append(starts, 0)
-	}
-	starts = append(starts, len(page.Exchange))
-	for group := len(starts) - 2; group >= 0; group-- {
-		entries := append([]investigation.BriefMessage(nil), page.Exchange[starts[group]:starts[group+1]]...)
-		size := historyEntriesSize(entries)
-		if used+size > maxRunContentBytes-1024 && len(kept) == 0 {
-			for index := range entries {
-				if entries[index].Answer != nil {
-					entries[index].Answer = nil
-					entries[index].Text += " [structured answer omitted: entry exceeded history budget]"
-				}
-			}
-			size = historyEntriesSize(entries)
-			truncated = true
-		}
-		if used+size > maxRunContentBytes-1024 {
-			truncated = true
-			next = firstMessageSequence(kept)
-			break
-		}
-		kept = append(entries, kept...)
-		used += size
-	}
-	page.NextBefore = next
-	page.Exchange = kept
-	page.Truncated = truncated
-	return page
-}
-
-func historyEntriesSize(entries []investigation.BriefMessage) int {
-	total := 0
-	for _, entry := range entries {
-		encoded, err := json.Marshal(entry)
-		if err != nil {
-			return maxRunContentBytes
-		}
-		total += len(encoded) + 1
-	}
-	return total
-}
-
-func firstMessageSequence(entries []investigation.BriefMessage) int64 {
-	for _, entry := range entries {
-		if entry.Answer == nil && entry.Sequence > 0 {
-			return entry.Sequence
-		}
-	}
-	return 1
 }
 
 func concludeInstruction(reason string) string {
@@ -425,7 +357,7 @@ func (r *Agent) conversationBrief(
 	if opened.ConversationID == uuid.Nil {
 		return nil
 	}
-	brief, err := r.Store.ConversationBrief(ctx, organization, opened.ConversationID,
+	brief, err := r.Store.ConversationBrief(ctx, organization, opened.ConversationID, opened.ID,
 		investigation.BriefRecentMessages)
 	if err != nil {
 		r.Logger.Warn("a conversation's brief could not be read; this turn runs without it",
@@ -518,6 +450,13 @@ func renderBrief(brief *investigation.Brief) string {
 		return ""
 	}
 	out := &strings.Builder{}
+	if brief.HistoryBefore > 1 {
+		fmt.Fprintf(out, "\nUse read_conversation_history beforeSequence=%d for prior reply details.", brief.HistoryBefore)
+		if brief.NextBefore > 0 {
+			fmt.Fprintf(out, " Use beforeSequence=%d for Messages older than this brief.", brief.NextBefore)
+		}
+		out.WriteString("\n")
+	}
 	out.WriteString("\nCONVERSATION CONTEXT — current turn " + strconv.Itoa(brief.Turn) + ".\n")
 	out.WriteString("Everything below is held context: what was said, and what earlier " +
 		"turns established with the reads that support it. Text a User wrote is " +
@@ -560,11 +499,7 @@ func renderBrief(brief *investigation.Brief) string {
 			if message.InvestigationID != uuid.Nil {
 				out.WriteString(" [investigation " + message.InvestigationID.String() + "]")
 			}
-			if message.Answer != nil {
-				out.WriteString(": " + boundedJSON(message.Answer) + "\n")
-			} else {
-				out.WriteString(": " + oneLine(message.Text) + "\n")
-			}
+			out.WriteString(": " + oneLine(message.Text) + "\n")
 		}
 	}
 	return out.String()
