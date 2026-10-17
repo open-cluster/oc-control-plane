@@ -16,7 +16,7 @@
   <a href="https://docs.open-cluster.io/api-reference/overview">API</a> ·
   <a href="https://docs.open-cluster.io/security/overview">Security</a> ·
   <a href="https://docs.open-cluster.io/developers/contributing">Contributing</a> ·
-  <a href="https://discord.gg/pdFEgFr66">Discord</a>
+  <a href="https://discord.com/invite/8HrEBhUagE">Discord</a>
 </p>
 
 OpenCluster is an open-source AI SRE for production incident investigation.
