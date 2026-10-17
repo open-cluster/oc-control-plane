@@ -83,8 +83,8 @@ func (p PriorFinding) Reference() string {
 }
 
 type Brief struct {
-	HistoryBefore   int64
-	NextBefore      int64
+	HistoryBefore   int64 // Exclusive upper cursor for retrieving eligible previous messages.
+	NextBefore      int64 // Cursor for fetching the next page of older messages.
 	MissingEvidence bool
 	Turn            int
 	Recent          []BriefMessage
@@ -94,7 +94,7 @@ type Brief struct {
 }
 
 type HistoryPage struct {
-	NextBefore      int64          `json:"nextBefore"`
+	NextBefore      int64          `json:"nextBefore"` // Cursor for fetching the next page of older messages.
 	MissingEvidence bool           `json:"missingEvidence,omitempty"`
 	Limitations     []string       `json:"limitations,omitempty"`
 	Exchange        []BriefMessage `json:"exchange"`

@@ -24,6 +24,7 @@ type Store interface {
 	TriggerIncident(context.Context, uuid.UUID, uuid.UUID) (investigation.Trigger, error)
 	ConversationBrief(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, int) (investigation.Brief, error)
 	ConversationHistory(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, int64) (investigation.HistoryPage, error)
+	EvidenceMissing(context.Context, uuid.UUID, []investigation.EvidenceRef) (bool, error)
 	ConversationOrigin(context.Context, uuid.UUID, uuid.UUID) (*investigation.ConversationOrigin, error)
 	InvestigationMessages(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) ([]investigation.AssignedMessage, error)
 	WorkloadInventory(context.Context, uuid.UUID, int) ([]string, error)
@@ -89,26 +90,25 @@ type runState struct {
 	turns              int
 	usage              investigation.Usage
 
-	task            string
-	orientationText string
-	tools           []integrations.ToolDefinition
-	transcript      []Turn
-	opening         string
-	highestOrdinal  int
-	historyBefore   int64
-	missingEvidence bool
+	task                  string
+	orientationText       string
+	tools                 []integrations.ToolDefinition
+	transcript            []Turn
+	opening               string
+	highestOrdinal        int
+	historyBeforeSequence int64
+	missingEvidence       bool
 }
 
 type orientation struct {
-	HistoryBefore int64
-	Subject       string
-	Question      string
-	WindowFrom    time.Time
-	WindowUntil   time.Time
-	Trigger       *investigation.Trigger
-	Sources       []offeredSource
-	Inventory     []string
-	Brief         *investigation.Brief
+	Subject     string
+	Question    string
+	WindowFrom  time.Time
+	WindowUntil time.Time
+	Trigger     *investigation.Trigger
+	Sources     []offeredSource
+	Inventory   []string
+	Brief       *investigation.Brief
 }
 
 type offeredSource struct {
@@ -205,9 +205,6 @@ func (r *Agent) Run(
 		investigation.StartedPayload(opened, true))
 
 	oriented := r.orientation(ctx, organization, opened, offered, brief)
-	if brief != nil {
-		oriented.HistoryBefore = brief.HistoryBefore
-	}
 	if opened.ConversationID != uuid.Nil {
 		if len(messages) > 0 {
 			encoded, err := json.Marshal(messages)
@@ -229,8 +226,10 @@ func (r *Agent) Run(
 		}),
 		maxRuns:            r.MaxToolRuns,
 		maxTurns:           r.MaxTurns,
-		historyBefore:      oriented.HistoryBefore,
 		executedIdentities: map[string]int{},
+	}
+	if brief != nil {
+		state.historyBeforeSequence = brief.HistoryBefore
 	}
 	if state.maxRuns <= 0 {
 		state.maxRuns = defaultMaxToolRuns
@@ -245,9 +244,13 @@ func (r *Agent) Run(
 			return failRun("the assigned input budget could not be established", investigation.Usage{})
 		}
 		if inputTokens > inputCapacity {
-			oriented.Brief = &investigation.Brief{Turn: opened.Turn, Limitations: []string{
-				"Optional history and inventory were omitted to preserve the complete current request.",
-			}}
+			oriented.Brief = &investigation.Brief{
+				HistoryBefore: state.historyBeforeSequence,
+				Turn:          opened.Turn,
+				Limitations: []string{
+					"Optional history and inventory were omitted to preserve the complete current request.",
+				},
+			}
 			oriented.Inventory = nil
 			inputTokens, err = r.initialInputTokens(oriented)
 			if err != nil {
@@ -306,7 +309,7 @@ func (r *Agent) Run(
 		}
 
 		mustConclude := stoppedBy != "" || stagnated ||
-			(len(state.offered) == 0 && state.historyBefore <= 1)
+			(len(state.offered) == 0 && state.historyBeforeSequence <= 1)
 		reason := concludeReason(stoppedBy, len(state.offered))
 		if stagnated {
 			reason = "Your recent reads produced no new evidence."

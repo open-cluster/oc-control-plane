@@ -7,6 +7,16 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
+func (p *Database) EvidenceMissing(ctx context.Context,
+	organization uuid.UUID,
+	refs []investigation.EvidenceRef) (bool, error) {
+	db, err := p.poolForOrganization(organization)
+	if err != nil {
+		return false, err
+	}
+	return evidenceMissing(ctx, db, organization, refs)
+}
+
 func evidenceMissing(ctx context.Context, pool querier, org uuid.UUID, refs []investigation.EvidenceRef) (bool, error) {
 	if len(refs) == 0 {
 		return false, nil

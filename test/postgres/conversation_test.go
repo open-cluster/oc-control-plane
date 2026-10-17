@@ -662,8 +662,12 @@ func TestConversationContextKeepsInterleavedRepliesAndExcludesQueuedMessages(t *
 	if err != nil || len(history.Exchange) != len(want) {
 		t.Fatalf("older exchange = %+v, error=%v", history, err)
 	}
-	if !history.MissingEvidence || len(history.Limitations) != 1 {
-		t.Fatalf("pruned evidence was not carried as a history limitation: %+v", history)
+	missing, err := database.EvidenceMissing(ctx, organization, []investigation.EvidenceRef{{
+		InvestigationID: turn.InvestigationID,
+		ToolRunOrdinal:  1,
+	}})
+	if err != nil || !missing {
+		t.Fatalf("unavailable history evidence was not detected: missing=%v error=%v", missing, err)
 	}
 	for index, expected := range want {
 		if history.Exchange[index].Text != expected {

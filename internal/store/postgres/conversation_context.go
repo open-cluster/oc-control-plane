@@ -15,16 +15,16 @@ import (
 )
 
 func (p *Database) ConversationBrief(
-	ctx context.Context, organization, id, current uuid.UUID, tail int,
+	ctx context.Context, organization, conversationID, currentInvestigationID uuid.UUID, recentMessageLimit int,
 ) (investigation.Brief, error) {
-	if tail <= 0 || tail > investigation.BriefRecentMessages {
-		tail = investigation.BriefRecentMessages
+	if recentMessageLimit <= 0 || recentMessageLimit > investigation.BriefRecentMessages {
+		recentMessageLimit = investigation.BriefRecentMessages
 	}
-	pool, err := p.poolForOrganization(organization)
+	db, err := p.poolForOrganization(organization)
 	if err != nil {
 		return investigation.Brief{}, err
 	}
-	page, err := readConversationMessages(ctx, pool, organization, id, current, 0, tail, false)
+	page, err := readPriorMessages(ctx, db, organization, conversationID, currentInvestigationID, 0, recentMessageLimit, false)
 	if err != nil {
 		return investigation.Brief{}, err
 	}
@@ -35,14 +35,14 @@ func (p *Database) ConversationBrief(
 	if len(brief.Recent) > 0 {
 		brief.HistoryBefore = brief.Recent[len(brief.Recent)-1].Sequence + 1
 	}
-	if err = readPriorTurns(ctx, pool, organization, id, current, &brief); err != nil {
+	if err = readPriorTurns(ctx, db, organization, conversationID, currentInvestigationID, &brief); err != nil {
 		return investigation.Brief{}, err
 	}
 	var refs []investigation.EvidenceRef
 	for _, finding := range brief.Findings {
 		refs = append(refs, finding.References()...)
 	}
-	brief.MissingEvidence, err = evidenceMissing(ctx, pool, organization, refs)
+	brief.MissingEvidence, err = evidenceMissing(ctx, db, organization, refs)
 	if err != nil {
 		return investigation.Brief{}, fmt.Errorf("checking prior evidence: %w", err)
 	}
@@ -61,10 +61,10 @@ func briefExchangeText(text string) string {
 }
 
 func readPriorTurns(
-	ctx context.Context, pool querier, organization, id, current uuid.UUID,
+	ctx context.Context, db querier, organizationID, conversationID, currentInvestigationID uuid.UUID,
 	brief *investigation.Brief,
 ) error {
-	rows, err := pool.Query(ctx, `
+	rows, err := db.Query(ctx, `
 		SELECT CASE WHEN turn.conversation_id = $2 THEN turn.turn ELSE 0 END,
 		       turn.investigation_id, turn.conclusion, turn.concluded_at,
 		       turn.window_from, turn.window_until
@@ -80,7 +80,7 @@ func readPriorTurns(
 		        OR (turn.incident_id IS NOT NULL
 		            AND turn.incident_id = current.incident_id))
 		 ORDER BY turn.conversation_id = $2 DESC, turn.turn DESC, turn.created_at DESC
-		 LIMIT $4`, organization, id, current, investigation.BriefMaxFindings)
+		 LIMIT $4`, organizationID, conversationID, currentInvestigationID, investigation.BriefMaxFindings)
 	if err != nil {
 		return fmt.Errorf("reading a conversation's prior findings: %w", err)
 	}
@@ -153,50 +153,36 @@ func readPriorTurns(
 }
 
 func (p *Database) ConversationHistory(
-	ctx context.Context, org, id, current uuid.UUID, before int64,
+	ctx context.Context, organization, conversationID, currentInvestigationID uuid.UUID, beforeSequence int64,
 ) (investigation.HistoryPage, error) {
-	pool, err := p.poolForOrganization(org)
+	db, err := p.poolForOrganization(organization)
 	if err != nil {
 		return investigation.HistoryPage{}, err
 	}
-	page, err := readConversationMessages(ctx, pool, org, id, current, before, investigation.BriefRecentMessages, true)
-	if err != nil {
-		return page, err
-	}
-	var refs []investigation.EvidenceRef
-	for _, entry := range page.Exchange {
-		if entry.Answer != nil {
-			refs = append(refs, resultEvidence(investigation.Investigation{
-				ID:         entry.InvestigationID,
-				Conclusion: *entry.Answer,
-			})...)
-		}
-	}
-	page.MissingEvidence, err = evidenceMissing(ctx, pool, org, refs)
-	if err != nil {
-		return page, fmt.Errorf("checking older evidence: %w", err)
-	}
-	if page.MissingEvidence {
-		page.Limitations = []string{investigation.MissingEvidenceStatement}
-	}
-	return page, nil
+	return readPriorMessages(ctx, db, organization, conversationID, currentInvestigationID,
+		beforeSequence, investigation.BriefRecentMessages, true)
 }
 
-func readConversationMessages(
-	ctx context.Context, pool querier, org, id, current uuid.UUID, before int64, limit int, details bool,
+func readPriorMessages(
+	ctx context.Context,
+	db querier,
+	organizationID, conversationID, currentInvestigationID uuid.UUID,
+	beforeSequence int64,
+	limit int,
+	includeConclusions bool,
 ) (investigation.HistoryPage, error) {
 	page := investigation.HistoryPage{Exchange: []investigation.BriefMessage{}}
-	var turn int
-	err := pool.QueryRow(ctx, `SELECT turn FROM investigation
+	var currentTurn int
+	err := db.QueryRow(ctx, `SELECT turn FROM investigation
 		WHERE org_id = $1 AND conversation_id = $2 AND investigation_id = $3`,
-		org, id, current).Scan(&turn)
+		organizationID, conversationID, currentInvestigationID).Scan(&currentTurn)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return page, investigation.ErrUnknown
 	}
 	if err != nil {
 		return page, fmt.Errorf("reading current Investigation: %w", err)
 	}
-	rows, err := pool.Query(ctx, `
+	rows, err := db.Query(ctx, `
 		SELECT message.sequence, message.role, message.author_name, message.text,
 		       message.created_at, owner.investigation_id,
 		       CASE WHEN $6 AND message.role = 2 AND owner.status = 2 THEN owner.conclusion END
@@ -206,7 +192,7 @@ func readConversationMessages(
 		   AND owner.investigation_id = message.investigation_id
 		 WHERE message.org_id = $1 AND message.conversation_id = $2
 		   AND owner.turn < $3 AND ($4::bigint = 0 OR message.sequence < $4)
-		 ORDER BY message.sequence DESC LIMIT $5`, org, id, turn, before, limit+1, details)
+		 ORDER BY message.sequence DESC LIMIT $5`, organizationID, conversationID, currentTurn, beforeSequence, limit+1, includeConclusions)
 	if err != nil {
 		return page, fmt.Errorf("reading prior Messages: %w", err)
 	}

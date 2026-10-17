@@ -130,8 +130,8 @@ func exchangeTools(orientation orientation) []integrations.ToolDefinition {
 			definitions = append(definitions, envelopeDefinition(tool.Definition()))
 		}
 	}
-	if orientation.HistoryBefore > 1 {
-		definitions = append(definitions, historyDefinition(orientation.HistoryBefore))
+	if orientation.Brief != nil && orientation.Brief.HistoryBefore > 1 {
+		definitions = append(definitions, historyDefinition(orientation.Brief.HistoryBefore))
 	}
 	return append(definitions, ConcludeDefinition())
 }
@@ -311,7 +311,8 @@ func renderResult(result toolFeedback) ToolResultTurn {
 		if !ok {
 			return ToolResultTurn{CallID: result.CallID, Content: "HISTORY UNAVAILABLE: invalid stored history", IsError: true}
 		}
-		return ToolResultTurn{CallID: result.CallID, Content: "STORED CONVERSATION HISTORY: " + run.Summary + "\n" + renderHistoryPage(page)}
+		encoded, _ := json.Marshal(page)
+		return ToolResultTurn{CallID: result.CallID, Content: historyResponsePrefix + string(encoded)}
 	}
 	out := &strings.Builder{}
 	out.WriteString("[run " + strconv.Itoa(run.Ordinal) + "] " + run.Tool + " " +
@@ -332,11 +333,6 @@ func renderResult(result toolFeedback) ToolResultTurn {
 	}
 	out.WriteString("CONTENT: " + boundedJSON(run.Content) + "\n")
 	return ToolResultTurn{CallID: result.CallID, Content: out.String()}
-}
-
-func renderHistoryPage(page investigation.HistoryPage) string {
-	rendered, _ := json.Marshal(page)
-	return string(rendered)
 }
 
 func concludeInstruction(reason string) string {
