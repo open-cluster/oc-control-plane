@@ -41,7 +41,9 @@ func (c *Conclusion) MarkMissingEvidence() {
 		}
 	}
 	c.Limitations = append(c.Limitations, Limitation{
-		Type: LimitationMissingTelemetry, Statement: MissingEvidenceStatement, RunRefs: []int{},
+		Type:      LimitationMissingTelemetry,
+		Statement: MissingEvidenceStatement,
+		RunRefs:   []int{},
 	})
 }
 
@@ -71,7 +73,8 @@ func (p PriorFinding) References() []EvidenceRef {
 	refs := append([]EvidenceRef{}, p.EvidenceRefs...)
 	for _, run := range p.Runs {
 		refs = append(refs, EvidenceRef{
-			InvestigationID: p.InvestigationID, ToolRunOrdinal: run,
+			InvestigationID: p.InvestigationID,
+			ToolRunOrdinal:  run,
 		})
 	}
 	return refs
@@ -83,18 +86,29 @@ func (p PriorFinding) Reference() string {
 }
 
 type Brief struct {
-	HistoryBefore   int64 // Exclusive upper cursor for retrieving eligible previous messages.
-	NextBefore      int64 // Cursor for fetching the next page of older messages.
+
+	// HistoryBefore allows reading prior Messages, including those
+	// already shown in Recent, to retrieve full reply details.
+	HistoryBefore int64
+
+	// NextBefore allows loading Messages older than Recent.
+	// Zero means there are no older Messages.
+	NextBefore      int64
 	MissingEvidence bool
-	Turn            int
-	Recent          []BriefMessage
-	Findings        []PriorFinding
-	OpenHypotheses  []string
-	Limitations     []string
+
+	// Turn is the current Investigation's number within the Conversation.
+	Turn int
+
+	// Recent contains Messages from earlier Investigations, oldest first.
+	// Current and queued Messages are excluded.
+	Recent         []BriefMessage
+	Findings       []PriorFinding
+	OpenHypotheses []string
+	Limitations    []string
 }
 
 type HistoryPage struct {
-	NextBefore      int64          `json:"nextBefore"` // Cursor for fetching the next page of older messages.
+	NextBefore      int64          `json:"nextBefore"`
 	MissingEvidence bool           `json:"missingEvidence,omitempty"`
 	Limitations     []string       `json:"limitations,omitempty"`
 	Exchange        []BriefMessage `json:"exchange"`
