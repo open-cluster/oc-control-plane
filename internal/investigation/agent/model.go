@@ -38,6 +38,9 @@ type ModelConfig struct {
 
 const (
 	defaultRequestTimeout = 5 * time.Minute
+	// Application allowances, rather than provider maximums. The output allowance includes reasoning.
+	defaultContextWindow = 200_000
+	defaultMaxOutput     = 32_000
 )
 
 func (d ModelConfig) WithDefaults() ModelConfig {
@@ -46,6 +49,12 @@ func (d ModelConfig) WithDefaults() ModelConfig {
 	}
 	if d.RequestTimeout <= 0 {
 		d.RequestTimeout = defaultRequestTimeout
+	}
+	if d.ContextWindowTokens <= 0 {
+		d.ContextWindowTokens = defaultContextWindow
+	}
+	if d.MaxOutputTokens <= 0 {
+		d.MaxOutputTokens = defaultMaxOutput
 	}
 	return d
 }
@@ -60,8 +69,7 @@ func (d ModelConfig) Validate() error {
 		return fmt.Errorf("the %s provider names effort %q, which is not one of low, medium, "+
 			"high, xhigh or max", d.Provider, d.Effort)
 	case d.Credential.Empty():
-		return fmt.Errorf("the %s provider has no credential; it is read from a file path so "+
-			"that it cannot leak through a process listing", d.Provider)
+		return fmt.Errorf("the %s provider has no credential", d.Provider)
 	}
 	if d.BaseURL != "" {
 		parsed, err := url.Parse(d.BaseURL)
@@ -83,39 +91,6 @@ func (d ModelConfig) Validate() error {
 func (d ModelConfig) String() string {
 	return fmt.Sprintf("%s/%s effort=%s context=%d max_output=%d", d.Provider, d.Model, d.Effort,
 		d.ContextWindowTokens, d.MaxOutputTokens)
-}
-
-type ModelCapabilities struct {
-	ContextWindowTokens int
-	MaxOutputTokens     int64
-}
-
-func ResolveModelCapabilities(
-	config ModelConfig, published *ModelCapabilities,
-) (ModelConfig, error) {
-	if published == nil {
-		if config.ContextWindowTokens <= 0 || config.MaxOutputTokens <= 0 {
-			return ModelConfig{}, fmt.Errorf("the custom model %q requires explicit context and output limits",
-				config.Model)
-		}
-	} else {
-		if config.ContextWindowTokens <= 0 {
-			config.ContextWindowTokens = published.ContextWindowTokens
-		} else if config.ContextWindowTokens > published.ContextWindowTokens {
-			return ModelConfig{}, fmt.Errorf("the context limit %d exceeds model %q's published limit %d",
-				config.ContextWindowTokens, config.Model, published.ContextWindowTokens)
-		}
-		if config.MaxOutputTokens <= 0 {
-			config.MaxOutputTokens = published.MaxOutputTokens
-		} else if config.MaxOutputTokens > published.MaxOutputTokens {
-			return ModelConfig{}, fmt.Errorf("the output limit %d exceeds model %q's published limit %d",
-				config.MaxOutputTokens, config.Model, published.MaxOutputTokens)
-		}
-	}
-	if int64(config.ContextWindowTokens) <= config.MaxOutputTokens {
-		return ModelConfig{}, fmt.Errorf("model %q's context limit must exceed its output limit", config.Model)
-	}
-	return config, nil
 }
 
 type Completer interface {

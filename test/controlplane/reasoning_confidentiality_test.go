@@ -34,11 +34,11 @@ func TestPrivateModelReasoningNeverCrossesTheProviderBoundary(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id": "chat-confidentiality", "request_id": "req-confidentiality", "model": "glm-4.7",
+			"id": "chat-confidentiality", "request_id": "req-confidentiality", "model": "z-ai/glm-4.7",
 			"choices": []map[string]any{{
 				"index": 0, "finish_reason": "tool_calls",
 				"message": map[string]any{
-					"role": "assistant", "content": "", "reasoning_content": marker,
+					"role": "assistant", "content": "", "reasoning": marker,
 					"tool_calls": []map[string]any{{
 						"id": "call-conclude", "type": "function",
 						"function": map[string]any{"name": "conclude", "arguments": string(arguments)},
@@ -56,8 +56,8 @@ func TestPrivateModelReasoningNeverCrossesTheProviderBoundary(t *testing.T) {
 		cfg.HTTPListenAddress = apiAddress
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.BootstrapTokenDigest = digest[:]
-		cfg.ModelProvider = "zai"
-		cfg.ModelName = "glm-4.7"
+		cfg.ModelProvider = "openrouter"
+		cfg.ModelName = "z-ai/glm-4.7"
 		cfg.ModelAPIKey = "test-provider-key"
 		dsn = cfg.DatabaseDSN
 	}, app.Options{ModelBaseURL: provider.URL})

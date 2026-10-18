@@ -20,7 +20,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 	"github.com/open-cluster/oc-control-plane/internal/investigation/agent/anthropic"
-	"github.com/open-cluster/oc-control-plane/internal/investigation/agent/zai"
+	"github.com/open-cluster/oc-control-plane/internal/investigation/agent/openrouter"
 	"github.com/open-cluster/oc-control-plane/internal/seal"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 	"github.com/open-cluster/oc-control-plane/internal/telemetry"
@@ -198,18 +198,16 @@ func modelBoundary(cfg config.Config, logger *slog.Logger, options Options) (*ag
 	var openErr error
 	switch modelConfig.Provider {
 	case anthropic.Name:
-		modelConfig, openErr = anthropic.ResolveModelConfig(modelConfig)
-		if openErr == nil && completer == nil {
+		if completer == nil {
 			completer, openErr = anthropic.New(modelConfig, anthropic.Options{})
 		}
-	case zai.Name:
-		modelConfig, openErr = zai.ResolveModelConfig(modelConfig)
-		if openErr == nil && completer == nil {
-			completer, openErr = zai.New(modelConfig, zai.Options{})
+	case openrouter.Name:
+		if completer == nil {
+			completer, openErr = openrouter.New(modelConfig, openrouter.Options{})
 		}
 	default:
 		return nil, fmt.Errorf("%q is not a model provider this build serves; it serves [%s, %s]",
-			modelConfig.Provider, anthropic.Name, zai.Name)
+			modelConfig.Provider, anthropic.Name, openrouter.Name)
 	}
 	if openErr != nil {
 		return nil, openErr

@@ -57,8 +57,6 @@ ai:
   provider: anthropic
   model: claude-sonnet-5
   apiKeyFile: /run/secrets/model_key
-  contextWindow: 200000
-  maxOutputTokens: 32000
 investigations:
   workers: 8
   maxPendingPerOrganization: 100
@@ -115,19 +113,30 @@ browser credential lifetime remains deployment-owned.
 
 ## Model provider
 
-OSS v0.1 supports deployment-level Anthropic or Z.AI credentials. Set `OC_AI_PROVIDER`
-to `anthropic` or `zai`, set `OC_AI_MODEL` to an exact model identifier accepted by that
+OSS v0.1 supports deployment-level Anthropic or OpenRouter credentials. Set `OC_AI_PROVIDER`
+to `anthropic` or `openrouter`, set `OC_AI_MODEL` to an exact model identifier accepted by that
 provider, and set `OC_AI_API_KEY_FILE` to the mounted credential file. Organization-level
 BYOK is not part of the OSS v0.1 contract.
 
-OpenCluster supplies the exact context and maximum output limits for the shipped model IDs:
-`claude-sonnet-5`, `claude-opus-5`, `claude-haiku-4-5-20251001`, and `glm-4.7`.
+For OpenRouter, use a full model identifier such as `z-ai/glm-4.7`. Requests require native
+Tool calling and support for the supplied parameters. OpenCluster disables provider
+fallbacks, denies data collection, requires zero data retention, and sorts eligible
+endpoints by price. Account restrictions still apply. If no endpoint satisfies these
+requirements, the Investigation fails; OpenCluster never relaxes them or selects another model.
 
-### Advanced: custom models
+Both providers use application allowances of 200,000 context tokens and 32,000 output
+tokens per model request, including reasoning tokens. These are execution budgets, not
+claims about the selected model's maximum capacity. Anthropic retains native thinking
+continuation; OpenRouter retains the model's native reasoning continuation without adding
+unsupported reasoning controls.
 
-For a custom provider model ID, set both `OC_AI_CONTEXT_WINDOW_SIZE` and
-`OC_AI_MAX_OUTPUT_SIZE`. These advanced overrides may lower a shipped model's limits but
-cannot exceed its published capacity.
+### Advanced: model budgets
+
+For a model with a smaller context or output capacity, lower `OC_AI_CONTEXT_WINDOW_SIZE`
+and `OC_AI_MAX_OUTPUT_SIZE` to fit its published limits. The context allowance must exceed
+the output allowance. Larger explicit allowances are also supported when the selected
+model permits them. In YAML, the optional fields are `ai.contextWindow` and
+`ai.maxOutputTokens`. No model discovery request or local model allowlist is required.
 
 Restart the control plane, wait for `/readyz`, and run one bounded Investigation. Startup
 proves that the file is readable; only a completed Investigation proves that the selected
@@ -155,11 +164,11 @@ and training terms before production use.
 | `OC_OIDC_CLIENT_SECRET` / `OC_OIDC_CLIENT_SECRET_FILE` | OIDC client-secret file. Direct value or file; do not set both. |
 | `OC_RELAY_ADDRESS` | Optional Relay gRPC listen address. |
 | `OC_RELAY_SPKI_PINS` | Comma-separated control-plane SPKI pins. |
-| `OC_AI_PROVIDER` | Native AI provider: `anthropic` or `zai`. |
+| `OC_AI_PROVIDER` | AI provider: `anthropic` or `openrouter`. |
 | `OC_AI_MODEL` | Exact model identifier. |
 | `OC_AI_API_KEY` / `OC_AI_API_KEY_FILE` | AI provider credential file. Direct value or file; do not set both. |
-| `OC_AI_CONTEXT_WINDOW_SIZE` | Optional advanced model context-window override; required for a custom model ID. |
-| `OC_AI_MAX_OUTPUT_SIZE` | Optional advanced model output-limit override in tokens; required for a custom model ID. |
+| `OC_AI_CONTEXT_WINDOW_SIZE` | Optional context allowance in tokens; default `200000`. Lower it for smaller models. |
+| `OC_AI_MAX_OUTPUT_SIZE` | Optional output allowance in tokens, including reasoning; default `32000`. |
 | `OC_INVESTIGATION_WORKERS` | Concurrent Investigation workers per replica; default `8`. |
 | `OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION` | Maximum unclaimed Investigations per Organization; default `100`. |
 | `OC_ENCRYPTION_KEY` / `OC_ENCRYPTION_KEY_FILE` | 32-byte credential-encryption key file. Direct value or file; do not set both. |
