@@ -26,30 +26,44 @@ func toolName(name string) string {
 
 func request(prompt agent.Prompt) (sdk.ChatRequest, error) {
 	body := sdk.ChatRequest{
-		Model: &prompt.Model, MaxCompletionTokens: optionalnullable.From(&prompt.MaxOutputTokens),
-		Stream: new(false),
+		Model:               &prompt.Model,
+		MaxCompletionTokens: optionalnullable.From(&prompt.MaxOutputTokens),
+		Stream:              new(false),
 		Provider: optionalnullable.From(&sdk.ProviderPreferences{
-			AllowFallbacks: optionalnullable.From(new(false)), RequireParameters: optionalnullable.From(new(true)),
-			DataCollection: optionalnullable.From(new(sdk.DataCollectionDeny)), Zdr: optionalnullable.From(new(true)),
-			Sort: optionalnullable.From(new(sdk.CreateProviderPreferencesSortProviderSort(sdk.ProviderSortPrice))),
+			Sort: optionalnullable.From(new(
+				sdk.CreateProviderPreferencesSortProviderSort(sdk.ProviderSortPrice))),
+			AllowFallbacks:    optionalnullable.From(new(false)),
+			RequireParameters: optionalnullable.From(new(true)),
+			DataCollection:    optionalnullable.From(new(sdk.DataCollectionDeny)),
+			Zdr:               optionalnullable.From(new(true)),
 		}),
 		Messages: []sdk.ChatMessages{
-			sdk.CreateChatMessagesSystem(sdk.ChatSystemMessage{Content: sdk.CreateChatSystemMessageContentStr(joined(prompt.System))}),
-			sdk.CreateChatMessagesUser(sdk.ChatUserMessage{Content: sdk.CreateChatUserMessageContentStr(joined(prompt.Content))}),
+			sdk.CreateChatMessagesSystem(sdk.ChatSystemMessage{
+				Content: sdk.CreateChatSystemMessageContentStr(joined(prompt.System)),
+			}),
+			sdk.CreateChatMessagesUser(sdk.ChatUserMessage{
+				Content: sdk.CreateChatUserMessageContentStr(joined(prompt.Content)),
+			}),
 		},
 		ToolChoice: new(sdk.CreateChatToolChoiceChatToolChoiceAuto(sdk.ChatToolChoiceAutoAuto)),
 	}
 	for _, definition := range prompt.Tools {
-		body.Tools = append(body.Tools, sdk.CreateChatFunctionToolChatFunctionToolFunction(sdk.ChatFunctionToolFunction{
-			Type: sdk.ChatFunctionToolTypeFunction,
-			Function: sdk.ChatFunctionToolFunctionFunction{
-				Name: toolName(definition.Name), Description: &definition.Description, Parameters: definition.InputSchema,
-			},
-		}))
+		body.Tools = append(body.Tools, sdk.CreateChatFunctionToolChatFunctionToolFunction(
+			sdk.ChatFunctionToolFunction{
+				Type: sdk.ChatFunctionToolTypeFunction,
+				Function: sdk.ChatFunctionToolFunctionFunction{
+					Name:        toolName(definition.Name),
+					Description: &definition.Description,
+					Parameters:  definition.InputSchema,
+				},
+			}))
 	}
 	if prompt.ForceTool != "" {
 		body.ToolChoice = new(sdk.CreateChatToolChoiceChatNamedToolChoice(sdk.ChatNamedToolChoice{
-			Type: sdk.ChatNamedToolChoiceTypeFunction, Function: sdk.ChatNamedToolChoiceFunction{Name: toolName(prompt.ForceTool)},
+			Type: sdk.ChatNamedToolChoiceTypeFunction,
+			Function: sdk.ChatNamedToolChoiceFunction{
+				Name: toolName(prompt.ForceTool),
+			},
 		}))
 	}
 	for _, turn := range prompt.Turns {
@@ -63,16 +77,21 @@ func request(prompt agent.Prompt) (sdk.ChatRequest, error) {
 			assistant.Content = optionalnullable.From(new(sdk.CreateChatAssistantMessageContentStr(turn.Assistant.Text)))
 			for _, call := range turn.Assistant.Calls {
 				assistant.ToolCalls = append(assistant.ToolCalls, sdk.ChatToolCall{
-					ID: call.ID, Type: sdk.ChatToolCallTypeFunction,
-					Function: sdk.ChatToolCallFunction{Name: toolName(call.Name), Arguments: string(call.Arguments)},
+					ID:   call.ID,
+					Type: sdk.ChatToolCallTypeFunction,
+					Function: sdk.ChatToolCallFunction{
+						Name:      toolName(call.Name),
+						Arguments: string(call.Arguments)},
 				})
 			}
 		}
 		body.Messages = append(body.Messages, sdk.CreateChatMessagesAssistant(assistant))
 		for _, result := range turn.Results {
-			body.Messages = append(body.Messages, sdk.CreateChatMessagesTool(sdk.ChatToolMessage{
-				ToolCallID: result.CallID, Content: sdk.CreateChatToolMessageContentStr(result.Content),
-			}))
+			body.Messages = append(body.Messages, sdk.CreateChatMessagesTool(
+				sdk.ChatToolMessage{
+					ToolCallID: result.CallID,
+					Content:    sdk.CreateChatToolMessageContentStr(result.Content),
+				}))
 		}
 		if turn.Instruction != "" {
 			body.Messages = append(body.Messages, sdk.CreateChatMessagesUser(sdk.ChatUserMessage{

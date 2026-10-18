@@ -38,7 +38,9 @@ func New(config agent.ModelConfig, options Options) (*Provider, error) {
 		client = *options.HTTPClient
 	}
 	// Redirects must never move provider credentials or Investigation context to another host.
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
 	transport := client.Transport
 	if transport == nil {
 		transport = http.DefaultTransport
@@ -47,14 +49,23 @@ func New(config agent.ModelConfig, options Options) (*Provider, error) {
 	settings := []sdk.SDKOption{
 		sdk.WithSecurity(config.Credential.Reveal()), sdk.WithClient(&client),
 		sdk.WithRetryConfig(retry.Config{
-			Strategy: "backoff", RetryConnectionErrors: true,
-			Backoff: &retry.BackoffStrategy{InitialInterval: 500, MaxInterval: 5_000, Exponent: 2, MaxElapsedTime: 30_000},
+			Strategy:              "backoff",
+			RetryConnectionErrors: true,
+			Backoff: &retry.BackoffStrategy{
+				InitialInterval: 500,
+				MaxInterval:     5_000,
+				Exponent:        2,
+				MaxElapsedTime:  30_000,
+			},
 		}),
 	}
 	if config.BaseURL != "" {
 		settings = append(settings, sdk.WithServerURL(config.BaseURL))
 	}
-	return &Provider{client: sdk.New(settings...), config: config}, nil
+	return &Provider{
+		client: sdk.New(settings...),
+		config: config,
+	}, nil
 }
 
 func (p *Provider) RequestTokens(prompt agent.Prompt) (int, error) {
@@ -70,16 +81,23 @@ func (p *Provider) RequestTokens(prompt agent.Prompt) (int, error) {
 }
 
 func (p *Provider) Complete(ctx context.Context, prompt agent.Prompt) (agent.Completion, error) {
+
 	body, err := request(prompt)
 	if err != nil {
-		return agent.Completion{}, agent.Failed(agent.OutcomeMalformed, Name, prompt.Model, "invalid model continuation")
+		return agent.Completion{}, agent.Failed(
+			agent.OutcomeMalformed, Name, prompt.Model, "invalid model continuation")
 	}
+
 	ctx, cancel := context.WithTimeout(ctx, p.config.RequestTimeout)
 	defer cancel()
 	info := &responseInfo{}
 	ctx = context.WithValue(ctx, responseKey{}, info)
+
 	response, err := p.client.Chat.Send(ctx, body, nil)
-	completion := agent.Completion{Model: prompt.Model, RequestID: info.identifier}
+	completion := agent.Completion{
+		Model:     prompt.Model,
+		RequestID: info.identifier,
+	}
 	if err != nil {
 		return completion, failure(ctx, prompt.Model, info.status, err)
 	}
@@ -87,7 +105,8 @@ func (p *Provider) Complete(ctx context.Context, prompt agent.Prompt) (agent.Com
 		if response != nil && response.EventStream != nil {
 			_ = response.EventStream.Close()
 		}
-		return completion, agent.Failed(agent.OutcomeMalformed, Name, prompt.Model, "the provider returned no complete decision")
+		return completion, agent.Failed(
+			agent.OutcomeMalformed, Name, prompt.Model, "the provider returned no complete decision")
 	}
 	result := response.ChatResult
 	completion.RequestID = result.ID
@@ -96,7 +115,8 @@ func (p *Provider) Complete(ctx context.Context, prompt agent.Prompt) (agent.Com
 		completion.Model = result.Model
 	}
 	if len(result.Choices) != 1 || result.Choices[0].FinishReason == nil {
-		return completion, agent.Failed(agent.OutcomeMalformed, Name, prompt.Model, "the provider returned no single complete decision")
+		return completion, agent.Failed(
+			agent.OutcomeMalformed, Name, prompt.Model, "the provider returned no single complete decision")
 	}
 	choice := result.Choices[0]
 	switch string(*choice.FinishReason) {
@@ -106,22 +126,28 @@ func (p *Provider) Complete(ctx context.Context, prompt agent.Prompt) (agent.Com
 		completion.Stop = agent.StopComplete
 	case "length":
 		completion.Stop = agent.StopTruncated
-		return completion, agent.Failed(agent.OutcomeMalformed, Name, prompt.Model, "the answer reached the output ceiling")
+		return completion, agent.Failed(
+			agent.OutcomeMalformed, Name, prompt.Model, "the answer reached the output ceiling")
 	case "content_filter":
 		completion.Stop = agent.StopRefused
-		return completion, agent.Failed(agent.OutcomeRefused, Name, prompt.Model, "the provider declined the request")
+		return completion, agent.Failed(
+			agent.OutcomeRefused, Name, prompt.Model, "the provider declined the request")
 	default:
-		return completion, agent.Failed(agent.OutcomeMalformed, Name, prompt.Model, "the provider returned an unsupported stop reason")
+		return completion, agent.Failed(
+			agent.OutcomeMalformed, Name, prompt.Model, "the provider returned an unsupported stop reason")
 	}
 	message := choice.Message
 	if refusal, _ := message.Refusal.GetOrZero(); refusal != "" {
 		completion.Stop = agent.StopRefused
-		return completion, agent.Failed(agent.OutcomeRefused, Name, prompt.Model, "the provider declined the request")
+		return completion, agent.Failed(
+			agent.OutcomeRefused, Name, prompt.Model, "the provider declined the request")
 	}
 	seen := make(map[string]bool, len(message.ToolCalls))
+
 	for _, call := range message.ToolCalls {
 		if call.ID == "" || seen[call.ID] || call.Function.Name == "" || !json.Valid([]byte(call.Function.Arguments)) {
-			return completion, agent.Failed(agent.OutcomeMalformed, Name, prompt.Model, "the provider returned an invalid Tool call")
+			return completion, agent.Failed(
+				agent.OutcomeMalformed, Name, prompt.Model, "the provider returned an invalid Tool call")
 		}
 		seen[call.ID] = true
 		name := call.Function.Name
@@ -140,7 +166,8 @@ func (p *Provider) Complete(ctx context.Context, prompt agent.Prompt) (agent.Com
 	}
 	completion.Raw, err = json.Marshal(message)
 	if err != nil {
-		return completion, agent.Failed(agent.OutcomeMalformed, Name, prompt.Model, "the model continuation could not be retained")
+		return completion, agent.Failed(
+			agent.OutcomeMalformed, Name, prompt.Model, "the model continuation could not be retained")
 	}
 	return completion, nil
 }
@@ -149,7 +176,11 @@ func usageOf(usage *components.ChatUsage) agent.TokenUsage {
 	if usage == nil {
 		return agent.TokenUsage{}
 	}
-	result := agent.TokenUsage{Input: agent.Counted(usage.PromptTokens), Output: agent.Counted(usage.CompletionTokens)}
+
+	result := agent.TokenUsage{
+		Input:  agent.Counted(usage.PromptTokens),
+		Output: agent.Counted(usage.CompletionTokens),
+	}
 	if details, _ := usage.PromptTokensDetails.GetOrZero(); details.CachedTokens != nil {
 		cached := min(max(*details.CachedTokens, 0), usage.PromptTokens)
 		result.CacheRead = agent.Counted(cached)
@@ -164,22 +195,27 @@ func usageOf(usage *components.ChatUsage) agent.TokenUsage {
 
 func failure(ctx context.Context, model string, status int, cause error) error {
 	if ctx.Err() != nil || errors.Is(cause, context.DeadlineExceeded) || errors.Is(cause, context.Canceled) {
-		return agent.FailedBecause(agent.OutcomeTimeout, Name, model, "the model request was cancelled or timed out", ctx.Err())
+		return agent.FailedBecause(
+			agent.OutcomeTimeout, Name, model, "the model request was cancelled or timed out", ctx.Err())
 	}
 	var invalid *sdkerrors.BadRequestResponseError
 	if errors.As(cause, &invalid) {
 		text := strings.ToLower(invalid.Error_.Message)
 		if strings.Contains(text, "context") && (strings.Contains(text, "length") || strings.Contains(text, "limit") || strings.Contains(text, "window")) {
-			return agent.ContextRejected(Name, model, "the provider rejected the request context", nil)
+			return agent.ContextRejected(
+				Name, model, "the provider rejected the request context", nil)
 		}
 	}
 	switch {
 	case status == http.StatusOK:
-		return agent.Failed(agent.OutcomeMalformed, Name, model, "the provider returned an invalid response")
+		return agent.Failed(
+			agent.OutcomeMalformed, Name, model, "the provider returned an invalid response")
 	case status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= 500 || status == 0:
-		return agent.Failed(agent.OutcomeOutage, Name, model, "the provider is unavailable or rate limited")
+		return agent.Failed(
+			agent.OutcomeOutage, Name, model, "the provider is unavailable or rate limited")
 	default:
-		return agent.Failed(agent.OutcomeRejected, Name, model, fmt.Sprintf("the provider answered %d; check the credential, model, Tool support and zero-retention availability", status))
+		return agent.Failed(
+			agent.OutcomeRejected, Name, model, fmt.Sprintf("the provider answered %d; check the credential, model, Tool support and zero-retention availability", status))
 	}
 }
 
