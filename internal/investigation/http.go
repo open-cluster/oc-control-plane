@@ -46,13 +46,37 @@ type HTTPStore interface {
 
 func (h Handlers) Routes() []authz.Route {
 	const base = "/api/v1"
-
 	return []authz.Route{
-		{Method: http.MethodGet, Pattern: base + "/investigations", Permission: authz.InvestigationRead, Handler: http.HandlerFunc(h.list)},
-		{Method: http.MethodPost, Pattern: base + "/investigations", Permission: authz.InvestigationOpen, Handler: http.HandlerFunc(h.open)},
-		{Method: http.MethodGet, Pattern: base + "/investigations/{investigation}", Permission: authz.InvestigationRead, Handler: http.HandlerFunc(h.read)},
-		{Method: http.MethodPost, Pattern: base + "/investigations/{investigation}/cancel", Permission: authz.InvestigationCancel, Handler: http.HandlerFunc(h.cancel)},
-		{Method: http.MethodGet, Pattern: base + "/investigations/{investigation}/events", Permission: authz.InvestigationRead, Handler: http.HandlerFunc(h.streamEvents)},
+		{
+			Method:     http.MethodGet,
+			Pattern:    base + "/investigations",
+			Permission: authz.InvestigationRead,
+			Handler:    http.HandlerFunc(h.list),
+		},
+		{
+			Method:     http.MethodPost,
+			Pattern:    base + "/investigations",
+			Permission: authz.InvestigationOpen,
+			Handler:    http.HandlerFunc(h.open),
+		},
+		{
+			Method:     http.MethodGet,
+			Pattern:    base + "/investigations/{investigation}",
+			Permission: authz.InvestigationRead,
+			Handler:    http.HandlerFunc(h.read),
+		},
+		{
+			Method:     http.MethodPost,
+			Pattern:    base + "/investigations/{investigation}/cancel",
+			Permission: authz.InvestigationCancel,
+			Handler:    http.HandlerFunc(h.cancel),
+		},
+		{
+			Method:     http.MethodGet,
+			Pattern:    base + "/investigations/{investigation}/events",
+			Permission: authz.InvestigationRead,
+			Handler:    http.HandlerFunc(h.streamEvents),
+		},
 	}
 }
 
@@ -68,15 +92,15 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 			Error: "this deployment has no model provider configured, so it cannot investigate"})
 		return
 	}
-	var asked openRequest
-	if !h.decode(writer, request, &asked) {
+	var askedRequest openRequest
+	if !h.decode(writer, request, &askedRequest) {
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	trigger, refusal, err := h.resolveTrigger(ctx, organization, asked)
+	trigger, refusal, err := h.resolveTrigger(ctx, organization, askedRequest)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -379,13 +403,17 @@ func investigationViewOf(found Investigation) investigationView {
 		WindowFrom:       found.WindowFrom.UTC().Format(time.RFC3339Nano),
 		WindowUntil:      found.WindowUntil.UTC().Format(time.RFC3339Nano),
 		ConclusionStatus: found.Conclusion.Status,
-		Summary:          found.Conclusion.Summary, Impact: found.Conclusion.Impact,
-		Findings: findings, Hypotheses: found.Conclusion.Hypotheses,
-		Actions: found.Conclusion.Actions, Limitations: found.Conclusion.Limitations,
-		StoppedBy: found.StoppedBy,
-		Error:     found.Error,
+		Summary:          found.Conclusion.Summary,
+		Impact:           found.Conclusion.Impact,
+		Findings:         findings,
+		Hypotheses:       found.Conclusion.Hypotheses,
+		Actions:          found.Conclusion.Actions,
+		Limitations:      found.Conclusion.Limitations,
+		StoppedBy:        found.StoppedBy,
+		Error:            found.Error,
 		Usage: usageView{
-			InputTokens: found.Usage.InputTokens, OutputTokens: found.Usage.OutputTokens,
+			InputTokens:  found.Usage.InputTokens,
+			OutputTokens: found.Usage.OutputTokens,
 		},
 		CreatedAt: stamp(found.CreatedAt),
 	}
