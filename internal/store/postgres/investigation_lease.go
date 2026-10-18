@@ -181,9 +181,13 @@ func scanClaimedInvestigation(
 	row scanned, organization *uuid.UUID,
 ) (investigation.Investigation, error) {
 	var token uuid.UUID
-	found, err := scanInvestigation(prefixedRow{row: row, first: organization, token: &token})
-	found.ClaimToken = token
-	return found, err
+	foundInvestigation, err := scanInvestigation(prefixedRow{
+		row:   row,
+		first: organization,
+		token: &token,
+	})
+	foundInvestigation.ClaimToken = token
+	return foundInvestigation, err
 }
 
 type prefixedRow struct {
