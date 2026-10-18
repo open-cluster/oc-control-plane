@@ -83,7 +83,7 @@ func (r *Runner) Cancel(id uuid.UUID) {
 
 func (r *Runner) workerLoop(ctx context.Context) {
 	for ctx.Err() == nil {
-		organization, investigation, claimed, err := r.Store.ClaimInvestigation(ctx, r.workerClaim())
+		organizationID, investigation, claimed, err := r.Store.ClaimInvestigation(ctx, r.workerClaim())
 		if err != nil {
 			r.logError(ctx, "investigations could not be claimed", err)
 		}
@@ -91,16 +91,21 @@ func (r *Runner) workerLoop(ctx context.Context) {
 			r.wait(ctx, claimInterval)
 			continue
 		}
-		r.runClaimed(ctx, organization, investigation)
+		r.runClaimed(ctx, organizationID, investigation)
 	}
 }
 
 func (r *Runner) runClaimed(
 	ctx context.Context, organization uuid.UUID, investigation Investigation,
 ) {
-	ctx, span := otel.Tracer(meterName).Start(ctx, "investigation.run", trace.WithNewRoot(), trace.WithAttributes(
-		observability.OrganizationAttribute(organization.String()),
-		attribute.String("oc.investigation.id", investigation.ID.String())))
+	// Tracing ----->
+	ctx, span := otel.Tracer(meterName).Start(ctx,
+		"investigation.run",
+		trace.WithNewRoot(),
+		trace.WithAttributes(
+			observability.OrganizationAttribute(organization.String()),
+			attribute.String("oc.investigation.id", investigation.ID.String())))
+
 	defer span.End()
 	if investigation.IncidentID != uuid.Nil {
 		span.SetAttributes(attribute.String("oc.incident.id", investigation.IncidentID.String()))
@@ -146,7 +151,8 @@ func (r *Runner) runClaimed(
 
 // monitorClaim keeps the lease alive and stops local execution when the
 // Investigation is cancelled or the claim is lost.
-func (r *Runner) monitorClaim(ctx context.Context,
+func (r *Runner) monitorClaim(
+	ctx context.Context,
 	cancelRun context.CancelFunc,
 	agentDone <-chan struct{},
 	organization uuid.UUID,
@@ -170,13 +176,13 @@ func (r *Runner) monitorClaim(ctx context.Context,
 				return
 			}
 		case <-renew.C:
-			held, err := r.Store.Heartbeat(ctx, organization, id, claim)
+			isHeld, err := r.Store.Heartbeat(ctx, organization, id, claim)
 			if err != nil {
 				r.logError(ctx, "investigation lease could not be renewed", err,
 					slog.String("org_id", organization.String()), slog.String("investigation_id", id.String()))
 				continue
 			}
-			if !held {
+			if !isHeld {
 				cancelRun()
 				return
 			}
