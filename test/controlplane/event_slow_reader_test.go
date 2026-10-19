@@ -68,16 +68,13 @@ func seedEventBacklog(t *testing.T, dsn, turn string) {
 
 func assertSlowEventReader(t *testing.T, plane *integrationPlane, turn string) {
 	t.Helper()
+	// Keep receive-window autotuning enabled so queued data drains promptly
+	// after the server closes the stream.
 	connection, err := net.DialTCP("tcp", nil, mustTCPAddress(t, plane.api))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = connection.Close() }()
-	// Keep the window bounded without making loopback-sized TCP segments stall
-	// the drain after the server has already closed the connection.
-	if err := connection.SetReadBuffer(64 << 10); err != nil {
-		t.Fatal(err)
-	}
 	transport := &http.Transport{DialContext: func(context.Context, string, string) (net.Conn, error) {
 		return connection, nil
 	}}
@@ -99,9 +96,6 @@ func assertSlowEventReader(t *testing.T, plane *integrationPlane, turn string) {
 		t.Fatalf("stream status=%d", response.StatusCode)
 	}
 	time.Sleep(15 * time.Second)
-	if err := connection.SetReadBuffer(1 << 20); err != nil {
-		t.Fatal(err)
-	}
 	if err := connection.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
