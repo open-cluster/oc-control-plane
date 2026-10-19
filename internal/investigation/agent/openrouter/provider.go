@@ -50,13 +50,13 @@ func New(config agent.ModelConfig, options Options) (*Provider, error) {
 	settings := []sdk.SDKOption{
 		sdk.WithSecurity(config.Credential.Reveal()), sdk.WithClient(&client),
 		sdk.WithRetryConfig(retry.Config{
-			Strategy:              "backoff", //either "backoff", "none" or ""
+			Strategy:              "backoff", // either "backoff", "none" or ""
 			RetryConnectionErrors: true,
 			Backoff: &retry.BackoffStrategy{
 				InitialInterval: 500,
 				MaxInterval:     5_000,
 				Exponent:        2,
-				MaxElapsedTime:  30_000, //Stop retrying after roughly 30 seconds
+				MaxElapsedTime:  30_000, // Stop retrying after roughly 30 seconds
 			},
 		}),
 	}

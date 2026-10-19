@@ -66,7 +66,7 @@ func request(prompt agent.Prompt) (sdk.ChatRequest, error) {
 			},
 		}))
 	}
-	for _, turn := range prompt.Turns { //todo recheck and analyze it
+	for _, turn := range prompt.Turns { // todo recheck and analyze it
 		var assistant sdk.ChatAssistantMessage
 		if len(turn.Assistant.Raw) > 0 {
 			// Replay signed/encrypted reasoning and native calls without reconstructing them.
