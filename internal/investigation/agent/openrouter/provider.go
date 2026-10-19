@@ -38,6 +38,7 @@ func New(config agent.ModelConfig, options Options) (*Provider, error) {
 		client = *options.HTTPClient
 	}
 	// Redirects must never move provider credentials or Investigation context to another host.
+	// So when redirect is invoked we return an error and stop the redirect to be happened.
 	client.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
@@ -49,13 +50,13 @@ func New(config agent.ModelConfig, options Options) (*Provider, error) {
 	settings := []sdk.SDKOption{
 		sdk.WithSecurity(config.Credential.Reveal()), sdk.WithClient(&client),
 		sdk.WithRetryConfig(retry.Config{
-			Strategy:              "backoff",
+			Strategy:              "backoff", //either "backoff", "none" or ""
 			RetryConnectionErrors: true,
 			Backoff: &retry.BackoffStrategy{
 				InitialInterval: 500,
 				MaxInterval:     5_000,
 				Exponent:        2,
-				MaxElapsedTime:  30_000,
+				MaxElapsedTime:  30_000, //Stop retrying after roughly 30 seconds
 			},
 		}),
 	}
@@ -81,8 +82,7 @@ func (p *Provider) RequestTokens(prompt agent.Prompt) (int, error) {
 }
 
 func (p *Provider) Complete(ctx context.Context, prompt agent.Prompt) (agent.Completion, error) {
-
-	body, err := request(prompt)
+	requestBody, err := request(prompt)
 	if err != nil {
 		return agent.Completion{}, agent.Failed(
 			agent.OutcomeMalformed, Name, prompt.Model, "invalid model continuation")
@@ -93,7 +93,7 @@ func (p *Provider) Complete(ctx context.Context, prompt agent.Prompt) (agent.Com
 	info := &responseInfo{}
 	ctx = context.WithValue(ctx, responseKey{}, info)
 
-	response, err := p.client.Chat.Send(ctx, body, nil)
+	response, err := p.client.Chat.Send(ctx, requestBody, nil)
 	completion := agent.Completion{
 		Model:     prompt.Model,
 		RequestID: info.identifier,
@@ -158,7 +158,9 @@ func (p *Provider) Complete(ctx context.Context, prompt agent.Prompt) (agent.Com
 			}
 		}
 		completion.ToolCalls = append(completion.ToolCalls, agent.CompletionCall{
-			ID: call.ID, Name: name, Arguments: json.RawMessage(call.Function.Arguments),
+			ID:        call.ID,
+			Name:      name,
+			Arguments: json.RawMessage(call.Function.Arguments),
 		})
 	}
 	if content, _ := message.Content.GetOrZero(); content.Str != nil {
@@ -233,6 +235,10 @@ type boundedTransport struct {
 func (t boundedTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	response, err := t.base.RoundTrip(request)
 	if response != nil {
+
+		// ------ INFO ------
+		// The context metadata will be received by responseInfo
+		// ------ INFO ------
 		if info, ok := request.Context().Value(responseKey{}).(*responseInfo); ok {
 			info.status = response.StatusCode
 			info.identifier = response.Header.Get("x-request-id")

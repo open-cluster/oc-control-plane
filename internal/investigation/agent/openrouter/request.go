@@ -25,7 +25,7 @@ func toolName(name string) string {
 }
 
 func request(prompt agent.Prompt) (sdk.ChatRequest, error) {
-	body := sdk.ChatRequest{
+	chatRequest := sdk.ChatRequest{
 		Model:               &prompt.Model,
 		MaxCompletionTokens: optionalnullable.From(&prompt.MaxOutputTokens),
 		Stream:              new(false),
@@ -48,7 +48,7 @@ func request(prompt agent.Prompt) (sdk.ChatRequest, error) {
 		ToolChoice: new(sdk.CreateChatToolChoiceChatToolChoiceAuto(sdk.ChatToolChoiceAutoAuto)),
 	}
 	for _, definition := range prompt.Tools {
-		body.Tools = append(body.Tools, sdk.CreateChatFunctionToolChatFunctionToolFunction(
+		chatRequest.Tools = append(chatRequest.Tools, sdk.CreateChatFunctionToolChatFunctionToolFunction(
 			sdk.ChatFunctionToolFunction{
 				Type: sdk.ChatFunctionToolTypeFunction,
 				Function: sdk.ChatFunctionToolFunctionFunction{
@@ -59,14 +59,14 @@ func request(prompt agent.Prompt) (sdk.ChatRequest, error) {
 			}))
 	}
 	if prompt.ForceTool != "" {
-		body.ToolChoice = new(sdk.CreateChatToolChoiceChatNamedToolChoice(sdk.ChatNamedToolChoice{
+		chatRequest.ToolChoice = new(sdk.CreateChatToolChoiceChatNamedToolChoice(sdk.ChatNamedToolChoice{
 			Type: sdk.ChatNamedToolChoiceTypeFunction,
 			Function: sdk.ChatNamedToolChoiceFunction{
 				Name: toolName(prompt.ForceTool),
 			},
 		}))
 	}
-	for _, turn := range prompt.Turns {
+	for _, turn := range prompt.Turns { //todo recheck and analyze it
 		var assistant sdk.ChatAssistantMessage
 		if len(turn.Assistant.Raw) > 0 {
 			// Replay signed/encrypted reasoning and native calls without reconstructing them.
@@ -74,7 +74,8 @@ func request(prompt agent.Prompt) (sdk.ChatRequest, error) {
 				return sdk.ChatRequest{}, fmt.Errorf("invalid model continuation")
 			}
 		} else {
-			assistant.Content = optionalnullable.From(new(sdk.CreateChatAssistantMessageContentStr(turn.Assistant.Text)))
+			assistant.Content = optionalnullable.From(new(
+				sdk.CreateChatAssistantMessageContentStr(turn.Assistant.Text)))
 			for _, call := range turn.Assistant.Calls {
 				assistant.ToolCalls = append(assistant.ToolCalls, sdk.ChatToolCall{
 					ID:   call.ID,
@@ -85,21 +86,21 @@ func request(prompt agent.Prompt) (sdk.ChatRequest, error) {
 				})
 			}
 		}
-		body.Messages = append(body.Messages, sdk.CreateChatMessagesAssistant(assistant))
+		chatRequest.Messages = append(chatRequest.Messages, sdk.CreateChatMessagesAssistant(assistant))
 		for _, result := range turn.Results {
-			body.Messages = append(body.Messages, sdk.CreateChatMessagesTool(
+			chatRequest.Messages = append(chatRequest.Messages, sdk.CreateChatMessagesTool(
 				sdk.ChatToolMessage{
 					ToolCallID: result.CallID,
 					Content:    sdk.CreateChatToolMessageContentStr(result.Content),
 				}))
 		}
 		if turn.Instruction != "" {
-			body.Messages = append(body.Messages, sdk.CreateChatMessagesUser(sdk.ChatUserMessage{
+			chatRequest.Messages = append(chatRequest.Messages, sdk.CreateChatMessagesUser(sdk.ChatUserMessage{
 				Content: sdk.CreateChatUserMessageContentStr(turn.Instruction),
 			}))
 		}
 	}
-	return body, nil
+	return chatRequest, nil
 }
 
 func joined(blocks []agent.Block) string {

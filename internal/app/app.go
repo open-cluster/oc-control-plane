@@ -191,6 +191,7 @@ func modelBoundary(cfg config.Config, logger *slog.Logger, options Options) (*ag
 		ContextWindowTokens: cfg.ModelContextWindow,
 		MaxOutputTokens:     cfg.ModelMaxOutputTokens,
 	}.WithDefaults()
+
 	if err := modelConfig.Validate(); err != nil {
 		return nil, err
 	}
@@ -212,14 +213,16 @@ func modelBoundary(cfg config.Config, logger *slog.Logger, options Options) (*ag
 	if openErr != nil {
 		return nil, openErr
 	}
-	built, err := agent.NewAgent(modelConfig, completer)
+
+	// Agent instance ----->
+	newAgent, err := agent.NewAgent(modelConfig, completer)
 	if err != nil {
 		return nil, err
 	}
-	built.Instrument(agent.NewTelemetry(logger))
+	newAgent.Instrument(agent.NewTelemetry(logger))
 	logger.Info("model boundary configured",
 		slog.String("model_config", modelConfig.String()))
-	return built, nil
+	return newAgent, nil
 }
 
 func inventoryInterval(replacement time.Duration) time.Duration {
