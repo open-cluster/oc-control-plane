@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -68,9 +69,20 @@ func seedEventBacklog(t *testing.T, dsn, turn string) {
 
 func assertSlowEventReader(t *testing.T, plane *integrationPlane, turn string) {
 	t.Helper()
-	// Keep receive-window autotuning enabled so queued data drains promptly
-	// after the server closes the stream.
-	connection, err := net.DialTCP("tcp", nil, mustTCPAddress(t, plane.api))
+	// Negotiate the bounded receive window during the handshake instead of
+	// shrinking an already negotiated window and stalling the final drain.
+	dialer := net.Dialer{
+		Control: func(_, _ string, raw syscall.RawConn) error {
+			var socketErr error
+			if err := raw.Control(func(fd uintptr) {
+				socketErr = setSlowReaderReceiveBuffer(fd)
+			}); err != nil {
+				return err
+			}
+			return socketErr
+		},
+	}
+	connection, err := dialer.Dial("tcp", mustTCPAddress(t, plane.api).String())
 	if err != nil {
 		t.Fatal(err)
 	}
