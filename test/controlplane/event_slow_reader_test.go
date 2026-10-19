@@ -73,7 +73,9 @@ func assertSlowEventReader(t *testing.T, plane *integrationPlane, turn string) {
 		t.Fatal(err)
 	}
 	defer func() { _ = connection.Close() }()
-	if err := connection.SetReadBuffer(1024); err != nil {
+	// Keep the window bounded without making loopback-sized TCP segments stall
+	// the drain after the server has already closed the connection.
+	if err := connection.SetReadBuffer(64 << 10); err != nil {
 		t.Fatal(err)
 	}
 	transport := &http.Transport{DialContext: func(context.Context, string, string) (net.Conn, error) {
