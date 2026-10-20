@@ -108,7 +108,8 @@ func assertSlowEventReader(t *testing.T, plane *integrationPlane, turn string) {
 		t.Fatalf("stream status=%d", response.StatusCode)
 	}
 	time.Sleep(15 * time.Second)
-	if err := connection.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+	// Allow queued proxy data to drain after its write timeout.
+	if err := connection.SetReadDeadline(time.Now().Add(20 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	body, err := io.ReadAll(response.Body)
