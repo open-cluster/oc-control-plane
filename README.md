@@ -81,6 +81,9 @@ or Slack.
 PostgreSQL is the durable source of truth. Customer-owned state is explicitly scoped to an
 Organization, and operational mutations are audited.
 
+Investigations use Anthropic or OpenRouter through native Tool calling. OpenCluster owns
+Tool authorization, execution budgets, evidence recording, and conclusion validation.
+
 ### Relay
 
 The Relay runs inside the customer environment and opens an outbound gRPC session to the

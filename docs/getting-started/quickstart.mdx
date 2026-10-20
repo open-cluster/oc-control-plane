@@ -10,7 +10,7 @@ build.
 ## Before you start
 
 You need Docker with Docker Compose, Git, curl, port `8080`, and outbound HTTPS
-access to Anthropic or Z.AI. You also need an API key and model identifier for that
+access to Anthropic or OpenRouter. You also need an API key and model identifier for that
 provider. The checked-in Compose stack runs PostgreSQL and the control plane. It is
 API-only and does not publish the optional Relay unless you enable its profile.
 
@@ -55,7 +55,9 @@ export OPENCLUSTER_RUNTIME_UID="$(id -u)"
 export OPENCLUSTER_RUNTIME_GID="$(id -g)"
 ```
 
-Z.AI users set `OPENCLUSTER_AI_PROVIDER=zai` and a supported Z.AI model identifier.
+OpenRouter users set `OPENCLUSTER_AI_PROVIDER=openrouter` and an exact model identifier
+such as `z-ai/glm-4.7`. The model must support Tool calling and have an endpoint that
+satisfies OpenCluster's zero-retention policy. See [model configuration](/self-hosting/configuration#model-provider).
 Docker Desktop users without `id` can set both runtime values to an available numeric
 non-root ID such as `1000`.
 

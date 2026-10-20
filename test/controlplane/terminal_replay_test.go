@@ -17,7 +17,7 @@ func TestCompletedInvestigationReplaysOneCanonicalEnding(t *testing.T) {
 		cfg.HTTPListenAddress = address
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.BootstrapTokenDigest = digest[:]
-		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "zai", "glm-4.7", "scripted-model-key"
+		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "openrouter", "z-ai/glm-4.7", "scripted-model-key"
 	}, app.Options{Completer: concludingModel{}})
 	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
 	_, turn := plane.openConversation(t, "terminal replay", "what happened?")

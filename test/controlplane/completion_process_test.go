@@ -44,7 +44,7 @@ func startCompletionProcess(t *testing.T, cfg config.Config) (string, func()) {
 	cfg.HTTPListenAddress = freeAddress(t)
 	cfg.PublicURL = "http://" + cfg.HTTPListenAddress
 	cfg.BootstrapTokenDigest = nil
-	cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "zai", "glm-4.7", "scripted-model-key"
+	cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "openrouter", "z-ai/glm-4.7", "scripted-model-key"
 	contents, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)

@@ -66,7 +66,7 @@ func TestLiveProgressEventMatchesSerializedSchema(t *testing.T) {
 		cfg.HTTPListenAddress = address
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.BootstrapTokenDigest = digest[:]
-		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "zai", "glm-4.7", "scripted-model-key"
+		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "openrouter", "z-ai/glm-4.7", "scripted-model-key"
 	}, app.Options{Completer: model, SlackAPIURL: vendor.URL})
 	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
 	if status, body := plane.createSlack(t, "Operator testimony", "xoxb-good-token-1234"); status != http.StatusCreated {
@@ -119,7 +119,7 @@ func TestFailedEventMatchesSerializedSchema(t *testing.T) {
 		cfg.HTTPListenAddress = address
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.BootstrapTokenDigest = digest[:]
-		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "zai", "glm-4.7", "scripted-model-key"
+		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "openrouter", "z-ai/glm-4.7", "scripted-model-key"
 	}, app.Options{Completer: failedEventModel{}})
 	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
 	_, turn := plane.openConversation(t, "failure schema", "investigate checkout")

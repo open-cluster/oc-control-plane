@@ -54,7 +54,10 @@ func NewAgent(config ModelConfig, completer Completer) (*Agent, error) {
 		int64(config.ContextWindowTokens) <= config.MaxOutputTokens {
 		return nil, fmt.Errorf("model configuration must have valid context and output limits")
 	}
-	return &Agent{completer: completer, modelConfig: config}, nil
+	return &Agent{
+		completer:   completer,
+		modelConfig: config,
+	}, nil
 }
 
 func (a *Agent) Instrument(telemetry *Telemetry) { a.telemetry = telemetry }
