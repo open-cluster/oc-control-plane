@@ -204,6 +204,8 @@ func (r *Agent) Run(
 	}
 	brief := r.conversationBrief(ctx, organization, opened)
 	offered := offeredSourcesForConversation(r.Catalog, candidates, origin)
+
+	// Event streaming ----->
 	r.announce(ctx, events,
 		investigation.StartedPayload(opened, true))
 
