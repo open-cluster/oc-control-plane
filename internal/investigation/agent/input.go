@@ -7,24 +7,40 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
+const request = "The complete assigned Messages cannot fit within the input budget. Narrow or split the question and send a new Message; none of this batch was answered."
+
 func (r *Agent) initialInputTokens(oriented orientation) (int, error) {
-	candidate := runState{task: taskInstruction(oriented),
-		orientationText: renderOrientation(oriented), tools: exchangeTools(oriented)}
+	candidate := runState{
+		task:            taskInstruction(oriented),
+		orientationText: renderOrientation(oriented),
+		tools:           exchangeTools(oriented)}
 	return requestTokens(r.completer, modelPrompt(r, &candidate, false))
 }
 
-func (r *Agent) requestNarrowerInput(ctx context.Context, state *runState, messages []investigation.AssignedMessage) error {
+func (r *Agent) requestNarrowerInput(ctx context.Context, state *runState,
+	messages []investigation.AssignedMessage,
+) error {
 	sequences := make([]int64, len(messages))
 	for n, message := range messages {
 		sequences[n] = message.Sequence
 	}
-	const request = "The complete assigned Messages cannot fit within the input budget. Narrow or split the question and send a new Message; none of this batch was answered."
+
 	conclusion := investigation.Conclusion{
-		Status: investigation.Inconclusive, Summary: request,
-		Impact:   investigation.Impact{Summary: "Input was not processed.", RunRefs: []int{}},
-		Findings: []investigation.Finding{}, Hypotheses: []investigation.HypothesisResult{}, Actions: []investigation.ActionProposal{},
-		Limitations: []investigation.Limitation{{Type: investigation.LimitationEssentialHumanInput,
-			Statement: request, RunRefs: []int{}, MessageSequences: sequences}},
+		Status:  investigation.Inconclusive,
+		Summary: request,
+		Impact: investigation.Impact{
+			Summary: "Input was not processed.",
+			RunRefs: []int{},
+		},
+		Findings:   []investigation.Finding{},
+		Hypotheses: []investigation.HypothesisResult{},
+		Actions:    []investigation.ActionProposal{},
+		Limitations: []investigation.Limitation{{
+			Type:             investigation.LimitationEssentialHumanInput,
+			Statement:        request,
+			RunRefs:          []int{},
+			MessageSequences: sequences,
+		}},
 	}
 	writeCtx, done := terminalWriteWindow(ctx)
 	defer done()

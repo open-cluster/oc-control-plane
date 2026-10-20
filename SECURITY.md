@@ -1,23 +1,36 @@
-# Security policy
+# Security Policy
 
-Do not report vulnerabilities, credentials, customer data, or exploit details in a public
-issue. Use the repository's private GitHub vulnerability-reporting channel when available;
-otherwise contact an OpenCluster organization owner or repository maintainer privately.
+## Reporting a Vulnerability
 
-Include affected versions or commits, reproduction details, impact, and any suggested
-mitigation. Maintainers acknowledge reports, assess tenant-isolation and credential impact,
-coordinate remediation privately, and publish advisories only when disclosure is safe.
+If you discover a security vulnerability in OpenCluster, please report it privately
+through [GitHub Security Advisories](https://github.com/open-cluster/oc-control-plane/security/advisories) by selecting
+**Report a vulnerability**.
 
-## Security boundaries
+Do not disclose vulnerabilities, credentials, customer data, or exploit details in public GitHub issues or discussions.
 
-- Every tenant-owned database operation is scoped to its Organization.
-- The control plane never accesses customer clusters; the separately deployed Relay does.
-- Credentials arrive through mounted files, are encrypted when recoverable, and are
-  excluded from audit details and logs.
-- Operator requests require explicit route permissions; only the configured model provider
-  receives investigation evidence.
-- Continuous integration runs dependency vulnerability, license, and secret scans using
-  pinned tooling and least-privilege workflow permissions.
+Please include the affected versions or commits, steps to reproduce, potential impact, and any suggested mitigation. Do
+not include real credentials or sensitive customer information.
 
-See [the public security model](./docs/security/overview.mdx) and
-[architecture and trust boundaries](./ARCHITECTURE.md).
+## Response and Disclosure
+
+Reports will be assessed privately, prioritized by severity and impact, and addressed through coordinated remediation.
+Security advisories are published when disclosure is appropriate.
+
+## Supported Versions
+
+OpenCluster is pre-release software with no stable release currently published. Security fixes target actively
+maintained code. Support for previously distributed versions is evaluated based on their affected components and
+deployments.
+
+## Security Boundaries
+
+- Tenant-owned database operations are scoped to their Organization.
+- The control plane does not access customer Kubernetes clusters directly; the separately deployed Relay handles
+  authorized cluster operations.
+- Recoverable credentials are encrypted and excluded from logs and audit details.
+- Operator requests require explicit permissions, and investigation evidence is shared only with the configured model
+  provider.
+- CI includes dependency vulnerability, license, and secret scanning.
+
+For additional information, see the [security model](./docs/security/overview.mdx)
+and [architecture](./ARCHITECTURE.md).
