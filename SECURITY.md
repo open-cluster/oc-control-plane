@@ -2,9 +2,9 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in OpenCluster, please report it privately
-through [GitHub Security Advisories](https://github.com/open-cluster/oc-control-plane/security/advisories) by selecting
-**Report a vulnerability**.
+Report vulnerabilities through GitHub's
+[private reporting form](https://github.com/open-cluster/oc-control-plane/security/advisories/new).
+A GitHub account is required. The repository uses GitHub's default form; CWE assignment is optional.
 
 Do not disclose vulnerabilities, credentials, customer data, or exploit details in public GitHub issues or discussions.
 
@@ -14,7 +14,6 @@ not include real credentials or sensitive customer information.
 ## Response and Disclosure
 
 Reports will be assessed privately, prioritized by severity and impact, and addressed through coordinated remediation.
-Security advisories are published when disclosure is appropriate.
 
 ## Supported Versions
 
