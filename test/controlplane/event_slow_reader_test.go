@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -68,14 +69,24 @@ func seedEventBacklog(t *testing.T, dsn, turn string) {
 
 func assertSlowEventReader(t *testing.T, plane *integrationPlane, turn string) {
 	t.Helper()
-	connection, err := net.DialTCP("tcp", nil, mustTCPAddress(t, plane.api))
+	// Negotiate the bounded receive window during the handshake instead of
+	// shrinking an already negotiated window and stalling the final drain.
+	dialer := net.Dialer{
+		Control: func(_, _ string, raw syscall.RawConn) error {
+			var socketErr error
+			if err := raw.Control(func(fd uintptr) {
+				socketErr = setSlowReaderReceiveBuffer(fd)
+			}); err != nil {
+				return err
+			}
+			return socketErr
+		},
+	}
+	connection, err := dialer.Dial("tcp", mustTCPAddress(t, plane.api).String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = connection.Close() }()
-	if err := connection.SetReadBuffer(1024); err != nil {
-		t.Fatal(err)
-	}
 	transport := &http.Transport{DialContext: func(context.Context, string, string) (net.Conn, error) {
 		return connection, nil
 	}}
@@ -97,10 +108,8 @@ func assertSlowEventReader(t *testing.T, plane *integrationPlane, turn string) {
 		t.Fatalf("stream status=%d", response.StatusCode)
 	}
 	time.Sleep(15 * time.Second)
-	if err := connection.SetReadBuffer(1 << 20); err != nil {
-		t.Fatal(err)
-	}
-	if err := connection.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+	// Allow queued proxy data to drain after its write timeout.
+	if err := connection.SetReadDeadline(time.Now().Add(20 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	body, err := io.ReadAll(response.Body)
