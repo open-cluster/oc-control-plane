@@ -13,11 +13,7 @@ not include real credentials or sensitive customer information.
 
 ## Response and Disclosure
 
-Maintainers will acknowledge receipt of vulnerability reports within 14 calendar days. They assess reports privately,
-including tenant-isolation and credential impact, and prioritize remediation by severity and impact.
-
-Maintainers coordinate fixes or mitigations and disclosure timing with the reporter. Security advisories are published
-when disclosure is appropriate. Initial acknowledgment is not a commitment to a remediation deadline.
+Reports will be assessed privately, prioritized by severity and impact, and addressed through coordinated remediation.
 
 ## Supported Versions
 
