@@ -37,6 +37,7 @@ func TestToolResultsContinueToAForcedConclusion(t *testing.T) {
 		toolCalls := []any{
 			map[string]any{"id": "read-1", "type": "function", "function": map[string]any{"name": name, "arguments": `{"purpose":"Check workload","input":{}}`}},
 			map[string]any{"id": "read-2", "type": "function", "function": map[string]any{"name": name, "arguments": `{"purpose":"Check another workload","input":{}}`}},
+			map[string]any{"id": "premature", "type": "function", "function": map[string]any{"name": "conclude", "arguments": `{"findings":[]}`}},
 		}
 		if calls.Add(1) == 2 {
 			toolCalls = []any{map[string]any{"id": "done", "type": "function", "function": map[string]any{"name": "conclude", "arguments": `{"findings":[]}`}}}
@@ -68,7 +69,7 @@ func TestToolResultsContinueToAForcedConclusion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.ToolCalls) != 2 || first.ToolCalls[0].Name != tool.Name || first.ToolCalls[1].ID != "read-2" || first.Stop != agent.StopToolUse {
+	if len(first.ToolCalls) != 3 || first.ToolCalls[0].Name != tool.Name || first.ToolCalls[1].ID != "read-2" || first.Stop != agent.StopToolUse {
 		t.Fatalf("completion = %+v", first)
 	}
 	if first.RequestID != "generation-1" || first.Usage.Input.Tokens != 80 || first.Usage.CacheRead.Tokens != 20 || first.Usage.Output.Tokens != 30 || first.Usage.Reasoning.Tokens != 10 {
@@ -88,6 +89,7 @@ func TestToolResultsContinueToAForcedConclusion(t *testing.T) {
 	}
 	prompt.Turns = []agent.Turn{{Assistant: agent.AssistantTurn{Calls: first.ToolCalls, Raw: first.Raw}, Results: []agent.ToolResultTurn{
 		{CallID: "read-1", Content: "[run 1] unhealthy workload"}, {CallID: "read-2", Content: "[run 2] healthy dependency"},
+		{CallID: "premature", Content: "Finalization deferred: consider the read results.", IsError: true},
 	}}}
 	prompt.Tools = prompt.Tools[1:]
 	prompt.ForceTool = agent.ConcludeToolName
@@ -98,7 +100,8 @@ func TestToolResultsContinueToAForcedConclusion(t *testing.T) {
 	followup := <-requests
 	messages := followup["messages"].([]any)
 	assistant := messages[2].(map[string]any)
-	if assistant["reasoning_details"].([]any)[0].(map[string]any)["data"] != continuation || messages[3].(map[string]any)["tool_call_id"] != "read-1" || messages[4].(map[string]any)["tool_call_id"] != "read-2" {
+	if assistant["reasoning_details"].([]any)[0].(map[string]any)["data"] != continuation || messages[3].(map[string]any)["tool_call_id"] != "read-1" || messages[4].(map[string]any)["tool_call_id"] != "read-2" ||
+		messages[5].(map[string]any)["tool_call_id"] != "premature" || !strings.Contains(messages[5].(map[string]any)["content"].(string), "deferred") {
 		t.Fatalf("continuation = %v", messages)
 	}
 	choice := followup["tool_choice"].(map[string]any)

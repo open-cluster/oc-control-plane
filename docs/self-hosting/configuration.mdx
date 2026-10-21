@@ -137,6 +137,8 @@ and `OC_AI_MAX_OUTPUT_SIZE` to fit its published limits. The context allowance m
 the output allowance. Larger explicit allowances are also supported when the selected
 model permits them. In YAML, the optional fields are `ai.contextWindow` and
 `ai.maxOutputTokens`. No model discovery request or local model allowlist is required.
+The context allowance guides optional-history reduction using an approximate token estimate.
+An estimate alone does not reject your request; the provider determines whether it fits.
 
 Restart the control plane, wait for `/readyz`, and run one bounded Investigation. Startup
 proves that the file is readable; only a completed Investigation proves that the selected
@@ -167,7 +169,7 @@ and training terms before production use.
 | `OC_AI_PROVIDER` | AI provider: `anthropic` or `openrouter`. |
 | `OC_AI_MODEL` | Exact model identifier. |
 | `OC_AI_API_KEY` / `OC_AI_API_KEY_FILE` | AI provider credential file. Direct value or file; do not set both. |
-| `OC_AI_CONTEXT_WINDOW_SIZE` | Optional context allowance in tokens; default `200000`. Lower it for smaller models. |
+| `OC_AI_CONTEXT_WINDOW_SIZE` | Optional advisory context allowance in tokens; default `200000`. Lower it for smaller models. |
 | `OC_AI_MAX_OUTPUT_SIZE` | Optional output allowance in tokens, including reasoning; default `32000`. |
 | `OC_INVESTIGATION_WORKERS` | Concurrent Investigation workers per replica; default `8`. |
 | `OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION` | Maximum unclaimed Investigations per Organization; default `100`. |

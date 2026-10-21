@@ -445,6 +445,13 @@ func TestComplete_HaikuForcedConclusionDisablesThinkingAtEveryEffort(t *testing.
 		},
 	}}
 	prompt.ForceTool = "conclude"
+	prompt.Turns = []reasoning.Turn{{
+		Assistant: reasoning.AssistantTurn{Raw: []byte(`{"id":"prior","type":"message","role":"assistant","model":"claude-haiku-4-5","content":[{"type":"thinking","thinking":"Retain the native continuation.","signature":"signed-thinking"},{"type":"tool_use","id":"read-1","name":"oc_cmVhZA","input":{}},{"type":"tool_use","id":"premature","name":"oc_Y29uY2x1ZGU","input":{}}]}`)},
+		Results: []reasoning.ToolResultTurn{
+			{CallID: "read-1", Content: "[run 1] workload state"},
+			{CallID: "premature", Content: "Finalization deferred: consider the read results.", IsError: true},
+		},
+	}}
 	if _, err := provider.Complete(context.Background(), prompt); err != nil {
 		t.Fatalf("completing with Haiku: %v", err)
 	}
@@ -452,6 +459,12 @@ func TestComplete_HaikuForcedConclusionDisablesThinkingAtEveryEffort(t *testing.
 	for _, expected := range []string{
 		`"thinking":{"type":"disabled"}`,
 		`"tool_choice":{"name":"oc_Y29uY2x1ZGU","type":"tool"}`,
+		`"signature":"signed-thinking"`,
+		`"thinking":"Retain the native continuation."`,
+		`"tool_use_id":"read-1"`,
+		`"tool_use_id":"premature"`,
+		`"is_error":true`,
+		`Finalization deferred: consider the read results.`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("the Haiku request does not carry %s: %s", expected, body)

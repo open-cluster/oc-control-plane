@@ -69,7 +69,7 @@ func New(config agent.ModelConfig, options Options) (*Provider, error) {
 	}, nil
 }
 
-func (p *Provider) RequestTokens(prompt agent.Prompt) (int, error) {
+func (p *Provider) EstimateRequestTokens(prompt agent.Prompt) (int, error) {
 	body, err := request(prompt)
 	if err != nil {
 		return 0, err

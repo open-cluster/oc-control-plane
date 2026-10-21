@@ -191,7 +191,7 @@ func boundedRetryAfter(value string, now time.Time) (time.Duration, bool) {
 	return min(max(at.Sub(now), 0), retryAfterCap), true
 }
 
-func (p *Provider) RequestTokens(prompt reasoning.Prompt) (int, error) {
+func (p *Provider) EstimateRequestTokens(prompt reasoning.Prompt) (int, error) {
 	encoded, err := json.Marshal(p.params(prompt))
 	if err != nil {
 		return 0, err
