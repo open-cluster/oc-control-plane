@@ -95,7 +95,6 @@ func (p *Provider) Complete(ctx context.Context, prompt agent.Prompt) (agent.Com
 
 	response, err := p.client.Chat.Send(ctx, requestBody, nil)
 	completion := agent.Completion{
-		Model:     prompt.Model,
 		RequestID: info.identifier,
 	}
 	if err != nil {

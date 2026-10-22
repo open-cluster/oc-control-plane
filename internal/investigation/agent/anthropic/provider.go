@@ -187,7 +187,7 @@ func (p *Provider) Complete(
 	}
 
 	completion := reasoning.Completion{
-		Model:     answeringModel(message, prompt.Model),
+		Model:     strings.TrimSpace(string(message.Model)),
 		RequestID: captured.value(),
 		Stop:      stopOf(message.StopReason),
 		Usage:     usageOf(message.Usage),
@@ -225,13 +225,6 @@ func toolCallsOf(message sdk.Message) []reasoning.CompletionCall {
 		}
 	}
 	return calls
-}
-
-func answeringModel(message sdk.Message, requested string) string {
-	if answered := strings.TrimSpace(string(message.Model)); answered != "" {
-		return answered
-	}
-	return requested
 }
 
 func textOf(message sdk.Message) string {

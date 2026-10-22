@@ -280,9 +280,12 @@ func TestComplete_TellsARejectedRequestApartFromAnOutage(t *testing.T) {
 			response.Header.Set("Retry-After", "0")
 			provider, _ := providerUnder(t, response)
 
-			_, err := provider.Complete(context.Background(), promptFixture())
+			completion, err := provider.Complete(context.Background(), promptFixture())
 			if !errors.Is(err, testCase.want) {
 				t.Fatalf("a %d became %v, want %v", testCase.status, err, testCase.want)
+			}
+			if completion.Model != "" {
+				t.Fatal("a request failure invented a responding model")
 			}
 		})
 	}

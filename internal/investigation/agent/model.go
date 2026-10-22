@@ -145,6 +145,7 @@ type Schema struct {
 }
 
 type Completion struct {
+	// Model is the reported responding model, empty when the provider did not report it.
 	Model     string
 	RequestID string
 	Document  []byte

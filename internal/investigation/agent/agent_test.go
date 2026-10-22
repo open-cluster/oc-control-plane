@@ -880,7 +880,7 @@ func TestRunFailureLogsAreSafeAndDescribeCommittedOutcome(t *testing.T) {
 	t.Cleanup(func() { otel.SetTracerProvider(previous); _ = provider.Shutdown(context.Background()) })
 	store := &records{}
 	model := &scriptedModel{next: func(int, Prompt) (Completion, error) {
-		return Completion{RequestID: "provider-123", Model: secret, Raw: []byte(secret), Document: []byte(secret)}, FailedBecause(OutcomeOutage, "scripted", "test", secret, errors.New(secret))
+		return Completion{RequestID: "provider-123", Model: "responding-model", Raw: []byte(secret), Document: []byte(secret)}, FailedBecause(OutcomeOutage, "scripted", "test", secret, errors.New(secret))
 	}}
 	agent := configuredTestAgent(t, store, model, testCatalog(t, func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 		return integrations.ToolResult{}, nil
@@ -904,7 +904,8 @@ func TestRunFailureLogsAreSafeAndDescribeCommittedOutcome(t *testing.T) {
 			t.Fatal("sensitive provider content escaped through tracing")
 		}
 	}
-	if strings.Count(text, `"msg":"investigation failed"`) != 1 || !strings.Contains(text, org.String()) || !strings.Contains(text, id.String()) || !strings.Contains(text, `"outcome":"outage"`) || !strings.Contains(text, `"provider_request_id":"provider-123"`) {
+	if strings.Count(text, `"msg":"investigation failed"`) != 1 || !strings.Contains(text, org.String()) || !strings.Contains(text, id.String()) || !strings.Contains(text, `"outcome":"outage"`) || !strings.Contains(text, `"provider_request_id":"provider-123"`) ||
+		!strings.Contains(text, `"model_answered":"responding-model"`) {
 		t.Fatalf("committed failure lacks safe correlation: %s", text)
 	}
 	logs.Reset()

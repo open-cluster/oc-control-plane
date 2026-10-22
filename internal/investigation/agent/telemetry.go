@@ -68,8 +68,7 @@ func (t *Telemetry) complete(
 	completion, err := completer.Complete(ctx, prompt)
 	elapsed := time.Since(started)
 	model := config.Model
-	responseReported := err == nil || completion.Usage.Input.Reported || completion.Usage.Output.Reported
-	if completion.Model != "" && responseReported {
+	if completion.Model != "" {
 		model = completion.Model
 		span.SetAttributes(attribute.String("oc.reasoning.model_answered", model))
 	}
@@ -109,7 +108,7 @@ func (t *Telemetry) complete(
 			}
 		}
 	}
-	if completion.Model != "" && responseReported {
+	if completion.Model != "" {
 		entry = append(entry, slog.String("model_answered", model))
 	}
 	if requestID != "" {

@@ -133,6 +133,7 @@ func TestProviderFailuresAreClassifiedWithoutSourceContent(t *testing.T) {
 		{"rate limit", 429, `{"error":{"code":429,"message":"` + private + `"}}`, agent.ErrOutage},
 		{"context", 400, `{"error":{"code":400,"message":"context length exceeded ` + private + `"}}`, agent.ErrContextWindow},
 		{"invalid response", 200, `{"choices":"` + private + `"}`, agent.ErrMalformed},
+		{"reported model without usage", 200, `{"id":"generation-1","object":"chat.completion","created":1,"model":"actual-model","choices":[]}`, agent.ErrMalformed},
 		{"ambiguous call IDs", 200, `{"id":"generation-1","object":"chat.completion","created":1,"model":"z-ai/glm-4.7","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"tool_calls":[{"id":"same","type":"function","function":{"name":"read","arguments":"{}"}},{"id":"same","type":"function","function":{"name":"read","arguments":"{}"}}]}}]}`, agent.ErrMalformed},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -148,9 +149,15 @@ func TestProviderFailuresAreClassifiedWithoutSourceContent(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = provider.Complete(context.Background(), agent.Prompt{Model: "z-ai/glm-4.7"})
+			completion, err := provider.Complete(context.Background(), agent.Prompt{Model: "z-ai/glm-4.7"})
 			if !errors.Is(err, test.want) || strings.Contains(err.Error(), private) || strings.Contains(err.Error(), "test-key") {
 				t.Fatalf("provider error = %v", err)
+			}
+			if test.name == "credential" && completion.Model != "" {
+				t.Fatal("a request failure invented a responding model")
+			}
+			if test.name == "reported model without usage" && (completion.Model != "actual-model" || completion.Usage.Input.Reported) {
+				t.Fatal("responding-model identity was coupled to usage availability")
 			}
 		})
 	}
