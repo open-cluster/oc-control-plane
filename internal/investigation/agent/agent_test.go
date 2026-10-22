@@ -34,11 +34,11 @@ func (m *scriptedModel) Complete(_ context.Context, prompt Prompt) (Completion, 
 	return m.next(m.calls, prompt)
 }
 
-func (m *scriptedModel) RequestTokens(prompt Prompt) (int, error) {
+func (m *scriptedModel) EstimateRequestTokens(prompt Prompt) (int, error) {
 	if m.size != nil {
 		return m.size(prompt)
 	}
-	return EstimatePromptTokens(prompt)
+	return 0, nil
 }
 
 type records struct {
@@ -460,7 +460,7 @@ func TestRunAcceptsACustomModelWithExplicitLimits(t *testing.T) {
 	}
 }
 
-func TestRunRecordsToolEvidenceBeforeTheNextModelCall(t *testing.T) {
+func TestRunDefersConclusionUntilMixedReadResultsAreRecorded(t *testing.T) {
 	store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
 	catalog := testCatalog(t, func(_ context.Context, _ integrations.ToolRequest) (integrations.ToolResult, error) {
 		store.mu.Lock()
@@ -471,13 +471,27 @@ func TestRunRecordsToolEvidenceBeforeTheNextModelCall(t *testing.T) {
 	model := &scriptedModel{}
 	model.next = func(call int, prompt Prompt) (Completion, error) {
 		if call == 1 {
-			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "c1", Name: "stub.read", Arguments: json.RawMessage(`{"purpose":"read deployment","input":{}}`)}}}, nil
+			return Completion{Stop: StopToolUse, Raw: []byte(`{"opaque":"native continuation"}`), ToolCalls: []CompletionCall{
+				{ID: "c1", Name: "stub.read", Arguments: json.RawMessage(`{"purpose":"read deployment","input":{}}`)},
+				{ID: "premature", Name: ConcludeToolName, Arguments: validConclusion(t, []int{1})},
+			}}, nil
 		}
 		store.mu.Lock()
 		recorded := len(store.runs) == 1 && store.toolUsed
 		store.mu.Unlock()
 		if !recorded {
 			t.Fatal("the Tool Run was not durable before the next Model call")
+		}
+		if len(prompt.Turns) != 1 || len(prompt.Turns[0].Results) != 2 ||
+			len(prompt.Turns[0].Assistant.Calls) != 2 || string(prompt.Turns[0].Assistant.Raw) != `{"opaque":"native continuation"}` {
+			t.Fatalf("mixed Tool calls lost their results or native continuation: %+v", prompt.Turns)
+		}
+		feedback := map[string]string{}
+		for _, result := range prompt.Turns[0].Results {
+			feedback[result.CallID] = result.Content
+		}
+		if !strings.Contains(feedback["premature"], "deferred") || !strings.Contains(feedback["c1"], "[run 1]") {
+			t.Fatalf("mixed Tool feedback = %v", feedback)
 		}
 		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, []int{1})}}}, nil
 	}
@@ -717,29 +731,69 @@ func TestRunStopsWhenCredentialAccessCannotBeAudited(t *testing.T) {
 }
 
 func TestRunRetriesMalformedConclusionOnce(t *testing.T) {
-	store := &records{}
-	model := &scriptedModel{next: func(call int, _ Prompt) (Completion, error) {
-		if call == 1 {
-			return Completion{Stop: StopToolUse,
-				Usage:     TokenUsage{Input: Counted(5), Output: Counted(2)},
-				ToolCalls: []CompletionCall{{ID: "bad", Name: ConcludeToolName, Arguments: json.RawMessage(`{"status":"wrong"}`)}}}, nil
-		}
-		return Completion{Stop: StopToolUse,
-			Usage:     TokenUsage{Input: Counted(7), Output: Counted(3)},
-			ToolCalls: []CompletionCall{{ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil)}}}, nil
-	}}
-	agent := configuredTestAgent(t, store, model, testCatalog(t, func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
-		return integrations.ToolResult{}, nil
-	}))
-	organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
-	if err := agent.Run(context.Background(), organization, investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
-		t.Fatal(err)
-	}
-	if model.calls != 2 || store.status != investigation.StatusConcluded {
-		t.Fatalf("calls=%d status=%s", model.calls, store.status)
-	}
-	if store.usage != (investigation.Usage{InputTokens: 12, OutputTokens: 5}) {
-		t.Fatalf("usage=%+v", store.usage)
+	for _, test := range []struct {
+		name  string
+		calls []CompletionCall
+		fail  bool
+	}{
+		{name: "malformed", calls: []CompletionCall{{ID: "bad", Name: ConcludeToolName, Arguments: json.RawMessage(`{"status":"wrong"}`)}}},
+		{name: "duplicate conclusions", calls: []CompletionCall{
+			{ID: "first", Name: ConcludeToolName, Arguments: validConclusion(t, nil)},
+			{ID: "second", Name: ConcludeToolName, Arguments: validConclusion(t, nil)},
+		}},
+		{name: "reads while finalizing", calls: []CompletionCall{
+			{ID: "read", Name: "stub.read", Arguments: json.RawMessage(`{"purpose":"read deployment","input":{}}`)},
+			{ID: "premature", Name: ConcludeToolName, Arguments: validConclusion(t, nil)},
+		}},
+		{name: "ambiguous IDs", fail: true, calls: []CompletionCall{
+			{ID: "same", Name: ConcludeToolName, Arguments: validConclusion(t, nil)},
+			{ID: "same", Name: ConcludeToolName, Arguments: validConclusion(t, nil)},
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &records{}
+			model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
+				if call == 1 {
+					return Completion{Stop: StopToolUse,
+						Usage:     TokenUsage{Input: Counted(5), Output: Counted(2)},
+						ToolCalls: test.calls, Raw: []byte(`{"opaque":"reasoning"}`)}, nil
+				}
+				if len(prompt.Turns) != 1 || len(prompt.Turns[0].Results) != len(test.calls) ||
+					string(prompt.Turns[0].Assistant.Raw) != `{"opaque":"reasoning"}` {
+					t.Fatal("the malformed conclusion received no correlated correction")
+				}
+				for index, result := range prompt.Turns[0].Results {
+					if result.CallID != test.calls[index].ID || !result.IsError || result.Content == "" {
+						t.Fatalf("invalid correction feedback: %+v", result)
+					}
+				}
+				return Completion{Stop: StopToolUse,
+					Usage:     TokenUsage{Input: Counted(7), Output: Counted(3)},
+					ToolCalls: []CompletionCall{{ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil)}}}, nil
+			}}
+			agent := configuredTestAgent(t, store, model, testCatalog(t, func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
+				return integrations.ToolResult{}, nil
+			}))
+			organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
+			if err := agent.Run(context.Background(), organization, investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
+				t.Fatal(err)
+			}
+			if test.fail {
+				if model.calls != 1 || store.status != investigation.StatusFailed {
+					t.Fatalf("ambiguous calls were not rejected: calls=%d status=%s", model.calls, store.status)
+				}
+				return
+			}
+			if model.calls != 2 || store.status != investigation.StatusConcluded {
+				t.Fatalf("calls=%d status=%s", model.calls, store.status)
+			}
+			if store.usage != (investigation.Usage{InputTokens: 12, OutputTokens: 5}) {
+				t.Fatalf("usage=%+v", store.usage)
+			}
+			if len(store.runs) != 0 {
+				t.Fatal("protocol feedback became a Tool Run")
+			}
+		})
 	}
 }
 
@@ -975,8 +1029,17 @@ func TestRunForcesAnHonestConclusionAtTheTurnLimit(t *testing.T) {
 	}
 }
 
-func TestRunForcesConclusionBeforeTheSerializedRequestExceedsContext(t *testing.T) {
-	store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
+func TestRunAdmitsCompleteAssignedInputDespiteAnOverflowEstimate(t *testing.T) {
+	store := &records{
+		candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"},
+		messages: []investigation.AssignedMessage{
+			{Sequence: 3, Author: "alice", Text: "Read eu-west-2 only."},
+			{Sequence: 4, Author: "bob", Text: "Exclude eu-central-1; preserve this correction."},
+		},
+		brief: investigation.Brief{HistoryBefore: 3, MissingEvidence: true, Recent: []investigation.BriefMessage{
+			{Text: "OLD OPTIONAL CONTEXT"},
+		}, Limitations: []string{investigation.MissingEvidenceStatement}},
+	}
 	model := &scriptedModel{
 		size: func(prompt Prompt) (int, error) {
 			if prompt.ForceTool == ConcludeToolName {
@@ -985,8 +1048,16 @@ func TestRunForcesConclusionBeforeTheSerializedRequestExceedsContext(t *testing.
 			return 2_000, nil
 		},
 		next: func(_ int, prompt Prompt) (Completion, error) {
-			if prompt.ForceTool != ConcludeToolName {
-				t.Fatal("an oversized provider request was sent before forcing conclusion")
+			if prompt.ForceTool != "" || prompt.MaxOutputTokens != 1_024 {
+				t.Fatal("an advisory estimate forced finalization or shrank the output allowance")
+			}
+			text := prompt.System[1].Text + prompt.Content[0].Text
+			first, second := strings.Index(text, store.messages[0].Text), strings.Index(text, store.messages[1].Text)
+			if first < 0 || second <= first || !strings.Contains(text, "alice") || !strings.Contains(text, "bob") ||
+				!strings.Contains(text, "TASK follow_up") || !strings.Contains(text, "beforeSequence=3") ||
+				!strings.Contains(text, investigation.MissingEvidenceStatement) ||
+				strings.Contains(text, "OLD OPTIONAL CONTEXT") {
+				t.Fatalf("admission lost current input or history metadata: %s", text)
 			}
 			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
 				ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil),
@@ -1001,10 +1072,10 @@ func TestRunForcesConclusionBeforeTheSerializedRequestExceedsContext(t *testing.
 
 	organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	if err := runner.Run(context.Background(), organization,
-		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
+		investigation.Investigation{ID: uuid.New(), ConversationID: uuid.New(), Turn: 2, Subject: "question"}); err != nil {
 		t.Fatal(err)
 	}
-	if store.stoppedBy != investigation.StoppedByContext || model.calls != 1 {
+	if store.status != investigation.StatusConcluded || store.stoppedBy != "" || model.calls != 1 {
 		t.Fatalf("stopped_by=%q calls=%d", store.stoppedBy, model.calls)
 	}
 }
@@ -1043,6 +1114,12 @@ func TestRunRetriesAContextRejectionOnlyAsAForcedConclusion(t *testing.T) {
 			ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil),
 		}}}, nil
 	}}
+	model.size = func(prompt Prompt) (int, error) {
+		if prompt.ForceTool == ConcludeToolName {
+			return 100, nil
+		}
+		return 2_000, nil
+	}
 	runner := configuredTestAgent(t, store, model, testCatalog(t,
 		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 			return integrations.ToolResult{}, nil
@@ -1058,34 +1135,73 @@ func TestRunRetriesAContextRejectionOnlyAsAForcedConclusion(t *testing.T) {
 	}
 }
 
-func TestRunReservesTheModelOutputFromTheContextWindow(t *testing.T) {
-	store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
-	model := &scriptedModel{size: func(prompt Prompt) (int, error) {
-		if prompt.ForceTool == ConcludeToolName {
-			return 1, nil
-		}
-		return 3, nil
-	}, next: func(_ int, prompt Prompt) (Completion, error) {
-		if prompt.ForceTool != ConcludeToolName {
-			t.Fatal("context window did not reserve the model's maximum output")
-		}
-		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
-			ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil),
-		}}}, nil
-	}}
-	agent := configuredTestAgent(t, store, model, testCatalog(t,
-		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
-			return integrations.ToolResult{}, nil
-		}))
-	agent.modelConfig.ContextWindowTokens = 1_026
-
-	organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
-	if err := agent.Run(context.Background(), organization,
-		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
-		t.Fatal(err)
-	}
-	if store.stoppedBy != investigation.StoppedByContext {
-		t.Fatalf("stopped_by=%q, want %q", store.stoppedBy, investigation.StoppedByContext)
+func TestRunBoundsContextRecoveryWithoutLosingInput(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		optional    bool
+		rejectRetry bool
+		citeOmitted bool
+	}{
+		{name: "optional context", optional: true},
+		{name: "rejected recovery", optional: true, rejectRetry: true},
+		{name: "no reduction"},
+		{name: "omitted evidence", optional: true, citeOmitted: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			prior := uuid.New()
+			store := &records{messages: []investigation.AssignedMessage{{Sequence: 2, Author: "alice", Text: "Keep the complete current request."}}}
+			if test.optional {
+				store.candidate = integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}
+				store.brief = investigation.Brief{HistoryBefore: 2,
+					Findings: []investigation.PriorFinding{{InvestigationID: prior, Statement: "OPTIONAL OBSERVATION", Runs: []int{1}}}}
+			}
+			model := &scriptedModel{size: func(prompt Prompt) (int, error) {
+				encoded, err := json.Marshal(prompt)
+				return len(encoded), err
+			}, next: func(call int, prompt Prompt) (Completion, error) {
+				if call > 2 {
+					t.Fatal("context recovery exceeded its bound")
+				}
+				if !strings.Contains(prompt.Content[0].Text, store.messages[0].Text) ||
+					!strings.Contains(prompt.Content[0].Text, "alice") || prompt.MaxOutputTokens != 1_024 {
+					t.Fatal("context recovery changed the current input or output allowance")
+				}
+				if call == 1 || test.rejectRetry {
+					return Completion{}, ContextRejected("scripted", "test", "context rejected", nil)
+				}
+				if strings.Contains(prompt.Content[0].Text, "OPTIONAL OBSERVATION") || prompt.ForceTool != "" {
+					t.Fatal("optional recovery retained history or forced finalization")
+				}
+				document := validConclusion(t, nil)
+				if test.citeOmitted {
+					var conclusion map[string]any
+					if err := json.Unmarshal(document, &conclusion); err != nil {
+						t.Fatal(err)
+					}
+					conclusion["findings"] = []any{map[string]any{"statement": "An old observation.", "kind": "observation", "mechanism": "", "run_refs": []int{},
+						"evidence_refs": []investigation.EvidenceRef{{InvestigationID: prior, ToolRunOrdinal: 1}}}}
+					document, _ = json.Marshal(conclusion)
+				}
+				return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "done", Name: ConcludeToolName, Arguments: document}}}, nil
+			}}
+			agent := configuredTestAgent(t, store, model, testCatalog(t, func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
+				t.Fatal("context recovery executed an unrequested read")
+				return integrations.ToolResult{}, nil
+			}))
+			if err := agent.Run(context.Background(), uuid.New(), investigation.Investigation{ID: uuid.New(), ConversationID: uuid.New(), Turn: 2}); err != nil {
+				t.Fatal(err)
+			}
+			wantCalls, wantStatus := 2, investigation.StatusConcluded
+			if !test.optional {
+				wantCalls = 1
+			}
+			if !test.optional || test.rejectRetry || test.citeOmitted {
+				wantStatus = investigation.StatusFailed
+			}
+			if model.calls != wantCalls || store.status != wantStatus || len(store.conclusion.Limitations) != 0 {
+				t.Fatalf("calls=%d status=%s failure=%s", model.calls, store.status, store.failure)
+			}
+		})
 	}
 }
 
@@ -1105,10 +1221,6 @@ func TestRunRecordsOnlyResourceCeilingsThatForceAConclusion(t *testing.T) {
 			context: func() (context.Context, context.CancelFunc) {
 				return context.WithTimeout(context.Background(), time.Minute)
 			}},
-		{name: "context", want: investigation.StoppedByContext,
-			configure: func(a *Agent) { a.modelConfig.ContextWindowTokens = 1_025 }},
-		{name: "context exhausted by reserved output", want: investigation.StoppedByContext,
-			configure: func(a *Agent) { a.modelConfig.ContextWindowTokens = 1_024 }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1117,15 +1229,7 @@ func TestRunRecordsOnlyResourceCeilingsThatForceAConclusion(t *testing.T) {
 			if arguments == nil {
 				arguments = json.RawMessage(`{"purpose":"read it","input":{}}`)
 			}
-			model := &scriptedModel{size: func(prompt Prompt) (int, error) {
-				if strings.HasPrefix(test.name, "context") {
-					if prompt.ForceTool == ConcludeToolName {
-						return 1, nil
-					}
-					return 2_000, nil
-				}
-				return 0, nil
-			}, next: func(_ int, prompt Prompt) (Completion, error) {
+			model := &scriptedModel{next: func(_ int, prompt Prompt) (Completion, error) {
 				if prompt.ForceTool == ConcludeToolName {
 					conclusion := validConclusion(t, nil)
 					if test.name == "stagnation" {

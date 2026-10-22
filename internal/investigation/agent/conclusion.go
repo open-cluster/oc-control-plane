@@ -61,17 +61,20 @@ func sortStrings(values []any) {
 	}
 }
 
-func splitCalls(calls []CompletionCall) (reads []CompletionCall, conclude *CompletionCall) {
-	for index, call := range calls {
+func splitCalls(calls []CompletionCall) (reads, conclusions []CompletionCall, err error) {
+	seen := make(map[string]bool, len(calls))
+	for _, call := range calls {
+		if strings.TrimSpace(call.ID) == "" || seen[call.ID] {
+			return nil, nil, fmt.Errorf("the provider returned empty or duplicate Tool call IDs")
+		}
+		seen[call.ID] = true
 		if call.Name == ConcludeToolName {
-			if conclude == nil {
-				conclude = &calls[index]
-			}
+			conclusions = append(conclusions, call)
 			continue
 		}
 		reads = append(reads, call)
 	}
-	return reads, conclude
+	return reads, conclusions, nil
 }
 
 func decodeConclusion(document []byte, runs int, allowed []investigation.EvidenceRef,
@@ -273,13 +276,6 @@ func validateConclusionStatus(conclusion investigation.Conclusion) error {
 		}
 		if !explanation {
 			return fmt.Errorf("supported_explanation requires a cited explanatory finding")
-		}
-		alternative := false
-		for _, hypothesis := range conclusion.Hypotheses {
-			alternative = alternative || hypothesis.Status == investigation.HypothesisUnresolved
-		}
-		if !alternative {
-			return fmt.Errorf("supported_explanation requires a plausible remaining alternative")
 		}
 	case investigation.Inconclusive:
 		if hasCause {

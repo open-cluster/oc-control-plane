@@ -3,7 +3,6 @@ package controlplane
 import (
 	"crypto/sha256"
 	"encoding/json"
-	"net/http"
 	"strings"
 	"testing"
 
@@ -39,7 +38,7 @@ func TestAssignedMessageBeyondPreviewReachesModel(t *testing.T) {
 	}
 }
 
-func TestOversizedAssignedInputRequestsNarrowingWithoutCallingModel(t *testing.T) {
+func TestLargeAssignedInputReachesModelIntact(t *testing.T) {
 	address := freeAddress(t)
 	prompts := make(chan modelagent.Prompt, 4)
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
@@ -51,7 +50,8 @@ func TestOversizedAssignedInputRequestsNarrowingWithoutCallingModel(t *testing.T
 		cfg.ModelMaxOutputTokens = 32000
 	}, app.Options{Completer: concludingModel{prompts: prompts}})
 	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
-	_, turn := plane.openConversation(t, "oversized input", strings.Repeat("界", 8192))
+	request := strings.Repeat("界", 8192)
+	_, turn := plane.openConversation(t, "large input", request)
 	final := plane.awaitInvestigation(t, turn)
 	var result struct {
 		Status      string `json:"status"`
@@ -64,36 +64,15 @@ func TestOversizedAssignedInputRequestsNarrowingWithoutCallingModel(t *testing.T
 	if err := json.Unmarshal([]byte(final), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != "concluded" || len(result.Limitations) != 1 ||
-		result.Limitations[0].Type != "essential_human_input" || len(result.Limitations[0].MessageSequences) != 1 ||
-		result.Limitations[0].MessageSequences[0] != 1 {
-		t.Fatalf("oversized input lacks an explicit persisted sequence refusal: %s", final)
-	}
-	var contract map[string]any
-	if err := json.Unmarshal([]byte(final), &contract); err != nil {
-		t.Fatal(err)
-	}
-	if _, present := contract["humanConfirmationRequired"]; present {
-		t.Fatalf("concluded response exposes a duplicate human-input flag: %s", final)
-	}
-	impact, ok := contract["impact"].(map[string]any)
-	if !ok || len(impact) != 2 || impact["summary"] != "Input was not processed." {
-		t.Fatalf("unprocessed impact does not use the reduced contract: %s", final)
-	}
-	status, eventsBody := plane.call(t, http.MethodGet,
-		plane.base(surfaceOrg)+"/investigations/"+turn+"/events", nil)
-	if status != http.StatusOK {
-		t.Fatalf("reading needs-input events = %d: %s", status, eventsBody)
-	}
-	events := assertSerializedEvents(t, eventsBody)
-	ending := events[len(events)-1]
-	payload := ending["payload"].(map[string]any)
-	if ending["type"] != "concluded" || payload["summary"] != result.Summary {
-		t.Fatalf("needs-input ending differs from terminal detail: %s", eventsBody)
+	if result.Status != "concluded" || len(result.Limitations) != 0 {
+		t.Fatalf("a valid request was treated as a capacity failure or missing input: %s", final)
 	}
 	select {
-	case <-prompts:
-		t.Fatal("model was called with input that cannot fit")
+	case prompt := <-prompts:
+		if !strings.Contains(prompt.Content[0].Text, request) {
+			t.Fatal("the complete large Message did not reach the model")
+		}
 	default:
+		t.Fatal("the request was refused without calling the model")
 	}
 }

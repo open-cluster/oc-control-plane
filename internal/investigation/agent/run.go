@@ -93,11 +93,8 @@ type runState struct {
 	turns              int
 	usage              investigation.Usage
 
-	task                  string
-	orientationText       string
-	tools                 []integrations.ToolDefinition
+	orientation           orientation
 	transcript            []Turn
-	opening               string
 	highestOrdinal        int
 	historyBeforeSequence int64
 	missingEvidence       bool
@@ -242,43 +239,57 @@ func (r *Agent) Run(
 	if state.maxTurns <= 0 {
 		state.maxTurns = defaultMaxTurns
 	}
-	if len(messages) > 0 {
-		inputCapacity := r.modelConfig.ContextWindowTokens - int(r.modelConfig.MaxOutputTokens)
-		inputTokens, err := r.initialInputTokens(oriented)
-		if err != nil {
-			return failRun("the assigned input budget could not be established", investigation.Usage{})
-		}
-		if inputTokens > inputCapacity {
-			oriented.Brief = &investigation.Brief{
-				HistoryBefore: state.historyBeforeSequence,
-				Turn:          opened.Turn,
-				Limitations: []string{
-					"Optional history and inventory were omitted to preserve the complete current request.",
-				},
-			}
-			oriented.Inventory = nil
-			inputTokens, err = r.initialInputTokens(oriented)
-			if err != nil {
-				return failRun("the assigned input budget could not be established", investigation.Usage{})
-			}
-		}
-		if inputTokens > inputCapacity {
-			err := r.requestNarrowerInput(ctx, state, messages)
-			if err == nil {
-				r.RuntimeTelemetry.Ended(time.Since(startedAt), "needs_input", investigation.StoppedByContext)
-			}
-			return err
-		}
-	}
-	state.task = taskInstruction(oriented)
+	state.orientation = oriented
 	state.missingEvidence = oriented.Brief != nil && oriented.Brief.MissingEvidence
-	state.orientationText = renderOrientation(oriented)
-	state.tools = exchangeTools(oriented)
 	var priorEvidence []investigation.EvidenceRef
-	if oriented.Brief != nil {
-		for _, finding := range dedupeFindings(oriented.Brief.Findings) {
-			priorEvidence = append(priorEvidence, finding.References()...)
+
+	preparePrompt := func(forced bool, reason string, contextRejected bool) (Prompt, error) {
+		prompt := modelPrompt(r, state, forced, reason)
+		estimator, available := r.completer.(requestEstimator)
+		if !available {
+			if contextRejected {
+				return Prompt{}, fmt.Errorf("the provider rejected the context and a smaller request could not be established")
+			}
+			return prompt, nil
 		}
+		input, err := estimator.EstimateRequestTokens(prompt)
+		if err != nil {
+			return Prompt{}, fmt.Errorf("estimating the provider request: %w", err)
+		}
+		if contextRejected || int64(input)+prompt.MaxOutputTokens > int64(r.modelConfig.ContextWindowTokens) {
+			state.orientation.Inventory = nil
+			if brief := state.orientation.Brief; brief != nil {
+				state.orientation.Brief = &investigation.Brief{
+					Turn: brief.Turn, HistoryBefore: brief.HistoryBefore, NextBefore: brief.NextBefore,
+					MissingEvidence: brief.MissingEvidence,
+				}
+				if brief.MissingEvidence {
+					state.orientation.Brief.Limitations = []string{investigation.MissingEvidenceStatement}
+				}
+			}
+			prompt = modelPrompt(r, state, forced, reason)
+		}
+		if !contextRejected {
+			return prompt, nil
+		}
+		reduced, err := estimator.EstimateRequestTokens(prompt)
+		if err != nil {
+			return Prompt{}, fmt.Errorf("estimating the recovery request: %w", err)
+		}
+		if reduced < input {
+			return prompt, nil
+		}
+		if !forced && len(prompt.Tools) > 1 {
+			prompt = modelPrompt(r, state, true, concludeReason(investigation.StoppedByContext, len(state.offered)))
+			reduced, err = estimator.EstimateRequestTokens(prompt)
+			if err != nil {
+				return Prompt{}, fmt.Errorf("estimating the finalization request: %w", err)
+			}
+			if reduced < input {
+				return prompt, nil
+			}
+		}
+		return Prompt{}, fmt.Errorf("the provider rejected the context and no meaningfully smaller request is available")
 	}
 
 	var results []toolFeedback
@@ -335,53 +346,28 @@ func (r *Agent) Run(
 			}
 		}
 		forced := mustConclude
-		forceInstruction := func() {
-			instruction := concludeInstruction(reason)
-			if len(state.transcript) == 0 {
-				state.opening = instruction
-			} else {
-				state.transcript[len(state.transcript)-1].Instruction = instruction
-			}
-		}
-		if forced {
-			forceInstruction()
-		}
-
 		move := modelMove{}
 		moveCtx, done := context.WithTimeout(ctx, decideTimeout)
+		contextRejected := false
 		for attempt := range 2 {
-			prompt, fits, budgetErr := r.budgetPrompt(modelPrompt(r, state, forced), forced)
-			if budgetErr != nil {
+			prompt, prepareErr := preparePrompt(forced, reason, contextRejected)
+			if prepareErr != nil {
 				err = Failed(OutcomeRejected, r.modelConfig.Provider, r.modelConfig.Model,
-					"the provider request could not be budgeted: "+budgetErr.Error())
+					prepareErr.Error())
 				break
 			}
-			if !fits && !forced {
+			if contextRejected && !forced && prompt.ForceTool != "" {
 				stoppedBy = investigation.StoppedByContext
 				r.announce(ctx, events, investigation.ProgressPayload(ceilingProgress(stoppedBy)))
 				reason = concludeReason(stoppedBy, len(state.offered))
 				forced = true
-				forceInstruction()
-				prompt, fits, budgetErr = r.budgetPrompt(modelPrompt(r, state, true), true)
-			}
-			if budgetErr != nil || !fits {
-				detail := "the complete provider request does not fit the model context window"
-				if budgetErr != nil {
-					detail = "the provider request could not be budgeted: " + budgetErr.Error()
-				}
-				err = Failed(OutcomeRejected, r.modelConfig.Provider, r.modelConfig.Model, detail)
-				break
 			}
 			completion, completeErr := r.telemetry.complete(
 				moveCtx, r.completer, r.modelConfig, prompt)
 			state.usage = state.usage.Add(usageOf(completion.Usage))
 			if completeErr != nil {
-				if attempt == 0 && !forced && errors.Is(completeErr, ErrContextWindow) {
-					stoppedBy = investigation.StoppedByContext
-					r.announce(ctx, events, investigation.ProgressPayload(ceilingProgress(stoppedBy)))
-					reason = concludeReason(stoppedBy, len(state.offered))
-					forced = true
-					forceInstruction()
+				if attempt == 0 && errors.Is(completeErr, ErrContextWindow) {
+					contextRejected = true
 					continue
 				}
 				err = completeErr
@@ -399,43 +385,59 @@ func (r *Agent) Run(
 				break
 			}
 
-			reads, conclude := splitCalls(completion.ToolCalls)
+			reads, conclusions, callErr := splitCalls(completion.ToolCalls)
+			if callErr != nil {
+				err = Failed(OutcomeMalformed, r.modelConfig.Provider, completion.Model, callErr.Error())
+				break
+			}
+			turn := Turn{Assistant: AssistantTurn{
+				Text: string(completion.Document), Calls: completion.ToolCalls, Raw: completion.Raw,
+			}}
 			if len(reads) > 0 && !forced {
-				state.transcript = append(state.transcript, Turn{Assistant: AssistantTurn{
-					Text: string(completion.Document), Calls: completion.ToolCalls, Raw: completion.Raw,
-				}})
+				for _, call := range conclusions {
+					turn.Results = append(turn.Results, ToolResultTurn{CallID: call.ID,
+						Content: "Finalization deferred: consider the read results before calling conclude again.", IsError: true})
+				}
+				state.transcript = append(state.transcript, turn)
 				move.Calls = agentCalls(reads)
 				break
 			}
-			if conclude != nil {
-				conclusion, decodeErr := decodeConclusion(
-					conclude.Arguments, state.highestOrdinal, priorEvidence)
-				if decodeErr != nil {
-					if attempt == 0 {
-						continue
+			var invalid error
+			switch {
+			case len(reads) > 0:
+				invalid = fmt.Errorf("no further reads are available; finalization deferred: call conclude by itself")
+			case len(conclusions) != 1:
+				invalid = fmt.Errorf("call conclude exactly once with the evidence-bounded conclusion")
+			default:
+				allowed := append([]investigation.EvidenceRef(nil), priorEvidence...)
+				if brief := state.orientation.Brief; brief != nil {
+					for _, finding := range dedupeFindings(brief.Findings) {
+						allowed = append(allowed, finding.References()...)
 					}
-					err = Failed(OutcomeMalformed, r.modelConfig.Provider,
-						completion.Model, decodeErr.Error())
-					break
 				}
-				if state.missingEvidence {
-					conclusion.MarkMissingEvidence()
+				conclusion, decodeErr := decodeConclusion(
+					conclusions[0].Arguments, state.highestOrdinal, allowed)
+				invalid = decodeErr
+				if invalid == nil {
+					if state.missingEvidence {
+						conclusion.MarkMissingEvidence()
+					}
+					move.Conclusion = &conclusion
 				}
-				move.Conclusion = &conclusion
+			}
+			if invalid == nil {
 				break
 			}
-
-			if attempt == 0 {
-				state.transcript = append(state.transcript, Turn{Assistant: AssistantTurn{
-					Text: string(completion.Document), Calls: completion.ToolCalls, Raw: completion.Raw,
-				}})
-				instruction := concludeInstruction(reason)
-				state.transcript[len(state.transcript)-1].Instruction = instruction
-				forced = true
-				continue
+			if attempt == 1 {
+				err = Failed(OutcomeMalformed, r.modelConfig.Provider, completion.Model, invalid.Error())
+				break
 			}
-			err = Failed(OutcomeMalformed, r.modelConfig.Provider, r.modelConfig.Model,
-				"the answer was truncated or carried no usable call twice")
+			for _, call := range completion.ToolCalls {
+				turn.Results = append(turn.Results, ToolResultTurn{CallID: call.ID, Content: invalid.Error(), IsError: true})
+			}
+			turn.Instruction = invalid.Error()
+			state.transcript = append(state.transcript, turn)
+			forced = true
 		}
 		done()
 		if err == nil && move.Conclusion == nil && len(move.Calls) == 0 {
@@ -565,25 +567,41 @@ func (r *Agent) Run(
 	}
 }
 
-func modelPrompt(r *Agent, state *runState, forced bool) Prompt {
+func modelPrompt(r *Agent, state *runState, forced bool, reason string) Prompt {
 	prompt := Prompt{
 		Model: r.modelConfig.Model,
 		System: []Block{
-			{Text: safetyPolicy, Cache: true},
-			{Text: state.task, Cache: true},
+			{
+				Text:  safetyPolicy,
+				Cache: true,
+			},
+			{
+				Text:  taskInstruction(state.orientation),
+				Cache: true,
+			},
 		},
-		Content:         []Block{{Text: state.orientationText, Cache: true}},
-		Tools:           state.tools,
+		Content: []Block{
+			{
+				Text:  renderOrientation(state.orientation),
+				Cache: true,
+			},
+		},
+		Tools:           exchangeTools(state.orientation),
 		Turns:           state.transcript,
 		MaxOutputTokens: r.modelConfig.MaxOutputTokens,
 		Effort:          r.modelConfig.Effort,
 	}
-	if state.opening != "" {
-		prompt.Content = append(prompt.Content, Block{Text: state.opening})
-	}
 	if forced {
-		prompt.Tools = state.tools[len(state.tools)-1:]
+		prompt.Tools = prompt.Tools[len(prompt.Tools)-1:]
 		prompt.ForceTool = ConcludeToolName
+		instruction := concludeInstruction(reason)
+		if len(prompt.Turns) == 0 {
+			prompt.Content = append(prompt.Content, Block{Text: instruction})
+		} else {
+			prompt.Turns = append([]Turn(nil), prompt.Turns...)
+			last := &prompt.Turns[len(prompt.Turns)-1]
+			last.Instruction = strings.TrimSpace(last.Instruction + " " + instruction)
+		}
 	}
 	return prompt
 }

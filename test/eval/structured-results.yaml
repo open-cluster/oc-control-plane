@@ -57,12 +57,11 @@ fixtures:
     valid: true
     document:
       status: supported_explanation
-      summary: The deployment likely contributed, while another explanation remains open.
+      summary: The deployment likely contributed to database connection pressure.
       impact: {summary: Checkout requests were degraded., run_refs: [1]}
       findings:
         - {statement: The deployment increased database connection pressure., kind: contributing_factor, mechanism: Larger pools consumed the remaining connection capacity., run_refs: [1], evidence_refs: []}
-      hypotheses:
-        - {statement: A concurrent traffic increase may also have contributed., status: unresolved, test: Read request volume for the same window., run_refs: []}
+      hypotheses: []
       actions: []
       limitations: []
   - name: unavailable-run-reference
