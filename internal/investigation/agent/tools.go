@@ -21,21 +21,37 @@ type selection struct {
 	tools       []integrations.Tool
 }
 
-func agentCalls(calls []CompletionCall) []toolCall {
+func decodeToolCalls(calls []CompletionCall) []toolCall {
 	translated := make([]toolCall, 0, len(calls))
 	for _, call := range calls {
-		arguments := map[string]any{}
-		if len(call.Arguments) > 0 {
-			_ = json.Unmarshal(call.Arguments, &arguments)
+		var arguments map[string]any
+		translatedCall := toolCall{
+			ID:   call.ID,
+			Tool: call.Name,
 		}
-		translatedCall := toolCall{ID: call.ID, Tool: call.Name}
-		if call.Name == historyToolName {
+
+		if err := json.Unmarshal(call.Arguments, &arguments); err != nil || arguments == nil {
+			translatedCall.Error = "Tool arguments must be a valid JSON object"
+		} else if call.Name == historyToolName {
 			translatedCall.Arguments = arguments
 		} else {
-			translatedCall.Purpose, _ = arguments["purpose"].(string)
-			translatedCall.Arguments, _ = arguments["input"].(map[string]any)
-			if translatedCall.Arguments == nil {
-				translatedCall.Arguments = map[string]any{}
+			input, ok := arguments["input"].(map[string]any)
+			if !ok || input == nil {
+				translatedCall.Error = "Tool input must be a JSON object"
+			} else {
+				translatedCall.Arguments = input
+			}
+			if purpose, present := arguments["purpose"]; present {
+				if text, ok := purpose.(string); ok {
+					translatedCall.Purpose = text
+				} else {
+					translatedCall.Error = "Tool purpose must be a string when supplied"
+				}
+			}
+			for field := range arguments {
+				if field != "purpose" && field != "input" {
+					translatedCall.Error = "Tool arguments accept only input and optional purpose"
+				}
 			}
 		}
 		translated = append(translated, translatedCall)
@@ -210,23 +226,6 @@ func firstLine(text string) string {
 	return text
 }
 
-func checkCitations(findings []investigation.Finding, runs int) string {
-	for _, finding := range findings {
-		if len(finding.RunRefs) == 0 && len(finding.EvidenceRefs) == 0 {
-			return "the reasoner stated a finding citing no read at all"
-		}
-		if len(finding.RunRefs) == 0 {
-			continue
-		}
-		cited := append([]int(nil), finding.RunRefs...)
-		sort.Ints(cited)
-		if cited[0] < 1 || cited[len(cited)-1] > runs {
-			return "the reasoner cited a read that never ran"
-		}
-	}
-	return ""
-}
-
 func toolNamed(selected []selection, name string) (selection, integrations.Tool, bool) {
 	for _, source := range selected {
 		for _, tool := range source.tools {
@@ -296,15 +295,4 @@ func (c *credentialCache) open(
 	}
 	c.opened[integration.ID] = credential
 	return credential, nil
-}
-
-const answerCutMark = "… [truncated: the full account is in the findings]"
-
-func boundedSummary(text string) string {
-	runes := []rune(text)
-	if len(runes) <= investigation.MaxSummaryLength {
-		return text
-	}
-	mark := []rune(answerCutMark)
-	return string(runes[:investigation.MaxSummaryLength-len(mark)]) + answerCutMark
 }

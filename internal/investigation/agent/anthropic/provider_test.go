@@ -210,16 +210,19 @@ func TestComplete_ReturnsTheDocumentAndNormalizesUsage(t *testing.T) {
 }
 
 func TestComplete_AReasoningFigureTheProviderDidNotReportIsAbsentRatherThanZero(t *testing.T) {
-	usage := `{"input_tokens":10,"output_tokens":5,` +
-		`"cache_creation_input_tokens":0,"cache_read_input_tokens":0}`
-	provider, _ := providerUnder(t, streamed(`{}`, usage, "end_turn", ""))
-
-	completion, err := provider.Complete(context.Background(), promptFixture())
-	if err != nil {
-		t.Fatalf("completing: %v", err)
-	}
-	if completion.Usage.Reasoning.Reported {
-		t.Error("a reasoning figure the provider never reported is recorded as measured")
+	for _, usage := range []string{`{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}`, `{}`} {
+		provider, _ := providerUnder(t, streamed(`{}`, usage, "end_turn", ""))
+		completion, err := provider.Complete(context.Background(), promptFixture())
+		if err != nil {
+			t.Fatalf("completing: %v", err)
+		}
+		if completion.Usage.Reasoning.Reported {
+			t.Error("a reasoning figure the provider never reported is recorded as measured")
+		}
+		if usage == `{}` && (completion.Usage.Input.Reported || completion.Usage.Output.Reported ||
+			completion.Usage.CacheRead.Reported || completion.Usage.CacheWrite.Reported) {
+			t.Fatal("missing usage was reported as measured zero")
+		}
 	}
 }
 
@@ -323,7 +326,25 @@ func TestComplete_RateLimitingThroughoutBecomesAnOutage(t *testing.T) {
 	}
 }
 
-func TestComplete_BoundsRetryAfterAndCancelsDuringBackoff(t *testing.T) {
+func TestComplete_RespectsRetryAfterAndCancelsDuringBackoff(t *testing.T) {
+	t.Run("overall request deadline", func(t *testing.T) {
+		first := failedWith(429, `{"type":"error","error":{"type":"rate_limit_error"}}`)
+		second := failedWith(429, `{"type":"error","error":{"type":"rate_limit_error"}}`)
+		first.Header.Set("Retry-After", "0.1")
+		second.Header.Set("Retry-After", "0.1")
+		round := &transport{responses: []*http.Response{first, second, streamed(`{}`, fullUsage, "end_turn", "")}}
+		provider, err := anthropic.New(reasoning.ModelConfig{
+			Provider: anthropic.Name, Model: "claude-opus-5", Credential: reasoning.Secret("test-key"),
+			RequestTimeout: 150 * time.Millisecond,
+		}, anthropic.Options{HTTPClient: &http.Client{Transport: round}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = provider.Complete(context.Background(), promptFixture())
+		if !errors.Is(err, reasoning.ErrTimeout) || round.callCount() > 2 {
+			t.Fatalf("retry waiting exceeded the logical request deadline: calls=%d err=%v", round.callCount(), err)
+		}
+	})
 	for name, retryAfter := range map[string]string{
 		"delay seconds": "3600",
 		"HTTP date":     time.Now().Add(time.Hour).UTC().Format(http.TimeFormat),
@@ -351,8 +372,8 @@ func TestComplete_BoundsRetryAfterAndCancelsDuringBackoff(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("cancellation did not stop retry backoff")
 			}
-			if round.callCount() != 1 || response.Header.Get("Retry-After") != "30" {
-				t.Fatalf("calls=%d bounded Retry-After=%q", round.callCount(), response.Header.Get("Retry-After"))
+			if round.callCount() != 1 || response.Header.Get("Retry-After") != retryAfter {
+				t.Fatalf("calls=%d changed Retry-After=%q", round.callCount(), response.Header.Get("Retry-After"))
 			}
 		})
 	}

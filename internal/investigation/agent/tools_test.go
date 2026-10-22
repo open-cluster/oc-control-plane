@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/google/uuid"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
@@ -10,52 +11,27 @@ import (
 	"time"
 )
 
-func TestAnAnswerInsideTheBoundIsUntouched(t *testing.T) {
+func TestConclusionSummaryIsValidatedWithoutTruncation(t *testing.T) {
 	t.Parallel()
-
-	answer := "checkout-api is running v2.14.1."
-	if got := boundedSummary(answer); got != answer {
-		t.Errorf("boundedSummary(%q) = %q; a short summary must be left exactly alone",
-			answer, got)
-	}
-}
-
-func TestABoundedAnswerSaysItWasCut(t *testing.T) {
-	t.Parallel()
-
-	got := boundedSummary(strings.Repeat("a", investigation.MaxSummaryLength+500))
-
-	if len([]rune(got)) > investigation.MaxSummaryLength {
-		t.Errorf("boundedAnswer returned %d runes, past the bound of %d",
-			len([]rune(got)), investigation.MaxSummaryLength)
-	}
-	if !strings.Contains(got, "truncated") {
-		t.Errorf("a cut answer does not say it was cut, so it reads as a complete "+
-			"one; tail = %q", tail(got))
-	}
-	if !strings.HasPrefix(got, "aaa") {
-		t.Error("the answer's own words did not survive the cut")
-	}
-}
-
-func TestTheCutMarkIsInsideTheBound(t *testing.T) {
-	t.Parallel()
-
-	for _, over := range []int{1, 2, 500, investigation.MaxSummaryLength} {
-		got := boundedSummary(strings.Repeat("b", investigation.MaxSummaryLength+over))
-		if len([]rune(got)) > investigation.MaxSummaryLength {
-			t.Errorf("over by %d: returned %d runes, past the bound of %d",
-				over, len([]rune(got)), investigation.MaxSummaryLength)
+	for _, answer := range []string{"checkout-api is running v2.14.1.", strings.Repeat("界", 4096), strings.Repeat("界", 4097)} {
+		var document map[string]any
+		if err := json.Unmarshal(validConclusion(t, nil), &document); err != nil {
+			t.Fatal(err)
+		}
+		document["summary"] = answer
+		encoded, err := json.Marshal(document)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conclusion, err := decodeConclusion(encoded, 0, nil)
+		if len([]rune(answer)) > 4096 {
+			if err == nil {
+				t.Fatal("an oversized summary was accepted instead of requesting correction")
+			}
+		} else if err != nil || conclusion.Summary != answer {
+			t.Fatalf("a valid summary changed or was rejected: %v", err)
 		}
 	}
-}
-
-func tail(text string) string {
-	runes := []rune(text)
-	if len(runes) <= 80 {
-		return text
-	}
-	return string(runes[len(runes)-80:])
 }
 
 func TestExternalToolCallsCarryPurposeAndInputWithoutAHypothesisAssociation(t *testing.T) {

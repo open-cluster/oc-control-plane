@@ -287,6 +287,16 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 		recordedRuns[0].Arguments["namespace"] != "shop" {
 		t.Fatalf("recorded purpose metadata = %+v", recordedRuns)
 	}
+	refresh := recordedRuns[0]
+	refresh.Ordinal, refresh.Purpose = 2, ""
+	if err = database.RecordToolRun(context.Background(), organization, adaTurn.InvestigationID,
+		claimToken(t, database, organization, adaTurn.InvestigationID), refresh); err != nil {
+		t.Fatal(err)
+	}
+	recordedRuns, err = database.InvestigationToolRuns(context.Background(), organization, adaTurn.InvestigationID)
+	if err != nil || len(recordedRuns) != 2 || recordedRuns[1].Purpose != "" {
+		t.Fatalf("an absent purpose was not preserved: runs=%+v err=%v", recordedRuns, err)
+	}
 	if err = database.ConcludeInvestigation(context.Background(), organization,
 		adaTurn.InvestigationID, claimToken(t, database, organization, adaTurn.InvestigationID), investigation.Conclusion{
 			Summary: "ADA-PRIVATE-ANSWER: the pool size changed",

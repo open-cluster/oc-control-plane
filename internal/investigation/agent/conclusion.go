@@ -7,6 +7,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -125,6 +126,9 @@ func decodeConclusion(document []byte, runs int, allowed []investigation.Evidenc
 		return investigation.Conclusion{}, fmt.Errorf(
 			"the conclusion summary is empty")
 	}
+	if utf8.RuneCountInString(jsonObject.Summary) > investigation.MaxSummaryLength {
+		return investigation.Conclusion{}, fmt.Errorf("the conclusion summary exceeds %d characters", investigation.MaxSummaryLength)
+	}
 	if !oneOf(jsonObject.Status, investigation.ConclusionStatuses) {
 		return investigation.Conclusion{}, fmt.Errorf("invalid conclusion status %q", jsonObject.Status)
 	}
@@ -208,7 +212,7 @@ func decodeConclusion(document []byte, runs int, allowed []investigation.Evidenc
 			len(action.Rationale) > investigation.MaxActionTextLength ||
 			len(action.Verification) > investigation.MaxActionTextLength {
 			return investigation.Conclusion{}, fmt.Errorf(
-				"an action is incomplete, invalid, or past %d characters", investigation.MaxActionTextLength)
+				"an action is incomplete, invalid, or past %d bytes", investigation.MaxActionTextLength)
 		}
 		if err := validateRunRefs(action.RunRefs, runs, "action"); err != nil {
 			return investigation.Conclusion{}, err

@@ -195,24 +195,6 @@ func validConclusion(t *testing.T, refs []int) json.RawMessage {
 	return raw
 }
 
-func validUncertainConclusion(t *testing.T, refs []int) json.RawMessage {
-	t.Helper()
-	var document map[string]any
-	if err := json.Unmarshal(validConclusion(t, refs), &document); err != nil {
-		t.Fatal(err)
-	}
-	document["status"] = "inconclusive"
-	document["hypotheses"] = []map[string]any{{
-		"statement": "Another change may explain the alert.",
-		"status":    "unresolved", "test": "Read the change history.", "run_refs": refs,
-	}}
-	raw, err := json.Marshal(document)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return raw
-}
-
 func configuredTestAgent(t *testing.T, store *records, completer Completer, catalog integrations.Catalog) *Agent {
 	t.Helper()
 	return &Agent{completer: completer, modelConfig: ModelConfig{Provider: "scripted", Model: "test", ContextWindowTokens: 128_000, MaxOutputTokens: 1024}, Store: store, Catalog: catalog, Logger: slog.New(slog.DiscardHandler)}
@@ -278,8 +260,8 @@ func TestRunLoadsRecentReplyDetailsAndStopsRepeatedHistoryReads(t *testing.T) {
 				Arguments: json.RawMessage(`{"beforeSequence":4}`),
 			}}}, nil
 		}
-		if step != 4 || prompt.ForceTool != ConcludeToolName {
-			t.Fatalf("repeated history reads counted as progress: step=%d force=%s", step, prompt.ForceTool)
+		if step != 4 || !prompt.Turns[2].Results[0].IsError {
+			t.Fatalf("repeated history did not receive rejection feedback: step=%d", step)
 		}
 		var document map[string]any
 		if err := json.Unmarshal(validConclusion(t, nil), &document); err != nil {
@@ -731,12 +713,22 @@ func TestRunStopsWhenCredentialAccessCannotBeAudited(t *testing.T) {
 }
 
 func TestRunRetriesMalformedConclusionOnce(t *testing.T) {
+	var oversized map[string]any
+	if err := json.Unmarshal(validConclusion(t, nil), &oversized); err != nil {
+		t.Fatal(err)
+	}
+	oversized["summary"] = strings.Repeat("x", 4097)
+	oversizedDocument, err := json.Marshal(oversized)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, test := range []struct {
 		name  string
 		calls []CompletionCall
 		fail  bool
 	}{
 		{name: "malformed", calls: []CompletionCall{{ID: "bad", Name: ConcludeToolName, Arguments: json.RawMessage(`{"status":"wrong"}`)}}},
+		{name: "oversized summary", calls: []CompletionCall{{ID: "long", Name: ConcludeToolName, Arguments: oversizedDocument}}},
 		{name: "duplicate conclusions", calls: []CompletionCall{
 			{ID: "first", Name: ConcludeToolName, Arguments: validConclusion(t, nil)},
 			{ID: "second", Name: ConcludeToolName, Arguments: validConclusion(t, nil)},
@@ -894,7 +886,7 @@ func TestRunFailureLogsAreSafeAndDescribeCommittedOutcome(t *testing.T) {
 		return integrations.ToolResult{}, nil
 	}))
 	var logs bytes.Buffer
-	agent.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	agent.Logger = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	agent.Instrument(NewTelemetry(agent.Logger))
 	org, id := uuid.New(), uuid.New()
 	if err := agent.Run(context.Background(), org, investigation.Investigation{ID: id, Subject: secret}); err != nil {
@@ -915,6 +907,21 @@ func TestRunFailureLogsAreSafeAndDescribeCommittedOutcome(t *testing.T) {
 	if strings.Count(text, `"msg":"investigation failed"`) != 1 || !strings.Contains(text, org.String()) || !strings.Contains(text, id.String()) || !strings.Contains(text, `"outcome":"outage"`) || !strings.Contains(text, `"provider_request_id":"provider-123"`) {
 		t.Fatalf("committed failure lacks safe correlation: %s", text)
 	}
+	logs.Reset()
+	model.next = func(int, Prompt) (Completion, error) {
+		return Completion{Model: "responding-model", Stop: StopToolUse,
+			Usage:     TokenUsage{Input: Counted(34), CacheRead: Counted(20), CacheWrite: Counted(5), Output: Counted(0)},
+			ToolCalls: []CompletionCall{{ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil)}}}, nil
+	}
+	if err := agent.Run(context.Background(), org, investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
+		t.Fatal(err)
+	}
+	text = logs.String()
+	if !strings.Contains(text, `"model_answered":"responding-model"`) ||
+		!strings.Contains(text, `"output_tokens":0`) || strings.Contains(text, `"reasoning_tokens"`) ||
+		store.usage != (investigation.Usage{InputTokens: 59, OutputTokens: 0}) {
+		t.Fatalf("reported identity or usage was lost: usage=%+v logs=%s", store.usage, text)
+	}
 }
 
 func TestRunRecordsRefusedAndDuplicateCallsWithoutRepeatingARead(t *testing.T) {
@@ -924,14 +931,29 @@ func TestRunRecordsRefusedAndDuplicateCallsWithoutRepeatingARead(t *testing.T) {
 		executed++
 		return integrations.ToolResult{Summary: "value", Content: "value"}, nil
 	})
-	model := &scriptedModel{next: func(call int, _ Prompt) (Completion, error) {
+	model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
 		if call == 1 {
 			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{
-				{ID: "missing-purpose", Name: "stub.read", Arguments: json.RawMessage(`{"input":{}}`)},
+				{ID: "invalid-input", Name: "stub.read", Arguments: json.RawMessage(`{"purpose":"read it","input":[]}`)},
 				{ID: "read", Name: "stub.read", Arguments: json.RawMessage(`{"purpose":"read it","input":{"key":"a"}}`)},
 				{ID: "duplicate", Name: "stub.read", Arguments: json.RawMessage(`{"purpose":"read it","input":{"key":"a"}}`)},
 				{ID: "unknown", Name: "invented.read", Arguments: json.RawMessage(`{"purpose":"guess","input":{}}`)},
+				{ID: "invalid-json", Name: "stub.read", Arguments: json.RawMessage(`{"input":`)},
+				{ID: "without-purpose", Name: "stub.read", Arguments: json.RawMessage(`{"input":{"key":"b"}}`)},
 			}}, nil
+		}
+		if call == 2 {
+			if len(prompt.Turns[0].Results) != 6 || prompt.Turns[0].Results[0].CallID != "invalid-input" ||
+				!prompt.Turns[0].Results[0].IsError || prompt.Turns[0].Results[4].CallID != "invalid-json" ||
+				!prompt.Turns[0].Results[4].IsError {
+				t.Fatal("invalid Tool input lost its correlated rejection feedback")
+			}
+			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
+				ID: "refresh", Name: "stub.read", Arguments: json.RawMessage(`{"input":{"key":"a"}}`),
+			}}}, nil
+		}
+		if len(store.runs) != 7 || store.runs[0].IntegrationID != store.candidate.ID {
+			t.Fatal("rejected input lost its Tool Run or Integration")
 		}
 		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
 			ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil),
@@ -943,25 +965,36 @@ func TestRunRecordsRefusedAndDuplicateCallsWithoutRepeatingARead(t *testing.T) {
 		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
 		t.Fatal(err)
 	}
-	if executed != 1 || len(store.runs) != 4 || store.status != investigation.StatusConcluded {
+	if executed != 3 || len(store.runs) != 7 || store.status != investigation.StatusConcluded {
 		t.Fatalf("executed=%d runs=%d status=%s", executed, len(store.runs), store.status)
 	}
-	for _, index := range []int{0, 2, 3} {
+	for _, index := range []int{0, 2, 3, 4} {
 		if store.runs[index].Outcome != investigation.RunFailed {
 			t.Errorf("run %d outcome=%v, want failed evidence", index+1, store.runs[index].Outcome)
 		}
+	}
+	if store.runs[5].Outcome != investigation.RunSucceeded || store.runs[5].Purpose != "" {
+		t.Fatal("an authorized read without purpose must succeed without invented intent")
 	}
 }
 
 func TestRunKeepsAToolFailureAsEvidenceAndStillConcludes(t *testing.T) {
 	store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
+	executed := 0
 	catalog := testCatalog(t, func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
-		return integrations.ToolResult{}, errors.New("source unavailable")
+		executed++
+		if executed <= 2 {
+			return integrations.ToolResult{}, errors.New("source unavailable")
+		}
+		return integrations.ToolResult{Summary: "source recovered"}, nil
 	})
-	model := &scriptedModel{next: func(call int, _ Prompt) (Completion, error) {
-		if call == 1 {
+	model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
+		if call <= 3 {
+			if prompt.ForceTool != "" {
+				t.Fatal("unrelated source failures forced a premature conclusion")
+			}
 			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
-				ID: "read", Name: "stub.read", Arguments: json.RawMessage(`{"purpose":"read it","input":{}}`),
+				ID: "read", Name: "stub.read", Arguments: json.RawMessage(fmt.Sprintf(`{"input":{"source":%d}}`, call%2)),
 			}}}, nil
 		}
 		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
@@ -974,8 +1007,9 @@ func TestRunKeepsAToolFailureAsEvidenceAndStillConcludes(t *testing.T) {
 		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
 		t.Fatal(err)
 	}
-	if store.status != investigation.StatusConcluded || len(store.runs) != 1 ||
-		store.runs[0].Outcome != investigation.RunFailed {
+	if store.status != investigation.StatusConcluded || len(store.runs) != 3 ||
+		store.runs[0].Outcome != investigation.RunFailed || store.runs[1].Outcome != investigation.RunFailed ||
+		store.runs[2].Outcome != investigation.RunSucceeded {
 		t.Fatalf("status=%s runs=%+v", store.status, store.runs)
 	}
 }
@@ -1030,15 +1064,23 @@ func TestRunForcesAnHonestConclusionAtTheTurnLimit(t *testing.T) {
 }
 
 func TestRunAdmitsCompleteAssignedInputDespiteAnOverflowEstimate(t *testing.T) {
+	prior := uuid.New()
 	store := &records{
 		candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"},
 		messages: []investigation.AssignedMessage{
 			{Sequence: 3, Author: "alice", Text: "Read eu-west-2 only."},
 			{Sequence: 4, Author: "bob", Text: "Exclude eu-central-1; preserve this correction."},
 		},
-		brief: investigation.Brief{HistoryBefore: 3, MissingEvidence: true, Recent: []investigation.BriefMessage{
-			{Text: "OLD OPTIONAL CONTEXT"},
-		}, Limitations: []string{investigation.MissingEvidenceStatement}},
+		brief: investigation.Brief{HistoryBefore: 3, MissingEvidence: true,
+			Findings: []investigation.PriorFinding{
+				{InvestigationID: prior, Statement: "KEEP CITED FINDING", Kind: "observation", Runs: []int{1}},
+				{InvestigationID: prior, Statement: "KEEP CITED FINDING", Kind: "contributing_factor", Runs: []int{1}},
+				{InvestigationID: prior, Statement: "KEEP CITED FINDING", Kind: "observation", Runs: []int{1}, WindowFrom: time.Date(2026, 10, 22, 8, 0, 0, 0, time.UTC)},
+				{InvestigationID: prior, Statement: "KEEP CITED FINDING", Kind: "observation", Runs: []int{1}},
+			},
+			Recent: []investigation.BriefMessage{
+				{Text: "OLD OPTIONAL CONTEXT"},
+			}, Limitations: []string{investigation.MissingEvidenceStatement}},
 	}
 	model := &scriptedModel{
 		size: func(prompt Prompt) (int, error) {
@@ -1056,6 +1098,7 @@ func TestRunAdmitsCompleteAssignedInputDespiteAnOverflowEstimate(t *testing.T) {
 			if first < 0 || second <= first || !strings.Contains(text, "alice") || !strings.Contains(text, "bob") ||
 				!strings.Contains(text, "TASK follow_up") || !strings.Contains(text, "beforeSequence=3") ||
 				!strings.Contains(text, investigation.MissingEvidenceStatement) ||
+				strings.Count(text, "KEEP CITED FINDING") != 3 ||
 				strings.Contains(text, "OLD OPTIONAL CONTEXT") {
 				t.Fatalf("admission lost current input or history metadata: %s", text)
 			}
@@ -1216,7 +1259,6 @@ func TestRunRecordsOnlyResourceCeilingsThatForceAConclusion(t *testing.T) {
 	}{
 		{name: "tool budget", want: investigation.StoppedByToolRuns,
 			configure: func(a *Agent) { a.MaxToolRuns = 1 }},
-		{name: "stagnation", want: ""},
 		{name: "wall clock", want: investigation.StoppedByWallClock,
 			context: func() (context.Context, context.CancelFunc) {
 				return context.WithTimeout(context.Background(), time.Minute)
@@ -1232,9 +1274,6 @@ func TestRunRecordsOnlyResourceCeilingsThatForceAConclusion(t *testing.T) {
 			model := &scriptedModel{next: func(_ int, prompt Prompt) (Completion, error) {
 				if prompt.ForceTool == ConcludeToolName {
 					conclusion := validConclusion(t, nil)
-					if test.name == "stagnation" {
-						conclusion = validUncertainConclusion(t, []int{1})
-					}
 					return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
 						ID: "done", Name: ConcludeToolName, Arguments: conclusion,
 					}}}, nil
@@ -1263,17 +1302,6 @@ func TestRunRecordsOnlyResourceCeilingsThatForceAConclusion(t *testing.T) {
 			}
 			if store.stoppedBy != test.want {
 				t.Fatalf("stopped_by=%q, want %q", store.stoppedBy, test.want)
-			}
-			if test.name == "stagnation" {
-				if model.calls != 4 || len(store.conclusion.Findings) != 1 ||
-					len(store.conclusion.Findings[0].RunRefs) != 1 ||
-					len(store.conclusion.Hypotheses) != 1 ||
-					store.conclusion.Hypotheses[0].Status != investigation.HypothesisUnresolved {
-					t.Fatalf("stagnation conclusion lost evidence or uncertainty: %+v", store.conclusion)
-				}
-				if _, present := store.events[len(store.events)-1].Payload["stoppedBy"]; present {
-					t.Fatalf("concluded event exposed stagnation: %+v", store.events[len(store.events)-1])
-				}
 			}
 		})
 	}

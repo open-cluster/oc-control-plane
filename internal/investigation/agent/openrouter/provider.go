@@ -145,7 +145,7 @@ func (p *Provider) Complete(ctx context.Context, prompt agent.Prompt) (agent.Com
 	seen := make(map[string]bool, len(message.ToolCalls))
 
 	for _, call := range message.ToolCalls {
-		if call.ID == "" || seen[call.ID] || call.Function.Name == "" || !json.Valid([]byte(call.Function.Arguments)) {
+		if call.ID == "" || seen[call.ID] || call.Function.Name == "" {
 			return completion, agent.Failed(
 				agent.OutcomeMalformed, Name, prompt.Model, "the provider returned an invalid Tool call")
 		}
@@ -183,10 +183,16 @@ func usageOf(usage *components.ChatUsage) agent.TokenUsage {
 		Input:  agent.Counted(usage.PromptTokens),
 		Output: agent.Counted(usage.CompletionTokens),
 	}
-	if details, _ := usage.PromptTokensDetails.GetOrZero(); details.CachedTokens != nil {
+	details, _ := usage.PromptTokensDetails.GetOrZero()
+	if details.CachedTokens != nil {
 		cached := min(max(*details.CachedTokens, 0), usage.PromptTokens)
 		result.CacheRead = agent.Counted(cached)
 		result.Input = agent.Counted(usage.PromptTokens - cached)
+	}
+	if details.CacheWriteTokens != nil {
+		written := min(max(*details.CacheWriteTokens, 0), result.Input.Tokens)
+		result.CacheWrite = agent.Counted(written)
+		result.Input = agent.Counted(result.Input.Tokens - written)
 	}
 	if details, _ := usage.CompletionTokensDetails.GetOrZero(); details.ReasoningTokens.IsSet() && !details.ReasoningTokens.IsNull() {
 		tokens, _ := details.ReasoningTokens.GetOrZero()

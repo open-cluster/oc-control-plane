@@ -27,7 +27,7 @@ The following path is the primary product walkthrough.
    keeps messages and prior cited Findings; each turn opens a new immutable Investigation.
 5. **Offered tools** derive from enabled Integrations and their verified grants. There is
    no provider switch inside the investigation loop. Every external call uses a common
-   envelope containing purpose and provider-specific input.
+     envelope containing provider-specific input and an optional explanatory purpose.
 6. **Selective preflight** runs only for incident work with exact safe identifiers. An
    exact namespace permits a Kubernetes event read; exact namespace, workload kind, and
    workload name permit a runtime read. OpenCluster never guesses identifiers or broadly

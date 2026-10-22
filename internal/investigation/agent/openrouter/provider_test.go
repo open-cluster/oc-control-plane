@@ -36,22 +36,26 @@ func TestToolResultsContinueToAForcedConclusion(t *testing.T) {
 		name := tools[0].(map[string]any)["function"].(map[string]any)["name"].(string)
 		toolCalls := []any{
 			map[string]any{"id": "read-1", "type": "function", "function": map[string]any{"name": name, "arguments": `{"purpose":"Check workload","input":{}}`}},
-			map[string]any{"id": "read-2", "type": "function", "function": map[string]any{"name": name, "arguments": `{"purpose":"Check another workload","input":{}}`}},
+			map[string]any{"id": "read-2", "type": "function", "function": map[string]any{"name": name, "arguments": `{"input":`}},
 			map[string]any{"id": "premature", "type": "function", "function": map[string]any{"name": "conclude", "arguments": `{"findings":[]}`}},
 		}
 		if calls.Add(1) == 2 {
 			toolCalls = []any{map[string]any{"id": "done", "type": "function", "function": map[string]any{"name": "conclude", "arguments": `{"findings":[]}`}}}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		response := map[string]any{
 			"id": "generation-1", "object": "chat.completion", "created": 1, "model": "z-ai/glm-4.7",
 			"choices": []any{map[string]any{"index": 0, "finish_reason": "tool_calls", "message": map[string]any{
 				"role": "assistant", "content": nil, "tool_calls": toolCalls,
 				"reasoning_details": []any{map[string]any{"type": "reasoning.encrypted", "data": continuation, "id": "reason-1", "format": "unknown", "index": 0}},
 			}}},
 			"usage": map[string]any{"prompt_tokens": 100, "completion_tokens": 30, "total_tokens": 130,
-				"prompt_tokens_details": map[string]any{"cached_tokens": 20}, "completion_tokens_details": map[string]any{"reasoning_tokens": 10}},
-		})
+				"prompt_tokens_details": map[string]any{"cached_tokens": 20, "cache_write_tokens": 10}, "completion_tokens_details": map[string]any{"reasoning_tokens": 10}},
+		}
+		if calls.Load() == 2 {
+			delete(response, "usage")
+		}
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 	provider, err := openrouter.New(agent.ModelConfig{
@@ -72,7 +76,10 @@ func TestToolResultsContinueToAForcedConclusion(t *testing.T) {
 	if len(first.ToolCalls) != 3 || first.ToolCalls[0].Name != tool.Name || first.ToolCalls[1].ID != "read-2" || first.Stop != agent.StopToolUse {
 		t.Fatalf("completion = %+v", first)
 	}
-	if first.RequestID != "generation-1" || first.Usage.Input.Tokens != 80 || first.Usage.CacheRead.Tokens != 20 || first.Usage.Output.Tokens != 30 || first.Usage.Reasoning.Tokens != 10 {
+	if string(first.ToolCalls[1].Arguments) != `{"input":` {
+		t.Fatal("malformed Tool input was substituted instead of preserved for correlated rejection")
+	}
+	if first.RequestID != "generation-1" || first.Usage.Input.Tokens != 70 || first.Usage.CacheRead.Tokens != 20 || first.Usage.CacheWrite.Tokens != 10 || first.Usage.Output.Tokens != 30 || first.Usage.Reasoning.Tokens != 10 {
 		t.Fatalf("usage or request identity = %+v", first)
 	}
 	request := <-requests
@@ -88,7 +95,7 @@ func TestToolResultsContinueToAForcedConclusion(t *testing.T) {
 		t.Fatalf("function definition = %v", definition)
 	}
 	prompt.Turns = []agent.Turn{{Assistant: agent.AssistantTurn{Calls: first.ToolCalls, Raw: first.Raw}, Results: []agent.ToolResultTurn{
-		{CallID: "read-1", Content: "[run 1] unhealthy workload"}, {CallID: "read-2", Content: "[run 2] healthy dependency"},
+		{CallID: "read-1", Content: "[run 1] unhealthy workload"}, {CallID: "read-2", Content: "[run 2] invalid Tool input", IsError: true},
 		{CallID: "premature", Content: "Finalization deferred: consider the read results.", IsError: true},
 	}}}
 	prompt.Tools = prompt.Tools[1:]
@@ -96,6 +103,9 @@ func TestToolResultsContinueToAForcedConclusion(t *testing.T) {
 	conclusion, err := provider.Complete(context.Background(), prompt)
 	if err != nil || len(conclusion.ToolCalls) != 1 || conclusion.ToolCalls[0].Name != "conclude" {
 		t.Fatalf("conclusion = %+v, error = %v", conclusion, err)
+	}
+	if conclusion.Usage.Input.Reported || conclusion.Usage.Output.Reported {
+		t.Fatal("absent provider usage was reported as measured zero")
 	}
 	followup := <-requests
 	messages := followup["messages"].([]any)
