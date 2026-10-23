@@ -3,12 +3,13 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"github.com/google/uuid"
-	"github.com/open-cluster/oc-control-plane/internal/integrations"
-	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
 func TestConclusionSummaryIsValidatedWithoutTruncation(t *testing.T) {
@@ -60,7 +61,7 @@ func TestARunStatesTheWindowItActuallyCovered(t *testing.T) {
 
 	turn := renderResult(toolFeedback{
 		CallID: "call-1",
-		Run: investigation.ToolRun{
+		ToolRun: investigation.ToolRun{
 			Ordinal:       1,
 			Tool:          "github.read_commits",
 			Arguments:     map[string]any{"repositoryId": 42},
@@ -88,7 +89,7 @@ func TestARunWithNoWindowStatesNone(t *testing.T) {
 
 	turn := renderResult(toolFeedback{
 		CallID: "call-1",
-		Run: investigation.ToolRun{
+		ToolRun: investigation.ToolRun{
 			Ordinal:   1,
 			Tool:      "github.list_repositories",
 			Arguments: map[string]any{},

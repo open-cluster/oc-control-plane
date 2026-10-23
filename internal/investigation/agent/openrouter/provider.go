@@ -194,8 +194,8 @@ func usageOf(usage *components.ChatUsage) agent.TokenUsage {
 		result.Input = agent.Counted(result.Input.Tokens - written)
 	}
 	if details, _ := usage.CompletionTokensDetails.GetOrZero(); details.ReasoningTokens.IsSet() && !details.ReasoningTokens.IsNull() {
-		tokens, _ := details.ReasoningTokens.GetOrZero()
-		result.Reasoning = agent.Counted(tokens)
+		reasonTokens, _ := details.ReasoningTokens.GetOrZero()
+		result.Reasoning = agent.Counted(reasonTokens)
 	}
 	return result
 }

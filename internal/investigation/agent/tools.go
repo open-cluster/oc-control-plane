@@ -151,6 +151,8 @@ func (r *Agent) execute(
 		request.OriginChannel = origin.Channel
 		request.OriginThread = origin.Thread
 	}
+
+	// The tool Run implementation execution ----->
 	result, err := tool.Run(runCtx, request)
 	run.FinishedAt = time.Now().UTC()
 	if err != nil {

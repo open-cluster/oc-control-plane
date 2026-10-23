@@ -36,8 +36,11 @@ func (ToolStartedEventPayload) EventType() EventType { return EventToolStarted }
 
 func ToolStartedPayload(run ToolRun, integration, name string) ToolStartedEventPayload {
 	return ToolStartedEventPayload{
-		Ordinal: run.Ordinal, Tool: bounded(run.Tool, eventTextBound), IntegrationID: integration,
-		Integration: bounded(name, eventTextBound), Purpose: bounded(run.Purpose, eventTextBound),
+		Ordinal:       run.Ordinal,
+		Tool:          bounded(run.Tool, eventTextBound),
+		IntegrationID: integration,
+		Integration:   bounded(name, eventTextBound),
+		Purpose:       bounded(run.Purpose, eventTextBound),
 	}
 }
 

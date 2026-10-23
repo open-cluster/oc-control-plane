@@ -94,7 +94,7 @@ func TestToolResultsContinueToAForcedConclusion(t *testing.T) {
 	if !regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`).MatchString(definition["name"].(string)) || definition["parameters"].(map[string]any)["type"] != "object" {
 		t.Fatalf("function definition = %v", definition)
 	}
-	prompt.Turns = []agent.Turn{{Assistant: agent.AssistantTurn{Calls: first.ToolCalls, Raw: first.Raw}, Results: []agent.ToolResultTurn{
+	prompt.Turns = []agent.Turn{{Assistant: agent.AssistantTurn{Calls: first.ToolCalls, Raw: first.Raw}, ToolResults: []agent.ToolResultTurn{
 		{CallID: "read-1", Content: "[run 1] unhealthy workload"}, {CallID: "read-2", Content: "[run 2] invalid Tool input", IsError: true},
 		{CallID: "premature", Content: "Finalization deferred: consider the read results.", IsError: true},
 	}}}
@@ -104,7 +104,7 @@ func TestToolResultsContinueToAForcedConclusion(t *testing.T) {
 	if err != nil || len(conclusion.ToolCalls) != 1 || conclusion.ToolCalls[0].Name != "conclude" {
 		t.Fatalf("conclusion = %+v, error = %v", conclusion, err)
 	}
-	if conclusion.Usage.Input.Reported || conclusion.Usage.Output.Reported {
+	if conclusion.Usage.Input.IsReported || conclusion.Usage.Output.IsReported {
 		t.Fatal("absent provider usage was reported as measured zero")
 	}
 	followup := <-requests
@@ -156,7 +156,7 @@ func TestProviderFailuresAreClassifiedWithoutSourceContent(t *testing.T) {
 			if test.name == "credential" && completion.Model != "" {
 				t.Fatal("a request failure invented a responding model")
 			}
-			if test.name == "reported model without usage" && (completion.Model != "actual-model" || completion.Usage.Input.Reported) {
+			if test.name == "reported model without usage" && (completion.Model != "actual-model" || completion.Usage.Input.IsReported) {
 				t.Fatal("responding-model identity was coupled to usage availability")
 			}
 		})

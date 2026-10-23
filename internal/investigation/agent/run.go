@@ -125,7 +125,7 @@ type toolCall struct {
 
 type toolFeedback struct {
 	CallID   string
-	Run      investigation.ToolRun
+	ToolRun  investigation.ToolRun
 	Semantic bool
 }
 
@@ -243,8 +243,8 @@ func (r *Agent) Run(
 	state.missingEvidence = oriented.Brief != nil && oriented.Brief.MissingEvidence
 	var priorEvidence []investigation.EvidenceRef
 
-	preparePrompt := func(forced bool, reason string, contextRejected bool) (Prompt, error) {
-		prompt := modelPrompt(r, state, forced, reason)
+	preparePrompt := func(concludeRequested bool, reason string, contextRejected bool) (Prompt, error) {
+		prompt := modelPrompt(r, state, concludeRequested, reason)
 		estimator, available := r.completer.(requestEstimator)
 		if !available {
 			if contextRejected {
@@ -273,7 +273,7 @@ func (r *Agent) Run(
 					state.orientation.Brief.Limitations = []string{investigation.MissingEvidenceStatement}
 				}
 			}
-			prompt = modelPrompt(r, state, forced, reason)
+			prompt = modelPrompt(r, state, concludeRequested, reason)
 		}
 		if !contextRejected {
 			return prompt, nil
@@ -285,7 +285,7 @@ func (r *Agent) Run(
 		if reduced < input {
 			return prompt, nil
 		}
-		if !forced && len(prompt.Tools) > 1 {
+		if !concludeRequested && len(prompt.Tools) > 1 {
 			prompt = modelPrompt(r, state, true, concludeReason(investigation.StoppedByContext, len(state.offered)))
 			reduced, err = estimator.EstimateRequestTokens(prompt)
 			if err != nil {
@@ -325,37 +325,38 @@ func (r *Agent) Run(
 		mustConclude := stoppedBy != "" ||
 			(len(state.offered) == 0 && state.historyBeforeSequence <= 1)
 		reason := concludeReason(stoppedBy, len(state.offered))
+
 		if len(results) > 0 {
 			rendered := make([]ToolResultTurn, 0, len(results))
 			for _, result := range results {
 				rendered = append(rendered, renderResult(result))
-				if !result.Semantic && result.Run.Ordinal > state.highestOrdinal {
-					state.highestOrdinal = result.Run.Ordinal
+				if !result.Semantic && result.ToolRun.Ordinal > state.highestOrdinal {
+					state.highestOrdinal = result.ToolRun.Ordinal
 				}
 			}
 			if len(state.transcript) == 0 {
-				state.transcript = append(state.transcript, Turn{Results: rendered})
+				state.transcript = append(state.transcript, Turn{ToolResults: rendered})
 			} else {
 				last := len(state.transcript) - 1
-				state.transcript[last].Results = append(state.transcript[last].Results, rendered...)
+				state.transcript[last].ToolResults = append(state.transcript[last].ToolResults, rendered...)
 			}
 		}
-		forced := mustConclude
+		forcedToConclude := mustConclude
 		move := modelMove{}
 		moveCtx, done := context.WithTimeout(ctx, decideTimeout)
 		contextRejected := false
 		for attempt := range 2 {
-			prompt, prepareErr := preparePrompt(forced, reason, contextRejected)
+			prompt, prepareErr := preparePrompt(forcedToConclude, reason, contextRejected)
 			if prepareErr != nil {
 				err = Failed(OutcomeRejected, r.modelConfig.Provider, r.modelConfig.Model,
 					prepareErr.Error())
 				break
 			}
-			if contextRejected && !forced && prompt.ForceTool != "" {
+			if contextRejected && !forcedToConclude && prompt.ForceTool != "" {
 				stoppedBy = investigation.StoppedByContext
 				r.announce(ctx, events, investigation.ProgressPayload(ceilingProgress(stoppedBy)))
 				reason = concludeReason(stoppedBy, len(state.offered))
-				forced = true
+				forcedToConclude = true
 			}
 			completion, completeErr := r.telemetry.complete(
 				moveCtx, r.completer, r.modelConfig, prompt)
@@ -391,9 +392,9 @@ func (r *Agent) Run(
 					Calls: completion.ToolCalls,
 					Raw:   completion.Raw,
 				}}
-			if len(reads) > 0 && !forced {
+			if len(reads) > 0 && !forcedToConclude {
 				for _, call := range conclusions {
-					turn.Results = append(turn.Results, ToolResultTurn{
+					turn.ToolResults = append(turn.ToolResults, ToolResultTurn{
 						CallID:  call.ID,
 						Content: "Finalization deferred: consider the read results before calling conclude again.",
 						IsError: true,
@@ -434,7 +435,7 @@ func (r *Agent) Run(
 				break
 			}
 			for _, call := range completion.ToolCalls {
-				turn.Results = append(turn.Results, ToolResultTurn{
+				turn.ToolResults = append(turn.ToolResults, ToolResultTurn{
 					CallID:  call.ID,
 					Content: invalid.Error(),
 					IsError: true,
@@ -442,7 +443,7 @@ func (r *Agent) Run(
 			}
 			turn.Instruction = invalid.Error()
 			state.transcript = append(state.transcript, turn)
-			forced = true
+			forcedToConclude = true
 		}
 		done()
 		if err == nil && move.Conclusion == nil && len(move.Calls) == 0 {
@@ -455,6 +456,8 @@ func (r *Agent) Run(
 			r.RuntimeTelemetry.Ended(time.Since(startedAt), investigation.StatusFailed.String(), "")
 			return terminalErr
 		}
+
+		// Conclusion requested ----->
 		if move.Conclusion != nil {
 			conclusion := *move.Conclusion
 
@@ -469,7 +472,7 @@ func (r *Agent) Run(
 			r.RuntimeTelemetry.Ended(time.Since(startedAt), investigation.StatusConcluded.String(), stoppedBy)
 			return nil
 		}
-		if forced {
+		if forcedToConclude {
 			terminalErr := failRun(errNoConclusion.Error(), state.usage)
 			r.RuntimeTelemetry.Ended(time.Since(startedAt), investigation.StatusFailed.String(), "")
 			return terminalErr
@@ -482,11 +485,15 @@ func (r *Agent) Run(
 			if call.Tool == historyToolName {
 				result.Semantic = true
 				if call.Error != "" {
-					result.Run = investigation.ToolRun{Tool: historyToolName, Outcome: investigation.RunFailed, Error: call.Error}
+					result.ToolRun = investigation.ToolRun{
+						Tool:    historyToolName,
+						Outcome: investigation.RunFailed,
+						Error:   call.Error,
+					}
 				} else {
-					result.Run = r.readHistory(ctx, state, call)
+					result.ToolRun = r.readHistory(ctx, state, call)
 				}
-				if page, ok := result.Run.Content.(investigation.HistoryPage); ok {
+				if page, ok := result.ToolRun.Content.(investigation.HistoryPage); ok {
 					priorEvidence = append(priorEvidence, historyEvidence(page)...)
 					state.missingEvidence = state.missingEvidence || page.MissingEvidence
 				}
@@ -501,7 +508,7 @@ func (r *Agent) Run(
 				if source, _, offered := toolNamed(selections(offered), call.Tool); offered {
 					run.IntegrationID = source.integration.ID
 				}
-			case executedCalls[identity] != 0:
+			case executedCalls[identity] != 0: // already once executed ----->
 				run = suppressedRun(opened, call, len(state.runs)+1,
 					executedCalls[identity])
 				run.IntegrationID = state.runs[executedCalls[identity]-1].IntegrationID
@@ -517,7 +524,7 @@ func (r *Agent) Run(
 					investigation.ProgressPayload(
 						"Did not run "+offeredName(offered, call.Tool)+
 							"; the read budget is exhausted"))
-			default:
+			default: //executing the tool ----->
 				ordinal := len(state.runs) + 1
 				r.announceToolStarted(ctx, state, call, ordinal)
 				var executeErr error
@@ -546,7 +553,7 @@ func (r *Agent) Run(
 					investigation.StatusFailed.String(), "")
 				return terminalErr
 			}
-			result.Run = run
+			result.ToolRun = run
 			results = append(results, result)
 		}
 	}
@@ -606,8 +613,11 @@ func (r *Agent) announceToolStarted(
 		return
 	}
 	payload := investigation.ToolStartedPayload(investigation.ToolRun{
-		Ordinal: ordinal, Tool: call.Tool, Purpose: call.Purpose,
-	}, source.integration.ID.String(), source.integration.Name)
+		Ordinal: ordinal,
+		Tool:    call.Tool,
+		Purpose: call.Purpose},
+		source.integration.ID.String(),
+		source.integration.Name)
 	r.announce(ctx, state.events, payload)
 }
 
@@ -802,7 +812,8 @@ func selections(offered []offeredSource) []selection {
 	selections := make([]selection, 0, len(offered))
 	for _, source := range offered {
 		selections = append(selections, selection{
-			integration: source.Integration, tools: source.Tools,
+			integration: source.Integration,
+			tools:       source.Tools,
 		})
 	}
 	return selections

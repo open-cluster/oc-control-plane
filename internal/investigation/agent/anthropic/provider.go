@@ -27,14 +27,22 @@ type Provider struct {
 
 func usageOf(usage sdk.Usage) reasoning.TokenUsage {
 	normalized := reasoning.TokenUsage{
-		Input: reasoning.Count{Tokens: usage.InputTokens,
-			Reported: usage.JSON.InputTokens.Valid() || usage.InputTokens > 0},
-		Output: reasoning.Count{Tokens: usage.OutputTokens,
-			Reported: usage.JSON.OutputTokens.Valid() || usage.OutputTokens > 0},
-		CacheWrite: reasoning.Count{Tokens: usage.CacheCreationInputTokens,
-			Reported: usage.JSON.CacheCreationInputTokens.Valid() || usage.CacheCreationInputTokens > 0},
-		CacheRead: reasoning.Count{Tokens: usage.CacheReadInputTokens,
-			Reported: usage.JSON.CacheReadInputTokens.Valid() || usage.CacheReadInputTokens > 0},
+		Input: reasoning.Count{
+			Tokens:     usage.InputTokens,
+			IsReported: usage.JSON.InputTokens.Valid() || usage.InputTokens > 0,
+		},
+		Output: reasoning.Count{
+			Tokens:     usage.OutputTokens,
+			IsReported: usage.JSON.OutputTokens.Valid() || usage.OutputTokens > 0,
+		},
+		CacheWrite: reasoning.Count{
+			Tokens:     usage.CacheCreationInputTokens,
+			IsReported: usage.JSON.CacheCreationInputTokens.Valid() || usage.CacheCreationInputTokens > 0,
+		},
+		CacheRead: reasoning.Count{
+			Tokens:     usage.CacheReadInputTokens,
+			IsReported: usage.JSON.CacheReadInputTokens.Valid() || usage.CacheReadInputTokens > 0,
+		},
 		Reasoning: reasoning.Unreported(),
 	}
 	if usage.OutputTokensDetails.JSON.ThinkingTokens.Valid() {
@@ -220,7 +228,9 @@ func toolCallsOf(message sdk.Message) []reasoning.CompletionCall {
 	for _, block := range message.Content {
 		if use, isUse := block.AsAny().(sdk.ToolUseBlock); isUse {
 			calls = append(calls, reasoning.CompletionCall{
-				ID: use.ID, Name: internalToolName(use.Name), Arguments: use.Input,
+				ID:        use.ID,
+				Name:      internalToolName(use.Name),
+				Arguments: use.Input,
 			})
 		}
 	}

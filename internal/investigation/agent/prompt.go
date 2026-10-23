@@ -306,24 +306,38 @@ func writeSortedPairs(out *strings.Builder, prefix string, pairs map[string]stri
 }
 
 func renderResult(result toolFeedback) ToolResultTurn {
-	run := result.Run
+	run := result.ToolRun
 	if result.Semantic && run.Tool == historyToolName {
 		if run.Outcome == investigation.RunFailed {
-			return ToolResultTurn{CallID: result.CallID, Content: "HISTORY UNAVAILABLE: " + run.Error, IsError: true}
+			return ToolResultTurn{
+				CallID:  result.CallID,
+				Content: "HISTORY UNAVAILABLE: " + run.Error,
+				IsError: true,
+			}
 		}
 		page, ok := run.Content.(investigation.HistoryPage)
 		if !ok {
-			return ToolResultTurn{CallID: result.CallID, Content: "HISTORY UNAVAILABLE: invalid stored history", IsError: true}
+			return ToolResultTurn{
+				CallID:  result.CallID,
+				Content: "HISTORY UNAVAILABLE: invalid stored history",
+				IsError: true,
+			}
 		}
 		encoded, _ := json.Marshal(page)
 		return ToolResultTurn{CallID: result.CallID, Content: historyResponsePrefix + string(encoded)}
 	}
+
+	// string building ----->
 	out := &strings.Builder{}
-	out.WriteString("[run " + strconv.Itoa(run.Ordinal) + "] " + run.Tool + " " +
-		compactArguments(run.Arguments) + "\n")
+	out.WriteString("[run " + strconv.Itoa(run.Ordinal) + "] " +
+		run.Tool + " " + compactArguments(run.Arguments) + "\n")
 	if run.Outcome == investigation.RunFailed {
 		out.WriteString("FAILED: " + run.Error + "\n")
-		return ToolResultTurn{CallID: result.CallID, Content: out.String(), IsError: true}
+		return ToolResultTurn{
+			CallID:  result.CallID,
+			Content: out.String(),
+			IsError: true,
+		}
 	}
 	if run.WindowApplied {
 		out.WriteString("WINDOW: this read covered " + stamp(run.WindowFrom) + " to " +
@@ -336,7 +350,10 @@ func renderResult(result toolFeedback) ToolResultTurn {
 		out.WriteString("TRUNCATED: the source held more than this read returned.\n")
 	}
 	out.WriteString("CONTENT: " + boundedJSON(run.Content) + "\n")
-	return ToolResultTurn{CallID: result.CallID, Content: out.String()}
+	return ToolResultTurn{
+		CallID:  result.CallID,
+		Content: out.String(),
+	}
 }
 
 func concludeInstruction(reason string) string {

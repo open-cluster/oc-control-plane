@@ -87,7 +87,7 @@ func request(prompt agent.Prompt) (sdk.ChatRequest, error) {
 			}
 		}
 		chatRequest.Messages = append(chatRequest.Messages, sdk.CreateChatMessagesAssistant(assistant))
-		for _, result := range turn.Results {
+		for _, result := range turn.ToolResults {
 			chatRequest.Messages = append(chatRequest.Messages, sdk.CreateChatMessagesTool(
 				sdk.ChatToolMessage{
 					ToolCallID: result.CallID,

@@ -100,7 +100,7 @@ func (t *Telemetry) complete(
 		"cache_write": completion.Usage.CacheWrite, "cache_read": completion.Usage.CacheRead,
 		"reasoning": completion.Usage.Reasoning,
 	} {
-		if count.Reported {
+		if count.IsReported {
 			entry = append(entry, slog.Int64(kind+"_tokens", count.Tokens))
 			if t.tokens != nil {
 				t.tokens.Add(ctx, count.Tokens, measured,

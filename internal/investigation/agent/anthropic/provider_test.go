@@ -204,7 +204,7 @@ func TestComplete_ReturnsTheDocumentAndNormalizesUsage(t *testing.T) {
 	if usage.CacheWrite.Or(0) != 300 || usage.CacheRead.Or(0) != 4000 {
 		t.Errorf("cache tokens are wrong: %+v", usage)
 	}
-	if !usage.Reasoning.Reported || usage.Reasoning.Tokens != 120 {
+	if !usage.Reasoning.IsReported || usage.Reasoning.Tokens != 120 {
 		t.Errorf("reasoning tokens are wrong: %+v", usage.Reasoning)
 	}
 }
@@ -216,11 +216,11 @@ func TestComplete_AReasoningFigureTheProviderDidNotReportIsAbsentRatherThanZero(
 		if err != nil {
 			t.Fatalf("completing: %v", err)
 		}
-		if completion.Usage.Reasoning.Reported {
+		if completion.Usage.Reasoning.IsReported {
 			t.Error("a reasoning figure the provider never reported is recorded as measured")
 		}
-		if usage == `{}` && (completion.Usage.Input.Reported || completion.Usage.Output.Reported ||
-			completion.Usage.CacheRead.Reported || completion.Usage.CacheWrite.Reported) {
+		if usage == `{}` && (completion.Usage.Input.IsReported || completion.Usage.Output.IsReported ||
+			completion.Usage.CacheRead.IsReported || completion.Usage.CacheWrite.IsReported) {
 			t.Fatal("missing usage was reported as measured zero")
 		}
 	}
@@ -471,7 +471,7 @@ func TestComplete_HaikuForcedConclusionDisablesThinkingAtEveryEffort(t *testing.
 	prompt.ForceTool = "conclude"
 	prompt.Turns = []reasoning.Turn{{
 		Assistant: reasoning.AssistantTurn{Raw: []byte(`{"id":"prior","type":"message","role":"assistant","model":"claude-haiku-4-5","content":[{"type":"thinking","thinking":"Retain the native continuation.","signature":"signed-thinking"},{"type":"tool_use","id":"read-1","name":"oc_cmVhZA","input":{}},{"type":"tool_use","id":"premature","name":"oc_Y29uY2x1ZGU","input":{}}]}`)},
-		Results: []reasoning.ToolResultTurn{
+		ToolResults: []reasoning.ToolResultTurn{
 			{CallID: "read-1", Content: "[run 1] workload state"},
 			{CallID: "premature", Content: "Finalization deferred: consider the read results.", IsError: true},
 		},

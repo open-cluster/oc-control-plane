@@ -6,6 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
@@ -13,11 +19,6 @@ import (
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	"log/slog"
-	"strings"
-	"sync"
-	"testing"
-	"time"
 )
 
 type scriptedModel struct {
@@ -247,10 +248,10 @@ func TestRunLoadsRecentReplyDetailsAndStopsRepeatedHistoryReads(t *testing.T) {
 				t.Fatal("recent structured details are unavailable")
 			}
 		}
-		if step == 2 && !strings.Contains(prompt.Turns[0].Results[0].Content, "deployment preceded increased latency") {
+		if step == 2 && !strings.Contains(prompt.Turns[0].ToolResults[0].Content, "deployment preceded increased latency") {
 			t.Fatalf("recent action details were not retrieved: %+v", prompt.Turns)
 		}
-		if step == 2 && !strings.Contains(prompt.Turns[0].Results[0].Content, investigation.MissingEvidenceStatement) {
+		if step == 2 && !strings.Contains(prompt.Turns[0].ToolResults[0].Content, investigation.MissingEvidenceStatement) {
 			t.Fatal("retained unavailable evidence lost its limitation")
 		}
 		if step < 4 {
@@ -260,7 +261,7 @@ func TestRunLoadsRecentReplyDetailsAndStopsRepeatedHistoryReads(t *testing.T) {
 				Arguments: json.RawMessage(`{"beforeSequence":4}`),
 			}}}, nil
 		}
-		if step != 4 || !prompt.Turns[2].Results[0].IsError {
+		if step != 4 || !prompt.Turns[2].ToolResults[0].IsError {
 			t.Fatalf("repeated history did not receive rejection feedback: step=%d", step)
 		}
 		var document map[string]any
@@ -341,9 +342,9 @@ func TestRunBoundsHistoryWithoutAdmittingOmittedEvidence(t *testing.T) {
 						Arguments: json.RawMessage(`{"beforeSequence":4}`),
 					}}}, nil
 				}
-				content := prompt.Turns[0].Results[0].Content
+				content := prompt.Turns[0].ToolResults[0].Content
 				if oversized {
-					if !prompt.Turns[0].Results[0].IsError || len(content) > maxRunContentBytes || !strings.Contains(content, "budget") {
+					if !prompt.Turns[0].ToolResults[0].IsError || len(content) > maxRunContentBytes || !strings.Contains(content, "budget") {
 						t.Fatalf("irreducible history response exceeded its budget: bytes=%d", len(content))
 					}
 					return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
@@ -464,12 +465,12 @@ func TestRunDefersConclusionUntilMixedReadResultsAreRecorded(t *testing.T) {
 		if !recorded {
 			t.Fatal("the Tool Run was not durable before the next Model call")
 		}
-		if len(prompt.Turns) != 1 || len(prompt.Turns[0].Results) != 2 ||
+		if len(prompt.Turns) != 1 || len(prompt.Turns[0].ToolResults) != 2 ||
 			len(prompt.Turns[0].Assistant.Calls) != 2 || string(prompt.Turns[0].Assistant.Raw) != `{"opaque":"native continuation"}` {
 			t.Fatalf("mixed Tool calls lost their results or native continuation: %+v", prompt.Turns)
 		}
 		feedback := map[string]string{}
-		for _, result := range prompt.Turns[0].Results {
+		for _, result := range prompt.Turns[0].ToolResults {
 			feedback[result.CallID] = result.Content
 		}
 		if !strings.Contains(feedback["premature"], "deferred") || !strings.Contains(feedback["c1"], "[run 1]") {
@@ -750,11 +751,11 @@ func TestRunRetriesMalformedConclusionOnce(t *testing.T) {
 						Usage:     TokenUsage{Input: Counted(5), Output: Counted(2)},
 						ToolCalls: test.calls, Raw: []byte(`{"opaque":"reasoning"}`)}, nil
 				}
-				if len(prompt.Turns) != 1 || len(prompt.Turns[0].Results) != len(test.calls) ||
+				if len(prompt.Turns) != 1 || len(prompt.Turns[0].ToolResults) != len(test.calls) ||
 					string(prompt.Turns[0].Assistant.Raw) != `{"opaque":"reasoning"}` {
 					t.Fatal("the malformed conclusion received no correlated correction")
 				}
-				for index, result := range prompt.Turns[0].Results {
+				for index, result := range prompt.Turns[0].ToolResults {
 					if result.CallID != test.calls[index].ID || !result.IsError || result.Content == "" {
 						t.Fatalf("invalid correction feedback: %+v", result)
 					}
@@ -944,9 +945,9 @@ func TestRunRecordsRefusedAndDuplicateCallsWithoutRepeatingARead(t *testing.T) {
 			}}, nil
 		}
 		if call == 2 {
-			if len(prompt.Turns[0].Results) != 6 || prompt.Turns[0].Results[0].CallID != "invalid-input" ||
-				!prompt.Turns[0].Results[0].IsError || prompt.Turns[0].Results[4].CallID != "invalid-json" ||
-				!prompt.Turns[0].Results[4].IsError {
+			if len(prompt.Turns[0].ToolResults) != 6 || prompt.Turns[0].ToolResults[0].CallID != "invalid-input" ||
+				!prompt.Turns[0].ToolResults[0].IsError || prompt.Turns[0].ToolResults[4].CallID != "invalid-json" ||
+				!prompt.Turns[0].ToolResults[4].IsError {
 				t.Fatal("invalid Tool input lost its correlated rejection feedback")
 			}
 			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
