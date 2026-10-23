@@ -38,8 +38,8 @@ backend state, not a setup guide or the signal that makes Connect appear in the 
 ## Tool
 
 A bounded operation offered by an Integration. Its definition has one complete description,
-its arguments, and any verified grants required for availability. Every external call states
-an operator-visible purpose.
+its arguments, and any verified grants required for availability. An external call may state
+an operator-visible purpose; this explanatory metadata does not authorize execution.
 
 ## Alert Event
 

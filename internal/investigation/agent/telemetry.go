@@ -52,16 +52,11 @@ func NewTelemetry(logger *slog.Logger) *Telemetry {
 }
 
 func (t *Telemetry) complete(
-	ctx context.Context, provider Completer, config ModelConfig, prompt Prompt,
+	ctx context.Context, completer Completer, config ModelConfig, prompt Prompt,
 ) (Completion, error) {
 	if t == nil {
-		return provider.Complete(ctx, prompt)
+		return completer.Complete(ctx, prompt)
 	}
-
-	measured := metric.WithAttributes(
-		attribute.String("provider", config.Provider),
-		attribute.String("model", config.Model),
-	)
 
 	ctx, span := t.tracer.Start(ctx, "reasoning.complete", trace.WithAttributes(
 		attribute.String("oc.reasoning.provider", config.Provider),
@@ -70,8 +65,17 @@ func (t *Telemetry) complete(
 	defer span.End()
 
 	started := time.Now()
-	completion, err := provider.Complete(ctx, prompt)
+	completion, err := completer.Complete(ctx, prompt)
 	elapsed := time.Since(started)
+	model := config.Model
+	if completion.Model != "" {
+		model = completion.Model
+		span.SetAttributes(attribute.String("oc.reasoning.model_answered", model))
+	}
+	measured := metric.WithAttributes(
+		attribute.String("provider", config.Provider),
+		attribute.String("model", model),
+	)
 
 	span.SetAttributes(attribute.String("oc.reasoning.stop", completion.Stop.String()))
 	requestID := safeProviderRequestID(completion.RequestID)
@@ -85,35 +89,27 @@ func (t *Telemetry) complete(
 	if t.calls != nil {
 		t.calls.Add(ctx, 1, measured)
 	}
-	if t.tokens != nil {
-		for kind, count := range map[string]Count{
-			"input":       completion.Usage.Input,
-			"output":      completion.Usage.Output,
-			"cache_write": completion.Usage.CacheWrite,
-			"cache_read":  completion.Usage.CacheRead,
-			"reasoning":   completion.Usage.Reasoning,
-		} {
-			if count.Reported {
-				t.tokens.Add(ctx, count.Tokens, measured,
-					metric.WithAttributes(attribute.String("kind", kind)))
-			}
-		}
-	}
-
 	entry := []any{
 		slog.String("provider", config.Provider),
 		slog.String("model", config.Model),
 		slog.String("stop", completion.Stop.String()),
 		slog.Duration("duration", elapsed),
-		slog.Int64("input_tokens", completion.Usage.Input.Or(0)),
-		slog.Int64("output_tokens", completion.Usage.Output.Or(0)),
-		slog.Int64("cache_read_tokens", completion.Usage.CacheRead.Or(0)),
-		slog.Int64("cache_write_tokens", completion.Usage.CacheWrite.Or(0)),
-		slog.Int64("reasoning_tokens", completion.Usage.Reasoning.Or(0)),
 	}
-	if completion.Model == config.Model {
-		entry = append(entry, slog.String("model_answered", completion.Model))
-		span.SetAttributes(attribute.String("oc.reasoning.model_answered", completion.Model))
+	for kind, count := range map[string]Count{
+		"input": completion.Usage.Input, "output": completion.Usage.Output,
+		"cache_write": completion.Usage.CacheWrite, "cache_read": completion.Usage.CacheRead,
+		"reasoning": completion.Usage.Reasoning,
+	} {
+		if count.IsReported {
+			entry = append(entry, slog.Int64(kind+"_tokens", count.Tokens))
+			if t.tokens != nil {
+				t.tokens.Add(ctx, count.Tokens, measured,
+					metric.WithAttributes(attribute.String("kind", kind)))
+			}
+		}
+	}
+	if completion.Model != "" {
+		entry = append(entry, slog.String("model_answered", model))
 	}
 	if requestID != "" {
 		entry = append(entry, slog.String("provider_request_id", requestID))
@@ -166,7 +162,8 @@ func safeProviderRequestID(id string) string {
 
 func (r *Agent) logConclusion(ctx context.Context, state *runState, conclusion investigation.Conclusion, stoppedBy string) {
 	span := trace.SpanFromContext(ctx)
-	span.SetAttributes(attribute.String("oc.investigation.status", "concluded"), attribute.String("oc.investigation.conclusion_status", string(conclusion.Status)))
+	span.SetAttributes(attribute.String("oc.investigation.status", "concluded"),
+		attribute.String("oc.investigation.conclusion_status", string(conclusion.Status)))
 	entry := []any{
 		slog.String("conclusion_status", string(conclusion.Status)),
 		slog.Duration("duration", time.Since(state.startedAt)),

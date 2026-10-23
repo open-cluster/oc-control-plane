@@ -76,9 +76,9 @@ Method:
   source cannot answer, the same fact often sits in another one: a deploy can appear in
   chat when the repository is unreachable, a change in the repository when nobody
   announced it.
-- Results already shown are never re-read. When further reads stop producing new
-  evidence, concluding with what you have beats repeating yourself: that precedence is
-  absolute.
+- Reuse results already shown unless a refresh could reveal changed state or recover
+  from a failed read. Avoid identical calls within one response. When further reads
+  are unlikely to produce useful evidence, conclude with what you have.
 
 Stopping:
 - Keep reading while a cheap read could materially change the conclusion, separate
@@ -146,7 +146,7 @@ func envelopeDefinition(definition integrations.ToolDefinition) integrations.Too
 			},
 			"input": definition.InputSchema,
 		},
-		"required":             []any{"input", "purpose"},
+		"required":             []any{"input"},
 		"additionalProperties": false,
 	}
 	return definition
@@ -160,24 +160,28 @@ func ConcludeDefinition() integrations.ToolDefinition {
 			"findings, hypotheses, proposed actions, and limitations. Return no " +
 			"findings rather than a guess when nothing was established. " +
 			"Cite this Investigation's runs with run_refs; reuse only supplied prior evidence_refs pairs. Keep the answer " +
-			"under " + strconv.Itoa(investigation.MaxSummaryLength) + " characters — it " +
+			"at most " + strconv.Itoa(investigation.MaxSummaryLength) + " characters — it " +
 			"is the reply an operator reads first, not the report; the detail belongs in " +
-			"the findings, which are not bounded by it. A longer answer is cut to fit.",
+			"the findings, which are not bounded by it. Oversized output must be corrected. " +
+			"Propose at most " + strconv.Itoa(investigation.MaxConclusionActions) + " actions; each title, rationale and verification is limited to " +
+			strconv.Itoa(investigation.MaxActionTextLength) + " UTF-8 bytes.",
 		InputSchema: concludeSchema().Document,
 	}
 }
 
 func concludeSchema() Schema {
+	actions := array(actionSchema())
+	actions["maxItems"] = investigation.MaxConclusionActions
 	return Schema{
 		Name:    ConcludeToolName,
 		Version: SchemaVersion,
 		Document: object(properties{
 			"status":      enumField(investigation.ConclusionStatuses...),
-			"summary":     stringField,
+			"summary":     map[string]any{"type": "string", "maxLength": investigation.MaxSummaryLength},
 			"impact":      impactSchema(),
 			"findings":    array(agentFindingSchema()),
 			"hypotheses":  array(hypothesisSchema()),
-			"actions":     array(actionSchema()),
+			"actions":     actions,
 			"limitations": array(limitationSchema()),
 		}),
 	}
@@ -302,24 +306,38 @@ func writeSortedPairs(out *strings.Builder, prefix string, pairs map[string]stri
 }
 
 func renderResult(result toolFeedback) ToolResultTurn {
-	run := result.Run
+	run := result.ToolRun
 	if result.Semantic && run.Tool == historyToolName {
 		if run.Outcome == investigation.RunFailed {
-			return ToolResultTurn{CallID: result.CallID, Content: "HISTORY UNAVAILABLE: " + run.Error, IsError: true}
+			return ToolResultTurn{
+				CallID:  result.CallID,
+				Content: "HISTORY UNAVAILABLE: " + run.Error,
+				IsError: true,
+			}
 		}
 		page, ok := run.Content.(investigation.HistoryPage)
 		if !ok {
-			return ToolResultTurn{CallID: result.CallID, Content: "HISTORY UNAVAILABLE: invalid stored history", IsError: true}
+			return ToolResultTurn{
+				CallID:  result.CallID,
+				Content: "HISTORY UNAVAILABLE: invalid stored history",
+				IsError: true,
+			}
 		}
 		encoded, _ := json.Marshal(page)
 		return ToolResultTurn{CallID: result.CallID, Content: historyResponsePrefix + string(encoded)}
 	}
+
+	// string building ----->
 	out := &strings.Builder{}
-	out.WriteString("[run " + strconv.Itoa(run.Ordinal) + "] " + run.Tool + " " +
-		compactArguments(run.Arguments) + "\n")
+	out.WriteString("[run " + strconv.Itoa(run.Ordinal) + "] " +
+		run.Tool + " " + compactArguments(run.Arguments) + "\n")
 	if run.Outcome == investigation.RunFailed {
 		out.WriteString("FAILED: " + run.Error + "\n")
-		return ToolResultTurn{CallID: result.CallID, Content: out.String(), IsError: true}
+		return ToolResultTurn{
+			CallID:  result.CallID,
+			Content: out.String(),
+			IsError: true,
+		}
 	}
 	if run.WindowApplied {
 		out.WriteString("WINDOW: this read covered " + stamp(run.WindowFrom) + " to " +
@@ -332,7 +350,10 @@ func renderResult(result toolFeedback) ToolResultTurn {
 		out.WriteString("TRUNCATED: the source held more than this read returned.\n")
 	}
 	out.WriteString("CONTENT: " + boundedJSON(run.Content) + "\n")
-	return ToolResultTurn{CallID: result.CallID, Content: out.String()}
+	return ToolResultTurn{
+		CallID:  result.CallID,
+		Content: out.String(),
+	}
 }
 
 func concludeInstruction(reason string) string {
@@ -550,18 +571,20 @@ func kindOf(
 func dedupeFindings(
 	findings []investigation.PriorFinding,
 ) []investigation.PriorFinding {
-	seen := map[string]bool{}
+	type findingKey struct {
+		statement, reference, kind          string
+		observedAt, windowFrom, windowUntil time.Time
+	}
+	seen := map[findingKey]bool{}
 	kept := make([]investigation.PriorFinding, 0, len(findings))
 	for _, finding := range findings {
-		key := finding.Statement + "|" + finding.Reference()
+		key := findingKey{finding.Statement, finding.Reference(), finding.Kind,
+			finding.ObservedAt, finding.WindowFrom, finding.WindowUntil}
 		if finding.Statement == "" || seen[key] {
 			continue
 		}
 		seen[key] = true
 		kept = append(kept, finding)
-	}
-	if len(kept) > investigation.BriefMaxFindings {
-		kept = kept[len(kept)-investigation.BriefMaxFindings:]
 	}
 	return kept
 }

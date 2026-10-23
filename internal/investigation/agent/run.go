@@ -65,7 +65,6 @@ func (a *Agent) Instrument(telemetry *Telemetry) { a.telemetry = telemetry }
 const (
 	defaultMaxToolRuns   = 30
 	defaultMaxTurns      = 20
-	maxStagnantTurns     = 2
 	wallClockReserve     = 2 * time.Minute
 	inventoryDigestLimit = 50
 	eventTextBound       = 512
@@ -121,11 +120,12 @@ type toolCall struct {
 	Tool      string
 	Purpose   string
 	Arguments map[string]any
+	Error     string
 }
 
 type toolFeedback struct {
 	CallID   string
-	Run      investigation.ToolRun
+	ToolRun  investigation.ToolRun
 	Semantic bool
 }
 
@@ -243,8 +243,8 @@ func (r *Agent) Run(
 	state.missingEvidence = oriented.Brief != nil && oriented.Brief.MissingEvidence
 	var priorEvidence []investigation.EvidenceRef
 
-	preparePrompt := func(forced bool, reason string, contextRejected bool) (Prompt, error) {
-		prompt := modelPrompt(r, state, forced, reason)
+	preparePrompt := func(concludeRequested bool, reason string, contextRejected bool) (Prompt, error) {
+		prompt := modelPrompt(r, state, concludeRequested, reason)
 		estimator, available := r.completer.(requestEstimator)
 		if !available {
 			if contextRejected {
@@ -260,14 +260,20 @@ func (r *Agent) Run(
 			state.orientation.Inventory = nil
 			if brief := state.orientation.Brief; brief != nil {
 				state.orientation.Brief = &investigation.Brief{
-					Turn: brief.Turn, HistoryBefore: brief.HistoryBefore, NextBefore: brief.NextBefore,
+					Turn:            brief.Turn,
+					HistoryBefore:   brief.HistoryBefore,
+					NextBefore:      brief.NextBefore,
 					MissingEvidence: brief.MissingEvidence,
 				}
-				if brief.MissingEvidence {
+				if !contextRejected {
+					state.orientation.Brief.Findings = brief.Findings
+					state.orientation.Brief.OpenHypotheses = brief.OpenHypotheses
+					state.orientation.Brief.Limitations = brief.Limitations
+				} else if brief.MissingEvidence {
 					state.orientation.Brief.Limitations = []string{investigation.MissingEvidenceStatement}
 				}
 			}
-			prompt = modelPrompt(r, state, forced, reason)
+			prompt = modelPrompt(r, state, concludeRequested, reason)
 		}
 		if !contextRejected {
 			return prompt, nil
@@ -279,7 +285,7 @@ func (r *Agent) Run(
 		if reduced < input {
 			return prompt, nil
 		}
-		if !forced && len(prompt.Tools) > 1 {
+		if !concludeRequested && len(prompt.Tools) > 1 {
 			prompt = modelPrompt(r, state, true, concludeReason(investigation.StoppedByContext, len(state.offered)))
 			reduced, err = estimator.EstimateRequestTokens(prompt)
 			if err != nil {
@@ -293,7 +299,6 @@ func (r *Agent) Run(
 	}
 
 	var results []toolFeedback
-	stagnant := 0
 	stoppedBy := ""
 	for turn := 1; ; turn++ {
 		if err := ctx.Err(); err != nil {
@@ -302,7 +307,6 @@ func (r *Agent) Run(
 			return terminalErr
 		}
 		state.turns++
-		stagnated := false
 		if stoppedBy == "" {
 			switch {
 			case state.executed >= state.maxRuns:
@@ -311,56 +315,48 @@ func (r *Agent) Run(
 				stoppedBy = investigation.StoppedByReasonerTurns
 			case wallClockAlmostOver(ctx, wallClockReserve):
 				stoppedBy = investigation.StoppedByWallClock
-			case stagnant >= maxStagnantTurns:
-				stagnated = true
 			}
-			if stoppedBy != "" || stagnated {
-				progress := ceilingProgress(stoppedBy)
-				if stagnated {
-					progress = "Stopping the reads: the last few produced no new evidence"
-				}
+			if stoppedBy != "" {
 				r.announce(ctx, events,
-					investigation.ProgressPayload(progress))
+					investigation.ProgressPayload(ceilingProgress(stoppedBy)))
 			}
 		}
 
-		mustConclude := stoppedBy != "" || stagnated ||
+		mustConclude := stoppedBy != "" ||
 			(len(state.offered) == 0 && state.historyBeforeSequence <= 1)
 		reason := concludeReason(stoppedBy, len(state.offered))
-		if stagnated {
-			reason = "Your recent reads produced no new evidence."
-		}
+
 		if len(results) > 0 {
 			rendered := make([]ToolResultTurn, 0, len(results))
 			for _, result := range results {
 				rendered = append(rendered, renderResult(result))
-				if !result.Semantic && result.Run.Ordinal > state.highestOrdinal {
-					state.highestOrdinal = result.Run.Ordinal
+				if !result.Semantic && result.ToolRun.Ordinal > state.highestOrdinal {
+					state.highestOrdinal = result.ToolRun.Ordinal
 				}
 			}
 			if len(state.transcript) == 0 {
-				state.transcript = append(state.transcript, Turn{Results: rendered})
+				state.transcript = append(state.transcript, Turn{ToolResults: rendered})
 			} else {
 				last := len(state.transcript) - 1
-				state.transcript[last].Results = append(state.transcript[last].Results, rendered...)
+				state.transcript[last].ToolResults = append(state.transcript[last].ToolResults, rendered...)
 			}
 		}
-		forced := mustConclude
+		forcedToConclude := mustConclude
 		move := modelMove{}
 		moveCtx, done := context.WithTimeout(ctx, decideTimeout)
 		contextRejected := false
 		for attempt := range 2 {
-			prompt, prepareErr := preparePrompt(forced, reason, contextRejected)
+			prompt, prepareErr := preparePrompt(forcedToConclude, reason, contextRejected)
 			if prepareErr != nil {
 				err = Failed(OutcomeRejected, r.modelConfig.Provider, r.modelConfig.Model,
 					prepareErr.Error())
 				break
 			}
-			if contextRejected && !forced && prompt.ForceTool != "" {
+			if contextRejected && !forcedToConclude && prompt.ForceTool != "" {
 				stoppedBy = investigation.StoppedByContext
 				r.announce(ctx, events, investigation.ProgressPayload(ceilingProgress(stoppedBy)))
 				reason = concludeReason(stoppedBy, len(state.offered))
-				forced = true
+				forcedToConclude = true
 			}
 			completion, completeErr := r.telemetry.complete(
 				moveCtx, r.completer, r.modelConfig, prompt)
@@ -390,16 +386,22 @@ func (r *Agent) Run(
 				err = Failed(OutcomeMalformed, r.modelConfig.Provider, completion.Model, callErr.Error())
 				break
 			}
-			turn := Turn{Assistant: AssistantTurn{
-				Text: string(completion.Document), Calls: completion.ToolCalls, Raw: completion.Raw,
-			}}
-			if len(reads) > 0 && !forced {
+			turn := Turn{
+				Assistant: AssistantTurn{
+					Text:  string(completion.Document),
+					Calls: completion.ToolCalls,
+					Raw:   completion.Raw,
+				}}
+			if len(reads) > 0 && !forcedToConclude {
 				for _, call := range conclusions {
-					turn.Results = append(turn.Results, ToolResultTurn{CallID: call.ID,
-						Content: "Finalization deferred: consider the read results before calling conclude again.", IsError: true})
+					turn.ToolResults = append(turn.ToolResults, ToolResultTurn{
+						CallID:  call.ID,
+						Content: "Finalization deferred: consider the read results before calling conclude again.",
+						IsError: true,
+					})
 				}
 				state.transcript = append(state.transcript, turn)
-				move.Calls = agentCalls(reads)
+				move.Calls = decodeToolCalls(reads)
 				break
 			}
 			var invalid error
@@ -433,11 +435,15 @@ func (r *Agent) Run(
 				break
 			}
 			for _, call := range completion.ToolCalls {
-				turn.Results = append(turn.Results, ToolResultTurn{CallID: call.ID, Content: invalid.Error(), IsError: true})
+				turn.ToolResults = append(turn.ToolResults, ToolResultTurn{
+					CallID:  call.ID,
+					Content: invalid.Error(),
+					IsError: true,
+				})
 			}
 			turn.Instruction = invalid.Error()
 			state.transcript = append(state.transcript, turn)
-			forced = true
+			forcedToConclude = true
 		}
 		done()
 		if err == nil && move.Conclusion == nil && len(move.Calls) == 0 {
@@ -450,13 +456,10 @@ func (r *Agent) Run(
 			r.RuntimeTelemetry.Ended(time.Since(startedAt), investigation.StatusFailed.String(), "")
 			return terminalErr
 		}
+
+		// Conclusion requested ----->
 		if move.Conclusion != nil {
 			conclusion := *move.Conclusion
-			if citation := checkCitations(conclusion.Findings, len(state.runs)); citation != "" {
-				return failRun(citation, state.usage)
-			}
-			conclusion.Summary = boundedSummary(conclusion.Summary)
-			conclusion.Actions = boundActions(conclusion.Actions)
 
 			writeCtx, done := terminalWriteWindow(ctx)
 			if err := r.Store.ConcludeInvestigation(writeCtx, organization, opened.ID, opened.ClaimToken,
@@ -469,100 +472,89 @@ func (r *Agent) Run(
 			r.RuntimeTelemetry.Ended(time.Since(startedAt), investigation.StatusConcluded.String(), stoppedBy)
 			return nil
 		}
-		if forced {
+		if forcedToConclude {
 			terminalErr := failRun(errNoConclusion.Error(), state.usage)
 			r.RuntimeTelemetry.Ended(time.Since(startedAt), investigation.StatusFailed.String(), "")
 			return terminalErr
 		}
 
 		results = make([]toolFeedback, 0, len(move.Calls))
-		freshRead := false
+		executedCalls := make(map[string]int)
 		for _, call := range move.Calls {
 			result := toolFeedback{CallID: call.ID}
-			fresh := false
 			if call.Tool == historyToolName {
 				result.Semantic = true
-				result.Run = r.readHistory(ctx, state, call)
-				if page, ok := result.Run.Content.(investigation.HistoryPage); ok {
+				if call.Error != "" {
+					result.ToolRun = investigation.ToolRun{
+						Tool:    historyToolName,
+						Outcome: investigation.RunFailed,
+						Error:   call.Error,
+					}
+				} else {
+					result.ToolRun = r.readHistory(ctx, state, call)
+				}
+				if page, ok := result.ToolRun.Content.(investigation.HistoryPage); ok {
 					priorEvidence = append(priorEvidence, historyEvidence(page)...)
 					state.missingEvidence = state.missingEvidence || page.MissingEvidence
-					freshRead = freshRead || (result.Run.Outcome == investigation.RunSucceeded && len(page.Exchange) > 0)
 				}
 				results = append(results, result)
 				continue
 			}
 			var run investigation.ToolRun
-			executedRead := false
-			if strings.TrimSpace(call.Purpose) == "" {
-				now := time.Now().UTC()
-				run = investigation.ToolRun{
-					Ordinal: len(state.runs) + 1, Tool: call.Tool, Arguments: call.Arguments,
-					WindowFrom: opened.WindowFrom, WindowUntil: opened.WindowUntil,
-					Outcome:   investigation.RunFailed,
-					Summary:   "not executed: an external read requires a purpose",
-					Error:     "not executed: an external read requires a purpose",
-					StartedAt: now, FinishedAt: now,
+			identity := callIdentityOf(call)
+			switch {
+			case call.Error != "":
+				run = droppedRun(opened, call, len(state.runs)+1, call.Error)
+				if source, _, offered := toolNamed(selections(offered), call.Tool); offered {
+					run.IntegrationID = source.integration.ID
 				}
-			} else {
-				identity := callIdentityOf(call)
-				switch {
-				case state.executedIdentities[identity] != 0:
-					run = suppressedRun(opened, call, len(state.runs)+1,
-						state.executedIdentities[identity])
-					r.announce(ctx, events,
-						investigation.ProgressPayload(
-							"Skipped a repeat of "+offeredName(offered, call.Tool)+
-								"; the earlier read already answers it"))
-				case state.executed >= state.maxRuns:
-					run = droppedRun(opened, call, len(state.runs)+1, fmt.Sprintf(
-						"not executed: the investigation's read budget of %d was exhausted",
-						state.maxRuns))
-					r.announce(ctx, events,
-						investigation.ProgressPayload(
-							"Did not run "+offeredName(offered, call.Tool)+
-								"; the read budget is exhausted"))
-				default:
-					ordinal := len(state.runs) + 1
-					r.announceToolStarted(ctx, state, call, ordinal)
-					var executeErr error
-					run, executeErr = r.execute(ctx, opened, selections(offered),
-						state.credentials, origin, call, ordinal)
-					if executeErr != nil {
-						terminalErr := failRun(failureReason(executeErr), state.usage)
-						r.RuntimeTelemetry.Ended(time.Since(startedAt),
-							investigation.StatusFailed.String(), "")
-						return terminalErr
-					}
-					r.announce(ctx, events,
-						investigation.ToolCompletedPayload(run))
-					canonical := "unknown"
-					if run.IntegrationID != uuid.Nil {
-						canonical = strings.TrimSuffix(call.Tool, "__"+strings.ReplaceAll(run.IntegrationID.String(), "-", ""))
-					}
-					r.RuntimeTelemetry.RanTool(run, canonical)
-					state.executed++
-					fresh = run.Outcome == investigation.RunSucceeded
-					executedRead = true
+			case executedCalls[identity] != 0: // already once executed ----->
+				run = suppressedRun(opened, call, len(state.runs)+1,
+					executedCalls[identity])
+				run.IntegrationID = state.runs[executedCalls[identity]-1].IntegrationID
+				r.announce(ctx, events,
+					investigation.ProgressPayload(
+						"Skipped a repeat of "+offeredName(offered, call.Tool)+
+							"; the earlier read already answers it"))
+			case state.executed >= state.maxRuns:
+				run = droppedRun(opened, call, len(state.runs)+1, fmt.Sprintf(
+					"not executed: the investigation's read budget of %d was exhausted",
+					state.maxRuns))
+				r.announce(ctx, events,
+					investigation.ProgressPayload(
+						"Did not run "+offeredName(offered, call.Tool)+
+							"; the read budget is exhausted"))
+			default: // executing the tool ----->
+				ordinal := len(state.runs) + 1
+				r.announceToolStarted(ctx, state, call, ordinal)
+				var executeErr error
+				run, executeErr = r.execute(ctx, opened, selections(offered),
+					state.credentials, origin, call, ordinal)
+				if executeErr != nil {
+					terminalErr := failRun(failureReason(executeErr), state.usage)
+					r.RuntimeTelemetry.Ended(time.Since(startedAt),
+						investigation.StatusFailed.String(), "")
+					return terminalErr
 				}
-				run.Purpose = boundText(call.Purpose, eventTextBound)
-				if executedRead {
-					state.executedIdentities[identity] = run.Ordinal
+				r.announce(ctx, events,
+					investigation.ToolCompletedPayload(run))
+				canonical := "unknown"
+				if run.IntegrationID != uuid.Nil {
+					canonical = strings.TrimSuffix(call.Tool, "__"+strings.ReplaceAll(run.IntegrationID.String(), "-", ""))
 				}
+				r.RuntimeTelemetry.RanTool(run, canonical)
+				state.executed++
+				executedCalls[identity] = run.Ordinal
 			}
+			run.Purpose = boundText(call.Purpose, eventTextBound)
 			if recordErr := r.recordToolRun(ctx, state, run); recordErr != nil {
 				terminalErr := failRun(failureReason(recordErr), state.usage)
 				r.RuntimeTelemetry.Ended(time.Since(startedAt),
 					investigation.StatusFailed.String(), "")
 				return terminalErr
 			}
-			result.Run = run
-			freshRead = freshRead || fresh
+			result.ToolRun = run
 			results = append(results, result)
-		}
-		if freshRead {
-			stagnant = 0
-		} else {
-			stagnant++
 		}
 	}
 }
@@ -592,7 +584,7 @@ func modelPrompt(r *Agent, state *runState, forced bool, reason string) Prompt {
 		Effort:          r.modelConfig.Effort,
 	}
 	if forced {
-		prompt.Tools = prompt.Tools[len(prompt.Tools)-1:]
+		prompt.Tools = []integrations.ToolDefinition{ConcludeDefinition()}
 		prompt.ForceTool = ConcludeToolName
 		instruction := concludeInstruction(reason)
 		if len(prompt.Turns) == 0 {
@@ -621,8 +613,11 @@ func (r *Agent) announceToolStarted(
 		return
 	}
 	payload := investigation.ToolStartedPayload(investigation.ToolRun{
-		Ordinal: ordinal, Tool: call.Tool, Purpose: call.Purpose,
-	}, source.integration.ID.String(), source.integration.Name)
+		Ordinal: ordinal,
+		Tool:    call.Tool,
+		Purpose: call.Purpose},
+		source.integration.ID.String(),
+		source.integration.Name)
 	r.announce(ctx, state.events, payload)
 }
 
@@ -749,9 +744,8 @@ func suppressedRun(
 		Outcome:     investigation.RunFailed,
 		Summary: fmt.Sprintf("not executed: identical to run %d, whose result is already "+
 			"above", original),
-		Error: fmt.Sprintf("not executed: identical to run %d, whose result is already "+
-			"above; call a different tool, or the same tool with different arguments, "+
-			"to gather new evidence — or conclude", original),
+		Error: fmt.Sprintf("not executed: identical to run %d in this batch; "+
+			"use its result or request a refresh in a later turn", original),
 		StartedAt:  now,
 		FinishedAt: now,
 	}
@@ -788,20 +782,6 @@ func wallClockAlmostOver(ctx context.Context, reserve time.Duration) bool {
 	return has && time.Until(deadline) < reserve
 }
 
-func boundActions(actions []investigation.ActionProposal) []investigation.ActionProposal {
-	if len(actions) > investigation.MaxConclusionActions {
-		actions = actions[:investigation.MaxConclusionActions]
-	}
-	kept := make([]investigation.ActionProposal, 0, len(actions))
-	for _, action := range actions {
-		action.Title = boundText(action.Title, investigation.MaxActionTextLength)
-		action.Rationale = boundText(action.Rationale, investigation.MaxActionTextLength)
-		action.Verification = boundText(action.Verification, investigation.MaxActionTextLength)
-		kept = append(kept, action)
-	}
-	return kept
-}
-
 func (r *Agent) orientation(
 	ctx context.Context,
 	organization uuid.UUID,
@@ -832,7 +812,8 @@ func selections(offered []offeredSource) []selection {
 	selections := make([]selection, 0, len(offered))
 	for _, source := range offered {
 		selections = append(selections, selection{
-			integration: source.Integration, tools: source.Tools,
+			integration: source.Integration,
+			tools:       source.Tools,
 		})
 	}
 	return selections

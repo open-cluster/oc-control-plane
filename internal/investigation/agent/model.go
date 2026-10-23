@@ -111,7 +111,7 @@ type Prompt struct {
 
 type Turn struct {
 	Assistant   AssistantTurn
-	Results     []ToolResultTurn
+	ToolResults []ToolResultTurn
 	Instruction string
 }
 
@@ -145,6 +145,7 @@ type Schema struct {
 }
 
 type Completion struct {
+	// Model is the reported responding model, empty when the provider did not report it.
 	Model     string
 	RequestID string
 	Document  []byte
@@ -198,16 +199,16 @@ func (e Effort) Valid() bool {
 }
 
 type Count struct {
-	Tokens   int64
-	Reported bool
+	Tokens     int64
+	IsReported bool
 }
 
-func Counted(tokens int64) Count { return Count{Tokens: tokens, Reported: true} }
+func Counted(tokens int64) Count { return Count{Tokens: tokens, IsReported: true} }
 
 func Unreported() Count { return Count{} }
 
 func (c Count) Or(fallback int64) int64 {
-	if !c.Reported {
+	if !c.IsReported {
 		return fallback
 	}
 	return c.Tokens

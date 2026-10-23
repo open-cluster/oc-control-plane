@@ -137,8 +137,12 @@ and `OC_AI_MAX_OUTPUT_SIZE` to fit its published limits. The context allowance m
 the output allowance. Larger explicit allowances are also supported when the selected
 model permits them. In YAML, the optional fields are `ai.contextWindow` and
 `ai.maxOutputTokens`. No model discovery request or local model allowlist is required.
-The context allowance guides optional-history reduction using an approximate token estimate.
+The context allowance guides optional inventory and older exchange reduction using an approximate token estimate.
 An estimate alone does not reject your request; the provider determines whether it fits.
+
+Provider retries share the configured request deadline, including time spent waiting.
+Anthropic retry delays are respected without shortening them. An ambiguous connection failure
+can cause repeated inference when the SDK retries; reported usage is not a complete billing ledger.
 
 Restart the control plane, wait for `/readyz`, and run one bounded Investigation. Startup
 proves that the file is readable; only a completed Investigation proves that the selected

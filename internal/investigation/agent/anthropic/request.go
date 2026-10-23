@@ -113,9 +113,9 @@ func messages(prompt reasoning.Prompt) []sdk.MessageParam {
 		if assistant := assistantMessage(turn.Assistant); len(assistant.Content) > 0 {
 			rendered = append(rendered, assistant)
 		}
-		if len(turn.Results) > 0 || turn.Instruction != "" {
-			blocks := make([]sdk.ContentBlockParamUnion, 0, len(turn.Results)+1)
-			for _, result := range turn.Results {
+		if len(turn.ToolResults) > 0 || turn.Instruction != "" {
+			blocks := make([]sdk.ContentBlockParamUnion, 0, len(turn.ToolResults)+1)
+			for _, result := range turn.ToolResults {
 				blocks = append(blocks, sdk.NewToolResultBlock(
 					result.CallID, result.Content, result.IsError))
 			}

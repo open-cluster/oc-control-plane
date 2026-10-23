@@ -43,8 +43,10 @@ Uncertainty, missing telemetry, and unresolved assumptions remain explicit.
 An Investigation is immutable once completed. Follow-ups create new Investigations while
 retaining bounded Conversation context and cited Findings established before the new
 Investigation opened. Earlier reply details and older Messages are loaded on demand.
-Complete operator requests are preserved under context pressure. Optional context is reduced
-first, and unrecoverable capacity problems are reported as technical failures.
+Complete operator requests are preserved under context pressure. Optional inventory and older
+exchange text are reduced before cited Findings, and unrecoverable capacity problems are reported
+as technical failures. Reads can refresh changing infrastructure within the execution limits.
+Accepted summaries and Action Proposals are preserved without silent truncation.
 
 ## Integrations
 

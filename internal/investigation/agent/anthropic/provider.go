@@ -7,10 +7,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -21,7 +19,6 @@ import (
 const Name = "anthropic"
 
 const maxAttempts = 3
-const retryAfterCap = 30 * time.Second
 
 type Provider struct {
 	client sdk.Client
@@ -30,11 +27,23 @@ type Provider struct {
 
 func usageOf(usage sdk.Usage) reasoning.TokenUsage {
 	normalized := reasoning.TokenUsage{
-		Input:      reasoning.Counted(usage.InputTokens),
-		Output:     reasoning.Counted(usage.OutputTokens),
-		CacheWrite: reasoning.Counted(usage.CacheCreationInputTokens),
-		CacheRead:  reasoning.Counted(usage.CacheReadInputTokens),
-		Reasoning:  reasoning.Unreported(),
+		Input: reasoning.Count{
+			Tokens:     usage.InputTokens,
+			IsReported: usage.JSON.InputTokens.Valid() || usage.InputTokens > 0,
+		},
+		Output: reasoning.Count{
+			Tokens:     usage.OutputTokens,
+			IsReported: usage.JSON.OutputTokens.Valid() || usage.OutputTokens > 0,
+		},
+		CacheWrite: reasoning.Count{
+			Tokens:     usage.CacheCreationInputTokens,
+			IsReported: usage.JSON.CacheCreationInputTokens.Valid() || usage.CacheCreationInputTokens > 0,
+		},
+		CacheRead: reasoning.Count{
+			Tokens:     usage.CacheReadInputTokens,
+			IsReported: usage.JSON.CacheReadInputTokens.Valid() || usage.CacheReadInputTokens > 0,
+		},
+		Reasoning: reasoning.Unreported(),
 	}
 	if usage.OutputTokensDetails.JSON.ThinkingTokens.Valid() {
 		normalized.Reasoning = reasoning.Counted(usage.OutputTokensDetails.ThinkingTokens)
@@ -141,54 +150,20 @@ func New(config reasoning.ModelConfig, options Options) (*Provider, error) {
 		option.WithMaxRetries(maxAttempts - 1),
 		option.WithRequestTimeout(config.RequestTimeout),
 	}
+
 	if config.BaseURL != "" {
 		requestOptions = append(requestOptions, option.WithBaseURL(config.BaseURL))
 	}
-	client := options.HTTPClient
-	if client == nil {
-		client = &http.Client{
-			// Following a provider redirect could send the configured credential to another host.
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		}
+	client := http.Client{}
+	if options.HTTPClient != nil {
+		client = *options.HTTPClient
 	}
-	clientCopy := *client
-	transport := clientCopy.Transport
-	if transport == nil {
-		transport = http.DefaultTransport
+	// Following a provider redirect could send the configured credential to another host.
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
 	}
-	clientCopy.Transport = boundedRetryAfterTransport{base: transport}
-	client = &clientCopy
-	requestOptions = append(requestOptions, option.WithHTTPClient(client))
+	requestOptions = append(requestOptions, option.WithHTTPClient(&client))
 	return &Provider{client: sdk.NewClient(requestOptions...), config: config}, nil
-}
-
-type boundedRetryAfterTransport struct{ base http.RoundTripper }
-
-func (t boundedRetryAfterTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	response, err := t.base.RoundTrip(request)
-	if response != nil {
-		if bounded, ok := boundedRetryAfter(response.Header.Get("Retry-After"), time.Now()); ok {
-			response.Header.Set("Retry-After", strconv.FormatInt(int64(bounded/time.Second), 10))
-		}
-	}
-	return response, err
-}
-
-func boundedRetryAfter(value string, now time.Time) (time.Duration, bool) {
-	value = strings.TrimSpace(value)
-	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 {
-		if seconds >= int64(retryAfterCap/time.Second) {
-			return retryAfterCap, true
-		}
-		return time.Duration(seconds) * time.Second, true
-	}
-	at, err := http.ParseTime(value)
-	if err != nil {
-		return 0, false
-	}
-	return min(max(at.Sub(now), 0), retryAfterCap), true
 }
 
 func (p *Provider) EstimateRequestTokens(prompt reasoning.Prompt) (int, error) {
@@ -202,6 +177,8 @@ func (p *Provider) EstimateRequestTokens(prompt reasoning.Prompt) (int, error) {
 func (p *Provider) Complete(
 	ctx context.Context, prompt reasoning.Prompt,
 ) (reasoning.Completion, error) {
+	ctx, cancel := context.WithTimeout(ctx, p.config.RequestTimeout)
+	defer cancel()
 	captured := &requestID{}
 	stream := p.client.Messages.NewStreaming(ctx, p.params(prompt), captured.option())
 
@@ -218,7 +195,7 @@ func (p *Provider) Complete(
 	}
 
 	completion := reasoning.Completion{
-		Model:     answeringModel(message, prompt.Model),
+		Model:     strings.TrimSpace(string(message.Model)),
 		RequestID: captured.value(),
 		Stop:      stopOf(message.StopReason),
 		Usage:     usageOf(message.Usage),
@@ -251,18 +228,13 @@ func toolCallsOf(message sdk.Message) []reasoning.CompletionCall {
 	for _, block := range message.Content {
 		if use, isUse := block.AsAny().(sdk.ToolUseBlock); isUse {
 			calls = append(calls, reasoning.CompletionCall{
-				ID: use.ID, Name: internalToolName(use.Name), Arguments: use.Input,
+				ID:        use.ID,
+				Name:      internalToolName(use.Name),
+				Arguments: use.Input,
 			})
 		}
 	}
 	return calls
-}
-
-func answeringModel(message sdk.Message, requested string) string {
-	if answered := strings.TrimSpace(string(message.Model)); answered != "" {
-		return answered
-	}
-	return requested
 }
 
 func textOf(message sdk.Message) string {

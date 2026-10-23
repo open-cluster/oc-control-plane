@@ -149,6 +149,23 @@ func TestStructuredConclusionRequiresCitationsForActions(t *testing.T) {
 	if _, err := decodeConclusion(encoded, 1, nil); err == nil {
 		t.Fatal("an action without a Run reference was accepted")
 	}
+	action := document["actions"].([]map[string]any)[0]
+	action["run_refs"] = []int{1}
+	for _, title := range []string{strings.Repeat("é", 256), strings.Repeat("é", 257)} {
+		action["title"] = title
+		encoded, err = json.Marshal(document)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conclusion, decodeErr := decodeConclusion(encoded, 1, nil)
+		if len(title) > 512 {
+			if decodeErr == nil {
+				t.Fatal("an action beyond the byte limit was accepted")
+			}
+		} else if decodeErr != nil || conclusion.Actions[0].Title != title {
+			t.Fatalf("a valid non-ASCII action was changed or rejected: %v", decodeErr)
+		}
+	}
 }
 
 func TestStructuredConclusionRejectsRemovedHypothesisIdentity(t *testing.T) {
