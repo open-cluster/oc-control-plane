@@ -55,7 +55,7 @@ services:
 
   relay-tls:
     profiles: [relay]
-    image: nginx:1.27-alpine
+    image: nginx:1.30.6-alpine
     user: ${OPENCLUSTER_RUNTIME_UID:?set the invoking non-root uid}:${OPENCLUSTER_RUNTIME_GID:?set the invoking non-root gid}
     command: [nginx, -g, "daemon off;"]
     depends_on:

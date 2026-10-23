@@ -43,7 +43,7 @@ relay:
     existingSecret: ""
     certificateKey: tls.crt
     privateKey: tls.key
-    image: nginx:1.27-alpine
+    image: nginx:1.30.6-alpine
 
 resources: {}
 
