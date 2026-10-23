@@ -524,7 +524,7 @@ func (r *Agent) Run(
 					investigation.ProgressPayload(
 						"Did not run "+offeredName(offered, call.Tool)+
 							"; the read budget is exhausted"))
-			default: //executing the tool ----->
+			default: // executing the tool ----->
 				ordinal := len(state.runs) + 1
 				r.announceToolStarted(ctx, state, call, ordinal)
 				var executeErr error
