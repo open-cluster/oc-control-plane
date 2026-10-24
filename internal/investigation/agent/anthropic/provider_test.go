@@ -2,6 +2,7 @@ package anthropic_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -448,56 +449,71 @@ func TestComplete_SendsTheDeclaredSchemaEffortAndCacheBreakpoints(t *testing.T) 
 	}
 }
 
-func TestComplete_HaikuForcedConclusionDisablesThinkingAtEveryEffort(t *testing.T) {
-	round := &transport{responses: []*http.Response{streamed(`{}`, fullUsage, "end_turn", "")}}
-	provider, err := anthropic.New(reasoning.ModelConfig{
-		Provider: anthropic.Name, Model: "claude-haiku-4-5",
-		Effort: reasoning.EffortMedium, Credential: reasoning.Secret("sk-test-credential"),
-		MaxOutputTokens: 32_000, RequestTimeout: 5 * time.Second,
-	}, anthropic.Options{HTTPClient: &http.Client{Transport: round}})
-	if err != nil {
-		t.Fatalf("building the Haiku provider: %v", err)
-	}
-	prompt := promptFixture()
-	prompt.Model = "claude-haiku-4-5"
-	prompt.Effort = reasoning.EffortMedium
-	prompt.Tools = []integrations.ToolDefinition{{
-		Name: "conclude", Description: "Conclude the investigation.",
-		InputSchema: map[string]any{
-			"type": "object", "properties": map[string]any{},
-			"additionalProperties": false,
-		},
-	}}
-	prompt.ForceTool = "conclude"
-	prompt.Turns = []reasoning.Turn{{
-		Assistant: reasoning.AssistantTurn{Raw: []byte(`{"id":"prior","type":"message","role":"assistant","model":"claude-haiku-4-5","content":[{"type":"thinking","thinking":"Retain the native continuation.","signature":"signed-thinking"},{"type":"tool_use","id":"read-1","name":"oc_cmVhZA","input":{}},{"type":"tool_use","id":"premature","name":"oc_Y29uY2x1ZGU","input":{}}]}`)},
-		ToolResults: []reasoning.ToolResultTurn{
-			{CallID: "read-1", Content: "[run 1] workload state"},
-			{CallID: "premature", Content: "Finalization deferred: consider the read results.", IsError: true},
-		},
-	}}
-	if _, err := provider.Complete(context.Background(), prompt); err != nil {
-		t.Fatalf("completing with Haiku: %v", err)
-	}
-	body := round.lastBody(t)
-	for _, expected := range []string{
-		`"thinking":{"type":"disabled"}`,
-		`"tool_choice":{"name":"oc_Y29uY2x1ZGU","type":"tool"}`,
-		`"signature":"signed-thinking"`,
-		`"thinking":"Retain the native continuation."`,
-		`"tool_use_id":"read-1"`,
-		`"tool_use_id":"premature"`,
-		`"is_error":true`,
-		`Finalization deferred: consider the read results.`,
+func TestComplete_FinalizationPreservesCompatibleThinkingAndContinuation(t *testing.T) {
+	for _, test := range []struct {
+		model, thinking, choice string
+	}{
+		{"claude-haiku-4-5", `"thinking":{"budget_tokens":2048,"type":"enabled"}`, `"tool_choice":{"type":"auto"}`},
+		{"claude-sonnet-4-5-20250929", `"thinking":{"budget_tokens":2048,"type":"enabled"}`, `"tool_choice":{"type":"auto"}`},
+		{"claude-opus-5", `"thinking":{"type":"adaptive"}`, `"tool_choice":{"name":"oc_Y29uY2x1ZGU","type":"tool"}`},
+		{"claude-sonnet-5-5", "", `"tool_choice":{"type":"auto"}`},
+		{"custom-model-exact-ID", "", `"tool_choice":{"name":"oc_Y29uY2x1ZGU","type":"tool"}`},
 	} {
-		if !strings.Contains(body, expected) {
-			t.Errorf("the Haiku request does not carry %s: %s", expected, body)
-		}
-	}
-	for _, unsupported := range []string{`"adaptive"`, `"effort"`, `"budget_tokens"`} {
-		if strings.Contains(body, unsupported) {
-			t.Errorf("the Haiku request carries unsupported %s: %s", unsupported, body)
-		}
+		t.Run(test.model, func(t *testing.T) {
+			round := &transport{responses: []*http.Response{streamed(`{}`, fullUsage, "end_turn", "")}}
+			provider, err := anthropic.New(reasoning.ModelConfig{
+				Provider: anthropic.Name, Model: test.model,
+				Effort: reasoning.EffortMedium, Credential: reasoning.Secret("sk-test-credential"),
+				MaxOutputTokens: 32_000, RequestTimeout: 5 * time.Second,
+			}, anthropic.Options{HTTPClient: &http.Client{Transport: round}})
+			if err != nil {
+				t.Fatalf("building the Haiku provider: %v", err)
+			}
+			prompt := promptFixture()
+			prompt.Model = test.model
+			prompt.Effort = reasoning.EffortMedium
+			prompt.Tools = []integrations.ToolDefinition{{
+				Name: "conclude", Description: "Conclude the investigation.",
+				InputSchema: map[string]any{
+					"type": "object", "properties": map[string]any{},
+					"additionalProperties": false,
+				},
+			}}
+			prompt.ForceTool = "conclude"
+			prompt.Turns = []reasoning.Turn{{
+				Assistant: reasoning.AssistantTurn{Raw: []byte(`{"id":"prior","type":"message","role":"assistant","model":"claude-haiku-4-5","content":[{"type":"thinking","thinking":"Retain the native continuation.","signature":"signed-thinking"},{"type":"tool_use","id":"read-1","name":"oc_cmVhZA","input":{}},{"type":"tool_use","id":"premature","name":"oc_Y29uY2x1ZGU","input":{}}]}`)},
+				ToolResults: []reasoning.ToolResultTurn{
+					{CallID: "read-1", Content: "[run 1] workload state"},
+					{CallID: "premature", Content: "Finalization deferred: consider the read results.", IsError: true},
+				},
+			}}
+			if _, err := provider.Complete(context.Background(), prompt); err != nil {
+				t.Fatalf("completing with Haiku: %v", err)
+			}
+			body := round.lastBody(t)
+			for _, expected := range []string{
+				test.thinking,
+				test.choice,
+				`"model":"` + test.model + `"`,
+				`"signature":"signed-thinking"`,
+				`"thinking":"Retain the native continuation."`,
+				`"tool_use_id":"read-1"`,
+				`"tool_use_id":"premature"`,
+				`"is_error":true`,
+				`Finalization deferred: consider the read results.`,
+			} {
+				if !strings.Contains(body, expected) {
+					t.Errorf("the Haiku request does not carry %s: %s", expected, body)
+				}
+			}
+			var sent map[string]any
+			if err := json.Unmarshal([]byte(body), &sent); err != nil {
+				t.Fatal(err)
+			}
+			if test.thinking == "" && (sent["thinking"] != nil || sent["output_config"] != nil) {
+				t.Errorf("unknown model must retain provider defaults: %s", body)
+			}
+		})
 	}
 }
 
@@ -520,6 +536,14 @@ func TestNew_RefusesModelConfigurationThatCouldNotWork(t *testing.T) {
 		"an effort level that does not exist": {
 			Provider: anthropic.Name, Model: "claude-opus-5",
 			Credential: reasoning.Secret("k"), Effort: reasoning.Effort("enormous"),
+		},
+		"max on Opus 4.5": {
+			Provider: anthropic.Name, Model: "claude-opus-4-5-20251101",
+			Credential: reasoning.Secret("k"), Effort: reasoning.EffortMax,
+		},
+		"xhigh on Sonnet 4.6": {
+			Provider: anthropic.Name, Model: "claude-sonnet-4-6",
+			Credential: reasoning.Secret("k"), Effort: reasoning.EffortExtraHigh,
 		},
 		"a base url that is not https": {
 			Provider: anthropic.Name, Model: "claude-opus-5",

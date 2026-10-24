@@ -88,6 +88,10 @@ Organization, and operational mutations are audited.
 Investigations use Anthropic or OpenRouter through native Tool calling. OpenCluster owns
 Tool authorization, execution budgets, evidence recording, and conclusion validation.
 
+Findings require citations to successful reads; failed or skipped reads can explain
+limitations but cannot establish a Finding. Startup activity describes the initial phase,
+and recorded activity remains available when a client reconnects.
+
 ### Relay
 
 The Relay runs inside the customer environment and opens an outbound gRPC session to the

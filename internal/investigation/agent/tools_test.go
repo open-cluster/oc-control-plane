@@ -24,7 +24,7 @@ func TestConclusionSummaryIsValidatedWithoutTruncation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		conclusion, err := decodeConclusion(encoded, 0, nil)
+		conclusion, err := decodeConclusion(encoded, nil, nil)
 		if len([]rune(answer)) > 4096 {
 			if err == nil {
 				t.Fatal("an oversized summary was accepted instead of requesting correction")
@@ -141,21 +141,18 @@ func TestTheOfferRequiresCurrentVerificationAndKeepsSameTypeSourcesReachable(t *
 	if len(offered) != 3 {
 		t.Fatalf("offered %d sources, want every successfully verified source", len(offered))
 	}
-	selected := make([]selection, 0, len(offered))
-	for _, source := range offered {
-		selected = append(selected, selection{integration: source.Integration, tools: source.Tools})
-	}
+	selected := offered
 	seen := map[string]bool{}
 	for _, source := range selected {
-		if len(source.tools) != 1 || !strings.Contains(source.tools[0].Name, "__") {
-			t.Fatalf("same-type Tool was not Integration-bound: %+v", source.tools)
+		if len(source.Tools) != 1 || !strings.Contains(source.Tools[0].Name, "__") {
+			t.Fatalf("same-type Tool was not Integration-bound: %+v", source.Tools)
 		}
-		resolved, _, ok := toolNamed(selected, source.tools[0].Name)
-		if !ok || resolved.integration.ID != source.integration.ID {
-			t.Fatalf("Tool %q did not resolve to Integration %s", source.tools[0].Name,
-				source.integration.ID)
+		resolved, _, ok := toolNamed(selected, source.Tools[0].Name)
+		if !ok || resolved.Integration.ID != source.Integration.ID {
+			t.Fatalf("Tool %q did not resolve to Integration %s", source.Tools[0].Name,
+				source.Integration.ID)
 		}
-		seen[source.integration.ID.String()] = true
+		seen[source.Integration.ID.String()] = true
 	}
 	if !seen[first.ID.String()] || !seen[second.ID.String()] || !seen[stale.ID.String()] {
 		t.Fatalf("same-type Integrations were not both reachable: %v", seen)

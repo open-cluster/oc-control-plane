@@ -6,12 +6,14 @@ type EventPayload interface {
 	EventType() EventType
 }
 
-type StartedEventPayload struct{}
+type StartedEventPayload struct {
+	Text string `json:"text,omitempty"`
+}
 
 func (StartedEventPayload) EventType() EventType { return EventStarted }
 
-func StartedPayload(Investigation, bool) StartedEventPayload {
-	return StartedEventPayload{}
+func StartedPayload(text string) StartedEventPayload {
+	return StartedEventPayload{Text: bounded(text, eventTextBound)}
 }
 
 type ProgressEventPayload struct {

@@ -163,6 +163,40 @@ func TestProviderFailuresAreClassifiedWithoutSourceContent(t *testing.T) {
 	}
 }
 
+func TestUsageDoesNotInventMissingOrInvalidMeasurements(t *testing.T) {
+	for _, test := range []struct {
+		name, usage   string
+		input, output agent.Count
+	}{
+		{"invalid breakdown", `{"prompt_tokens":100,"completion_tokens":30,"prompt_tokens_details":{"cached_tokens":90,"cache_write_tokens":20},"completion_tokens_details":{"reasoning_tokens":31}}`, agent.Counted(100), agent.Counted(30)},
+		{"missing totals", `{}`, agent.Unreported(), agent.Unreported()},
+		{"reported zero", `{"prompt_tokens":0,"completion_tokens":0}`, agent.Counted(0), agent.Counted(0)},
+		{"negative totals", `{"prompt_tokens":-1,"completion_tokens":-2}`, agent.Unreported(), agent.Unreported()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"id":"generation","model":"actual-model","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"answer"}}],"usage":`+test.usage+`}`)
+			}))
+			defer server.Close()
+			provider, err := openrouter.New(agent.ModelConfig{
+				Provider: "openrouter", Model: "custom-model", Credential: agent.Secret("test-key"), BaseURL: server.URL,
+			}, openrouter.Options{HTTPClient: server.Client()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			completion, err := provider.Complete(context.Background(), agent.Prompt{Model: "custom-model"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if completion.Model != "actual-model" || completion.Usage.Input != test.input || completion.Usage.Output != test.output ||
+				completion.Usage.CacheRead.IsReported || completion.Usage.CacheWrite.IsReported || completion.Usage.Reasoning.IsReported {
+				t.Fatalf("usage = %+v, model = %q", completion.Usage, completion.Model)
+			}
+		})
+	}
+}
+
 func TestRequestDeadlineStopsTheProvider(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
