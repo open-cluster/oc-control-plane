@@ -83,8 +83,8 @@ func thinkingOf(model string, effort reasoning.Effort, maxTokens int64) sdk.Thin
 	}
 	if !modelIs(model,
 		sdk.ModelClaudeHaiku4_5,
-		sdk.ModelClaudeSonnet5,
-		sdk.ModelClaudeOpus5) {
+		sdk.ModelClaudeSonnet4_5,
+		sdk.ModelClaudeOpus4_5) {
 		// Unknown identifiers retain provider defaults; they do not imply adaptive support.
 		return sdk.ThinkingConfigParamUnion{}
 	}

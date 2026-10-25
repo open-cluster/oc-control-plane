@@ -290,6 +290,7 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 	refresh := recordedRuns[0]
 	refresh.Ordinal, refresh.Purpose = 2, ""
 	refresh.Outcome, refresh.Summary = investigation.RunFailed, "source unavailable"
+	refresh.Error = "source unavailable"
 	if err = database.RecordToolRun(context.Background(), organization, adaTurn.InvestigationID,
 		claimToken(t, database, organization, adaTurn.InvestigationID), refresh); err != nil {
 		t.Fatal(err)
