@@ -51,7 +51,7 @@ func New(config agent.ModelConfig, options Options) (*Provider, error) {
 	settings := []sdk.SDKOption{
 		sdk.WithSecurity(config.Credential.Reveal()), sdk.WithClient(&client),
 		sdk.WithRetryConfig(retry.Config{
-			Strategy:              "backoff", // either "backoff", "none" or ""
+			Strategy:              "backoff", // either "backoff", "none" or "" (both ladder ones disable retry)
 			RetryConnectionErrors: true,
 			Backoff: &retry.BackoffStrategy{
 				InitialInterval: 500,
@@ -91,15 +91,17 @@ func (p *Provider) Complete(ctx context.Context, prompt agent.Prompt) (agent.Com
 
 	ctx, cancel := context.WithTimeout(ctx, p.config.RequestTimeout)
 	defer cancel()
-	info := &responseInfo{}
-	ctx = context.WithValue(ctx, responseKey{}, info)
+
+	// The context metadata will be passed to responseInfo by our local RoundTrip override.
+	responseInfo := &responseInfo{}
+	ctx = context.WithValue(ctx, responseKey{}, responseInfo)
 
 	response, err := p.client.Chat.Send(ctx, requestBody, nil)
 	completion := agent.Completion{
-		RequestID: info.identifier,
+		RequestID: responseInfo.identifier,
 	}
 	if err != nil {
-		return completion, failure(ctx, prompt.Model, info.status, err)
+		return completion, failure(ctx, prompt.Model, responseInfo.status, err)
 	}
 	if response == nil || response.ChatResult == nil {
 		if response != nil && response.EventStream != nil {
@@ -110,7 +112,7 @@ func (p *Provider) Complete(ctx context.Context, prompt agent.Prompt) (agent.Com
 	}
 	result := response.ChatResult
 	completion.RequestID = result.ID
-	completion.Usage = usageOf(result.Usage, info.body.Bytes())
+	completion.Usage = usageOf(result.Usage, responseInfo.body.Bytes())
 	if result.Model != "" {
 		completion.Model = result.Model
 	}
@@ -228,14 +230,18 @@ func usageOf(usage *components.ChatUsage, body []byte) agent.TokenUsage {
 }
 
 func failure(ctx context.Context, model string, status int, cause error) error {
-	if ctx.Err() != nil || errors.Is(cause, context.DeadlineExceeded) || errors.Is(cause, context.Canceled) {
+	if ctx.Err() != nil ||
+		errors.Is(cause, context.DeadlineExceeded) ||
+		errors.Is(cause, context.Canceled) {
 		return agent.FailedBecause(
 			agent.OutcomeTimeout, Name, model, "the model request was cancelled or timed out", ctx.Err())
 	}
 	var invalid *sdkerrors.BadRequestResponseError
 	if errors.As(cause, &invalid) {
 		text := strings.ToLower(invalid.Error_.Message)
-		if strings.Contains(text, "context") && (strings.Contains(text, "length") || strings.Contains(text, "limit") || strings.Contains(text, "window")) {
+		if strings.Contains(text, "context") && (strings.Contains(text, "length") ||
+			strings.Contains(text, "limit") ||
+			strings.Contains(text, "window")) {
 			return agent.ContextRejected(
 				Name, model, "the provider rejected the request context", nil)
 		}
@@ -273,11 +279,11 @@ func (t boundedTransport) RoundTrip(request *http.Request) (*http.Response, erro
 		// ------ INFO ------
 		// The context metadata will be received by responseInfo
 		// ------ INFO ------
-		if info, ok := request.Context().Value(responseKey{}).(*responseInfo); ok {
-			info.status = response.StatusCode
-			info.identifier = response.Header.Get("x-request-id")
-			info.body.Reset()
-			body = io.TeeReader(body, &info.body)
+		if responseInfo, ok := request.Context().Value(responseKey{}).(*responseInfo); ok {
+			responseInfo.status = response.StatusCode
+			responseInfo.identifier = response.Header.Get("x-request-id")
+			responseInfo.body.Reset()
+			body = io.TeeReader(body, &responseInfo.body)
 		}
 		response.Body = struct {
 			io.Reader

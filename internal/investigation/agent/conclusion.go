@@ -162,11 +162,15 @@ func decodeConclusion(document []byte, runs []investigation.ToolRun, allowed []i
 		if err := validateRunRefs(finding.RunRefs, len(runs), "finding"); err != nil {
 			return investigation.Conclusion{}, err
 		}
+
+		// Failed tool runs with failed evidence ----->
 		for _, ordinal := range finding.RunRefs {
 			if runs[ordinal-1].Outcome != investigation.RunSucceeded {
 				return investigation.Conclusion{}, fmt.Errorf("a finding cites run %d, which supplied no successful evidence; use failed reads only for limitations", ordinal)
 			}
 		}
+
+		// Evidence and duplicate check ----->
 		seenEvidence := make(map[investigation.EvidenceRef]bool, len(finding.EvidenceRefs))
 		for _, ref := range finding.EvidenceRefs {
 			if ref.InvestigationID == uuid.Nil || ref.ToolRunOrdinal <= 0 || !slices.Contains(allowed, ref) {
