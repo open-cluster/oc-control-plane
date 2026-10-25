@@ -68,12 +68,23 @@ func validateEffort(model string, effort reasoning.Effort) error {
 }
 
 func thinkingOf(model string, effort reasoning.Effort, maxTokens int64) sdk.ThinkingConfigParamUnion {
-	if modelIs(model, sdk.ModelClaudeOpus4_6, sdk.ModelClaudeSonnet4_6,
-		sdk.ModelClaudeOpus4_7, sdk.ModelClaudeOpus4_8, sdk.ModelClaudeOpus5,
-		sdk.ModelClaudeSonnet5, sdk.ModelClaudeFable5, sdk.ModelClaudeMythos5) {
-		return sdk.ThinkingConfigParamUnion{OfAdaptive: &sdk.ThinkingConfigAdaptiveParam{}}
+	if modelIs(model,
+		sdk.ModelClaudeOpus4_6,
+		sdk.ModelClaudeSonnet4_6,
+		sdk.ModelClaudeOpus4_7,
+		sdk.ModelClaudeOpus4_8,
+		sdk.ModelClaudeOpus5,
+		sdk.ModelClaudeSonnet5,
+		sdk.ModelClaudeFable5,
+		sdk.ModelClaudeMythos5) {
+		return sdk.ThinkingConfigParamUnion{
+			OfAdaptive: &sdk.ThinkingConfigAdaptiveParam{},
+		}
 	}
-	if !modelIs(model, sdk.ModelClaudeHaiku4_5, sdk.ModelClaudeSonnet4_5, sdk.ModelClaudeOpus4_5) {
+	if !modelIs(model,
+		sdk.ModelClaudeHaiku4_5,
+		sdk.ModelClaudeSonnet5,
+		sdk.ModelClaudeOpus5) {
 		// Unknown identifiers retain provider defaults; they do not imply adaptive support.
 		return sdk.ThinkingConfigParamUnion{}
 	}

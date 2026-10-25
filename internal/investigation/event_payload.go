@@ -72,8 +72,11 @@ func ToolCompletedPayload(run ToolRun) ToolCompletedEventPayload {
 		}
 	}
 	return ToolCompletedEventPayload{
-		Ordinal: run.Ordinal, Outcome: outcomeWord(run.Outcome), DurationMs: duration,
-		Summary: bounded(summary, eventTextBound), Truncated: run.Truncated,
+		Ordinal:    run.Ordinal,
+		Outcome:    outcomeWord(run.Outcome),
+		DurationMs: duration,
+		Summary:    bounded(summary, eventTextBound),
+		Truncated:  run.Truncated,
 	}
 }
 
