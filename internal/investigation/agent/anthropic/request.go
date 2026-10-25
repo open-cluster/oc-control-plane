@@ -44,8 +44,8 @@ func (p *Provider) params(prompt reasoning.Prompt) sdk.MessageNewParams {
 	return params
 }
 
-func modelIs(model string, families ...string) bool {
-	for _, family := range families {
+func modelIs(model string, models ...string) bool {
+	for _, family := range models {
 		if model == family {
 			return true
 		}
