@@ -16,11 +16,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/seal"
 )
 
-type selection struct {
-	integration integrations.Integration
-	tools       []integrations.Tool
-}
-
 func decodeToolCalls(calls []CompletionCall) []toolCall {
 	translated := make([]toolCall, 0, len(calls))
 	for _, call := range calls {
@@ -104,7 +99,7 @@ func droppedRun(opened investigation.Investigation, call toolCall, ordinal int, 
 }
 
 func (r *Agent) execute(
-	ctx context.Context, opened investigation.Investigation, selected []selection,
+	ctx context.Context, opened investigation.Investigation, selected []offeredSource,
 	credentials *credentialCache, origin *investigation.ConversationOrigin,
 	call toolCall, ordinal int,
 ) (investigation.ToolRun, error) {
@@ -124,9 +119,9 @@ func (r *Agent) execute(
 		run.FinishedAt = time.Now().UTC()
 		return run, nil
 	}
-	run.IntegrationID = source.integration.ID
+	run.IntegrationID = source.Integration.ID
 
-	credential, err := credentials.open(ctx, source.integration)
+	credential, err := credentials.open(ctx, source.Integration)
 	if err != nil {
 		run.Outcome = investigation.RunFailed
 		run.Error = "the integration's credential could not be opened"
@@ -141,13 +136,13 @@ func (r *Agent) execute(
 	defer done()
 	request := integrations.ToolRequest{
 		InvestigationID: opened.ID,
-		Integration:     source.integration,
+		Integration:     source.Integration,
 		Credential:      credential,
 		Arguments:       call.Arguments,
 		WindowFrom:      opened.WindowFrom,
 		WindowUntil:     opened.WindowUntil,
 	}
-	if origin != nil && source.integration.ID == origin.IntegrationID {
+	if origin != nil && source.Integration.ID == origin.IntegrationID {
 		request.OriginChannel = origin.Channel
 		request.OriginThread = origin.Thread
 	}
@@ -228,19 +223,19 @@ func firstLine(text string) string {
 	return text
 }
 
-func toolNamed(selected []selection, name string) (selection, integrations.Tool, bool) {
+func toolNamed(selected []offeredSource, name string) (offeredSource, integrations.Tool, bool) {
 	for _, source := range selected {
-		for _, tool := range source.tools {
+		for _, tool := range source.Tools {
 			if tool.Name == name {
 				return source, tool, true
 			}
 		}
 	}
-	var match selection
+	var match offeredSource
 	var matched integrations.Tool
 	found := 0
 	for _, source := range selected {
-		for _, tool := range source.tools {
+		for _, tool := range source.Tools {
 			if base, _, bound := strings.Cut(tool.Name, "__"); bound && base == name {
 				match, matched = source, tool
 				found++
@@ -250,7 +245,7 @@ func toolNamed(selected []selection, name string) (selection, integrations.Tool,
 	if found == 1 {
 		return match, matched, true
 	}
-	return selection{}, integrations.Tool{}, false
+	return offeredSource{}, integrations.Tool{}, false
 }
 
 type credentialCache struct {

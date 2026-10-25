@@ -78,7 +78,7 @@ func splitCalls(calls []CompletionCall) (reads, conclusions []CompletionCall, er
 	return reads, conclusions, nil
 }
 
-func decodeConclusion(document []byte, runs int, allowed []investigation.EvidenceRef,
+func decodeConclusion(document []byte, runs []investigation.ToolRun, allowed []investigation.EvidenceRef,
 ) (investigation.Conclusion, error) {
 	var jsonObject struct {
 		Status  string `json:"status"`
@@ -132,7 +132,7 @@ func decodeConclusion(document []byte, runs int, allowed []investigation.Evidenc
 	if !oneOf(jsonObject.Status, investigation.ConclusionStatuses) {
 		return investigation.Conclusion{}, fmt.Errorf("invalid conclusion status %q", jsonObject.Status)
 	}
-	if err := validateRunRefs(jsonObject.Impact.RunRefs, runs, "impact"); err != nil {
+	if err := validateRunRefs(jsonObject.Impact.RunRefs, len(runs), "impact"); err != nil {
 		return investigation.Conclusion{}, err
 	}
 	if strings.TrimSpace(jsonObject.Impact.Summary) == "" {
@@ -159,9 +159,18 @@ func decodeConclusion(document []byte, runs int, allowed []investigation.Evidenc
 		if len(finding.RunRefs) == 0 && len(finding.EvidenceRefs) == 0 {
 			return investigation.Conclusion{}, fmt.Errorf("a finding cites no run at all")
 		}
-		if err := validateRunRefs(finding.RunRefs, runs, "finding"); err != nil {
+		if err := validateRunRefs(finding.RunRefs, len(runs), "finding"); err != nil {
 			return investigation.Conclusion{}, err
 		}
+
+		// Failed tool runs with failed evidence ----->
+		for _, ordinal := range finding.RunRefs {
+			if runs[ordinal-1].Outcome != investigation.RunSucceeded {
+				return investigation.Conclusion{}, fmt.Errorf("a finding cites run %d, which supplied no successful evidence; use failed reads only for limitations", ordinal)
+			}
+		}
+
+		// Evidence and duplicate check ----->
 		seenEvidence := make(map[investigation.EvidenceRef]bool, len(finding.EvidenceRefs))
 		for _, ref := range finding.EvidenceRefs {
 			if ref.InvestigationID == uuid.Nil || ref.ToolRunOrdinal <= 0 || !slices.Contains(allowed, ref) {
@@ -190,7 +199,7 @@ func decodeConclusion(document []byte, runs int, allowed []investigation.Evidenc
 			!oneOf(hypothesis.Status, investigation.HypothesisStatuses) {
 			return investigation.Conclusion{}, fmt.Errorf("a hypothesis is incomplete or has an invalid status")
 		}
-		if err := validateRunRefs(hypothesis.RunRefs, runs, "hypothesis"); err != nil {
+		if err := validateRunRefs(hypothesis.RunRefs, len(runs), "hypothesis"); err != nil {
 			return investigation.Conclusion{}, err
 		}
 		conclusion.Hypotheses = append(conclusion.Hypotheses, investigation.HypothesisResult{
@@ -214,7 +223,7 @@ func decodeConclusion(document []byte, runs int, allowed []investigation.Evidenc
 			return investigation.Conclusion{}, fmt.Errorf(
 				"an action is incomplete, invalid, or past %d bytes", investigation.MaxActionTextLength)
 		}
-		if err := validateRunRefs(action.RunRefs, runs, "action"); err != nil {
+		if err := validateRunRefs(action.RunRefs, len(runs), "action"); err != nil {
 			return investigation.Conclusion{}, err
 		}
 		if len(action.RunRefs) == 0 {
@@ -233,7 +242,7 @@ func decodeConclusion(document []byte, runs int, allowed []investigation.Evidenc
 		if limitation.Statement == "" || !oneOf(limitation.Type, investigation.LimitationTypes) {
 			return investigation.Conclusion{}, fmt.Errorf("a limitation is incomplete or has an invalid type")
 		}
-		if err := validateRunRefs(limitation.RunRefs, runs, "limitation"); err != nil {
+		if err := validateRunRefs(limitation.RunRefs, len(runs), "limitation"); err != nil {
 			return investigation.Conclusion{}, err
 		}
 		conclusion.Limitations = append(conclusion.Limitations, investigation.Limitation{

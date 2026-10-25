@@ -18,8 +18,6 @@ import (
 
 const Name = "anthropic"
 
-const maxAttempts = 3
-
 type Provider struct {
 	client sdk.Client
 	config reasoning.ModelConfig
@@ -144,11 +142,12 @@ func New(config reasoning.ModelConfig, options Options) (*Provider, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
+	if err := validateEffort(config.Model, config.Effort); err != nil {
+		return nil, err
+	}
 
 	requestOptions := []option.RequestOption{
 		option.WithAPIKey(config.Credential.Reveal()),
-		option.WithMaxRetries(maxAttempts - 1),
-		option.WithRequestTimeout(config.RequestTimeout),
 	}
 
 	if config.BaseURL != "" {
@@ -167,6 +166,9 @@ func New(config reasoning.ModelConfig, options Options) (*Provider, error) {
 }
 
 func (p *Provider) EstimateRequestTokens(prompt reasoning.Prompt) (int, error) {
+	if err := validateEffort(prompt.Model, prompt.Effort); err != nil {
+		return 0, err
+	}
 	encoded, err := json.Marshal(p.params(prompt))
 	if err != nil {
 		return 0, err
@@ -177,6 +179,9 @@ func (p *Provider) EstimateRequestTokens(prompt reasoning.Prompt) (int, error) {
 func (p *Provider) Complete(
 	ctx context.Context, prompt reasoning.Prompt,
 ) (reasoning.Completion, error) {
+	if err := validateEffort(prompt.Model, prompt.Effort); err != nil {
+		return reasoning.Completion{}, reasoning.Failed(reasoning.OutcomeRejected, Name, prompt.Model, err.Error())
+	}
 	ctx, cancel := context.WithTimeout(ctx, p.config.RequestTimeout)
 	defer cancel()
 	captured := &requestID{}

@@ -1,6 +1,7 @@
 package openrouter
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -50,7 +51,7 @@ func New(config agent.ModelConfig, options Options) (*Provider, error) {
 	settings := []sdk.SDKOption{
 		sdk.WithSecurity(config.Credential.Reveal()), sdk.WithClient(&client),
 		sdk.WithRetryConfig(retry.Config{
-			Strategy:              "backoff", // either "backoff", "none" or ""
+			Strategy:              "backoff", // either "backoff", "none" or "" (both ladder ones disable retry)
 			RetryConnectionErrors: true,
 			Backoff: &retry.BackoffStrategy{
 				InitialInterval: 500,
@@ -90,15 +91,17 @@ func (p *Provider) Complete(ctx context.Context, prompt agent.Prompt) (agent.Com
 
 	ctx, cancel := context.WithTimeout(ctx, p.config.RequestTimeout)
 	defer cancel()
-	info := &responseInfo{}
-	ctx = context.WithValue(ctx, responseKey{}, info)
+
+	// The context metadata will be passed to responseInfo by our local RoundTrip override.
+	responseInfo := &responseInfo{}
+	ctx = context.WithValue(ctx, responseKey{}, responseInfo)
 
 	response, err := p.client.Chat.Send(ctx, requestBody, nil)
 	completion := agent.Completion{
-		RequestID: info.identifier,
+		RequestID: responseInfo.identifier,
 	}
 	if err != nil {
-		return completion, failure(ctx, prompt.Model, info.status, err)
+		return completion, failure(ctx, prompt.Model, responseInfo.status, err)
 	}
 	if response == nil || response.ChatResult == nil {
 		if response != nil && response.EventStream != nil {
@@ -109,7 +112,7 @@ func (p *Provider) Complete(ctx context.Context, prompt agent.Prompt) (agent.Com
 	}
 	result := response.ChatResult
 	completion.RequestID = result.ID
-	completion.Usage = usageOf(result.Usage)
+	completion.Usage = usageOf(result.Usage, responseInfo.body.Bytes())
 	if result.Model != "" {
 		completion.Model = result.Model
 	}
@@ -173,42 +176,72 @@ func (p *Provider) Complete(ctx context.Context, prompt agent.Prompt) (agent.Com
 	return completion, nil
 }
 
-func usageOf(usage *components.ChatUsage) agent.TokenUsage {
+func usageOf(usage *components.ChatUsage, body []byte) agent.TokenUsage {
 	if usage == nil {
 		return agent.TokenUsage{}
 	}
 
-	result := agent.TokenUsage{
-		Input:  agent.Counted(usage.PromptTokens),
-		Output: agent.Counted(usage.CompletionTokens),
+	// The SDK's required integer fields otherwise turn absent totals into reported zero.
+	var reported struct {
+		Usage struct {
+			Input  *int64 `json:"prompt_tokens"`
+			Output *int64 `json:"completion_tokens"`
+		} `json:"usage"`
+	}
+	if json.Unmarshal(body, &reported) != nil {
+		return agent.TokenUsage{}
+	}
+	var result agent.TokenUsage
+	if reported.Usage.Input != nil && *reported.Usage.Input >= 0 {
+		result.Input = agent.Counted(*reported.Usage.Input)
+	}
+	if reported.Usage.Output != nil && *reported.Usage.Output >= 0 {
+		result.Output = agent.Counted(*reported.Usage.Output)
 	}
 	details, _ := usage.PromptTokensDetails.GetOrZero()
-	if details.CachedTokens != nil {
-		cached := min(max(*details.CachedTokens, 0), usage.PromptTokens)
-		result.CacheRead = agent.Counted(cached)
-		result.Input = agent.Counted(usage.PromptTokens - cached)
+	input := result.Input.Tokens
+	validCache := result.Input.IsReported
+	if cached := details.CachedTokens; cached != nil {
+		validCache = validCache && *cached >= 0 && *cached <= input
+		if validCache {
+			result.CacheRead = agent.Counted(*cached)
+			input -= *cached
+		}
 	}
-	if details.CacheWriteTokens != nil {
-		written := min(max(*details.CacheWriteTokens, 0), result.Input.Tokens)
-		result.CacheWrite = agent.Counted(written)
-		result.Input = agent.Counted(result.Input.Tokens - written)
+	if written := details.CacheWriteTokens; written != nil {
+		validCache = validCache && *written >= 0 && *written <= input
+		if validCache {
+			result.CacheWrite = agent.Counted(*written)
+			input -= *written
+		}
+	}
+	if validCache {
+		result.Input = agent.Counted(input)
+	} else {
+		result.CacheRead, result.CacheWrite = agent.Unreported(), agent.Unreported()
 	}
 	if details, _ := usage.CompletionTokensDetails.GetOrZero(); details.ReasoningTokens.IsSet() && !details.ReasoningTokens.IsNull() {
 		reasonTokens, _ := details.ReasoningTokens.GetOrZero()
-		result.Reasoning = agent.Counted(reasonTokens)
+		if result.Output.IsReported && reasonTokens >= 0 && reasonTokens <= result.Output.Tokens {
+			result.Reasoning = agent.Counted(reasonTokens)
+		}
 	}
 	return result
 }
 
 func failure(ctx context.Context, model string, status int, cause error) error {
-	if ctx.Err() != nil || errors.Is(cause, context.DeadlineExceeded) || errors.Is(cause, context.Canceled) {
+	if ctx.Err() != nil ||
+		errors.Is(cause, context.DeadlineExceeded) ||
+		errors.Is(cause, context.Canceled) {
 		return agent.FailedBecause(
 			agent.OutcomeTimeout, Name, model, "the model request was cancelled or timed out", ctx.Err())
 	}
 	var invalid *sdkerrors.BadRequestResponseError
 	if errors.As(cause, &invalid) {
 		text := strings.ToLower(invalid.Error_.Message)
-		if strings.Contains(text, "context") && (strings.Contains(text, "length") || strings.Contains(text, "limit") || strings.Contains(text, "window")) {
+		if strings.Contains(text, "context") && (strings.Contains(text, "length") ||
+			strings.Contains(text, "limit") ||
+			strings.Contains(text, "window")) {
 			return agent.ContextRejected(
 				Name, model, "the provider rejected the request context", nil)
 		}
@@ -231,6 +264,7 @@ type responseKey struct{}
 type responseInfo struct {
 	status     int
 	identifier string
+	body       bytes.Buffer
 }
 
 type boundedTransport struct {
@@ -240,18 +274,21 @@ type boundedTransport struct {
 func (t boundedTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	response, err := t.base.RoundTrip(request)
 	if response != nil {
+		body := io.LimitReader(response.Body, 8<<20)
 
 		// ------ INFO ------
 		// The context metadata will be received by responseInfo
 		// ------ INFO ------
-		if info, ok := request.Context().Value(responseKey{}).(*responseInfo); ok {
-			info.status = response.StatusCode
-			info.identifier = response.Header.Get("x-request-id")
+		if responseInfo, ok := request.Context().Value(responseKey{}).(*responseInfo); ok {
+			responseInfo.status = response.StatusCode
+			responseInfo.identifier = response.Header.Get("x-request-id")
+			responseInfo.body.Reset()
+			body = io.TeeReader(body, &responseInfo.body)
 		}
 		response.Body = struct {
 			io.Reader
 			io.Closer
-		}{io.LimitReader(response.Body, 8<<20), response.Body}
+		}{body, response.Body}
 	}
 	return response, err
 }

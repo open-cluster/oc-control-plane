@@ -3,6 +3,8 @@ package anthropic
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"strings"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
@@ -19,10 +21,7 @@ func (p *Provider) params(prompt reasoning.Prompt) sdk.MessageNewParams {
 		Messages:  messages(prompt),
 		Thinking:  thinkingOf(prompt.Model, prompt.Effort, prompt.MaxOutputTokens),
 	}
-	if prompt.ForceTool != "" && isHaiku45(prompt.Model) {
-		params.Thinking = sdk.ThinkingConfigParamUnion{OfDisabled: &sdk.ThinkingConfigDisabledParam{}}
-	}
-	if !isHaiku45(prompt.Model) {
+	if params.Thinking.OfAdaptive != nil || modelIs(prompt.Model, sdk.ModelClaudeOpus4_5) {
 		params.OutputConfig.Effort = effortOf(prompt.Effort)
 	}
 	if len(prompt.Tools) == 0 {
@@ -30,7 +29,10 @@ func (p *Provider) params(prompt reasoning.Prompt) sdk.MessageNewParams {
 		return params
 	}
 	params.Tools = toolParams(prompt.Tools)
-	if prompt.ForceTool != "" {
+	// Manual thinking and these documented model exceptions require automatic Tool choice.
+	canForce := params.Thinking.OfEnabled == nil && !modelIs(prompt.Model,
+		"claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-mythos-5-1")
+	if prompt.ForceTool != "" && canForce {
 		params.ToolChoice = sdk.ToolChoiceUnionParam{
 			OfTool: &sdk.ToolChoiceToolParam{Name: anthropicToolName(prompt.ForceTool)},
 		}
@@ -42,15 +44,51 @@ func (p *Provider) params(prompt reasoning.Prompt) sdk.MessageNewParams {
 	return params
 }
 
-func isHaiku45(model string) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "claude-haiku-4-5")
+func modelIs(model string, models ...string) bool {
+	for _, family := range models {
+		if model == family {
+			return true
+		}
+		if snapshot, ok := strings.CutPrefix(model, family+"-"); ok && len(snapshot) == 8 {
+			if _, err := strconv.Atoi(snapshot); err == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func validateEffort(model string, effort reasoning.Effort) error {
+	if effort == reasoning.EffortMax && modelIs(model, sdk.ModelClaudeOpus4_5) ||
+		effort == reasoning.EffortExtraHigh && modelIs(model,
+			sdk.ModelClaudeOpus4_5, sdk.ModelClaudeOpus4_6, sdk.ModelClaudeSonnet4_6) {
+		return fmt.Errorf("the selected Anthropic model does not support effort %q", effort)
+	}
+	return nil
 }
 
 func thinkingOf(model string, effort reasoning.Effort, maxTokens int64) sdk.ThinkingConfigParamUnion {
-	if !isHaiku45(model) {
-		return sdk.ThinkingConfigParamUnion{OfAdaptive: &sdk.ThinkingConfigAdaptiveParam{}}
+	if modelIs(model,
+		sdk.ModelClaudeOpus4_6,
+		sdk.ModelClaudeSonnet4_6,
+		sdk.ModelClaudeOpus4_7,
+		sdk.ModelClaudeOpus4_8,
+		sdk.ModelClaudeOpus5,
+		sdk.ModelClaudeSonnet5,
+		sdk.ModelClaudeFable5,
+		sdk.ModelClaudeMythos5) {
+		return sdk.ThinkingConfigParamUnion{
+			OfAdaptive: &sdk.ThinkingConfigAdaptiveParam{},
+		}
 	}
-	if !usesManualThinking(model, effort, maxTokens) {
+	if !modelIs(model,
+		sdk.ModelClaudeHaiku4_5,
+		sdk.ModelClaudeSonnet4_5,
+		sdk.ModelClaudeOpus4_5) {
+		// Unknown identifiers retain provider defaults; they do not imply adaptive support.
+		return sdk.ThinkingConfigParamUnion{}
+	}
+	if effort == reasoning.EffortLow || maxTokens <= 1024 {
 		return sdk.ThinkingConfigParamUnion{OfDisabled: &sdk.ThinkingConfigDisabledParam{}}
 	}
 	budget := manualThinkingBudget(effort)
@@ -61,10 +99,6 @@ func thinkingOf(model string, effort reasoning.Effort, maxTokens int64) sdk.Thin
 		return sdk.ThinkingConfigParamUnion{OfDisabled: &sdk.ThinkingConfigDisabledParam{}}
 	}
 	return sdk.ThinkingConfigParamOfEnabled(budget)
-}
-
-func usesManualThinking(model string, effort reasoning.Effort, maxTokens int64) bool {
-	return isHaiku45(model) && effort != reasoning.EffortLow && maxTokens > 1024
 }
 
 func manualThinkingBudget(effort reasoning.Effort) int64 {

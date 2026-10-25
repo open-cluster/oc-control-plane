@@ -218,7 +218,10 @@ func TestRunLoadsRecentReplyDetailsAndStopsRepeatedHistoryReads(t *testing.T) {
 			Text:            "latency rose after deployment",
 			InvestigationID: prior,
 			Answer: &investigation.Conclusion{
-				Findings: []investigation.Finding{{Statement: "latency increased", RunRefs: []int{1}}},
+				Findings: []investigation.Finding{
+					{Statement: "latency increased", RunRefs: []int{1}},
+					{Statement: "a prior source is no longer available", RunRefs: []int{2}},
+				},
 				Actions: []investigation.ActionProposal{{
 					Title:        "roll back",
 					Rationale:    "deployment preceded increased latency",
@@ -228,7 +231,7 @@ func TestRunLoadsRecentReplyDetailsAndStopsRepeatedHistoryReads(t *testing.T) {
 			},
 		}}},
 	}
-	store.missingEvidence = investigation.EvidenceRef{InvestigationID: prior, ToolRunOrdinal: 1}
+	store.missingEvidence = investigation.EvidenceRef{InvestigationID: prior, ToolRunOrdinal: 2}
 	model := &scriptedModel{next: func(step int, prompt Prompt) (Completion, error) {
 		if step == 1 {
 			if !strings.Contains(prompt.Content[0].Text, "latency rose after deployment") ||
@@ -486,13 +489,16 @@ func TestRunDefersConclusionUntilMixedReadResultsAreRecorded(t *testing.T) {
 	if store.status != investigation.StatusConcluded || len(store.runs) != 1 {
 		t.Fatalf("status=%s runs=%d", store.status, len(store.runs))
 	}
+	if store.events[0].Type != investigation.EventStarted || store.events[0].Payload["text"] != "Reviewing this request and available evidence sources." {
+		t.Fatalf("startup activity does not explain the initial phase: %+v", store.events[0])
+	}
 }
 
 func TestModelChoosesReadsBeforeWorkloadLabelsCauseExternalAccess(t *testing.T) {
 	integrationID, incidentID := uuid.New(), uuid.New()
 	store := &records{
 		candidate: integrations.Integration{ID: integrationID, Provider: "kubernetes", Name: "cluster"},
-		trigger: investigation.Trigger{IncidentID: incidentID, Labels: map[string]string{
+		trigger: investigation.Trigger{IncidentID: incidentID, GeneratorURL: "https://alerts.example.test/alert/1", Labels: map[string]string{
 			"namespace": "payments", "workload_kind": "Deployment", "workload_name": "checkout-api",
 		}},
 	}
@@ -519,6 +525,9 @@ func TestModelChoosesReadsBeforeWorkloadLabelsCauseExternalAccess(t *testing.T) 
 	}
 	model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
 		if call == 1 {
+			if !strings.Contains(prompt.Content[0].Text, "alert source URL: https://alerts.example.test/alert/1") {
+				t.Fatal("the alert URL is not accurately labeled")
+			}
 			for _, expected := range []string{"kubernetes.workload.runtime", "kubernetes.namespace.events", "kubernetes.pod.logs"} {
 				found := false
 				for _, offered := range prompt.Tools {
@@ -828,23 +837,79 @@ func TestRunDurablyRecordsRefusalAndTruncation(t *testing.T) {
 }
 
 func TestRunRejectsInvalidCitationsAtTheAgentBoundary(t *testing.T) {
-	store := &records{}
-	model := &scriptedModel{next: func(int, Prompt) (Completion, error) {
-		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
-			ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, []int{1}),
-		}}}, nil
-	}}
-	agent := configuredTestAgent(t, store, model, testCatalog(t,
-		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
-			return integrations.ToolResult{}, nil
-		}))
-	organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
-	if err := agent.Run(context.Background(), organization,
-		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
-		t.Fatal(err)
-	}
-	if store.status != investigation.StatusFailed || model.calls != 2 {
-		t.Fatalf("status=%s calls=%d", store.status, model.calls)
+	for _, test := range []struct {
+		name    string
+		ordinal int
+		failed  bool
+	}{
+		{"missing", 3, false}, {"failed", 1, true}, {"suppressed", 2, false}, {"successful", 1, false}, {"unavailable prior", 1, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
+			prior := investigation.EvidenceRef{InvestigationID: uuid.New(), ToolRunOrdinal: 1}
+			if test.name == "unavailable prior" {
+				store.missingEvidence = prior
+				store.messages = []investigation.AssignedMessage{{Sequence: 1, Text: "question"}}
+				store.brief.Findings = []investigation.PriorFinding{{InvestigationID: prior.InvestigationID, Runs: []int{1}, Statement: "A prior observation", Kind: "observation"}}
+			}
+			model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
+				if call == 1 {
+					return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{
+						{ID: "read", Name: "stub.read", Arguments: json.RawMessage(`{"input":{}}`)},
+						{ID: "duplicate", Name: "stub.read", Arguments: json.RawMessage(`{"input":{}}`)},
+					}}, nil
+				}
+				document := validConclusion(t, []int{test.ordinal})
+				if test.name == "unavailable prior" {
+					var claimed map[string]any
+					if err := json.Unmarshal(document, &claimed); err != nil {
+						t.Fatal(err)
+					}
+					finding := claimed["findings"].([]any)[0].(map[string]any)
+					finding["run_refs"], finding["evidence_refs"] = []int{}, []investigation.EvidenceRef{prior}
+					document, _ = json.Marshal(claimed)
+				}
+				if call == 3 {
+					var corrected map[string]any
+					if err := json.Unmarshal(validConclusion(t, nil), &corrected); err != nil {
+						t.Fatal(err)
+					}
+					corrected["limitations"] = []map[string]any{{"type": "missing_telemetry", "statement": "The requested evidence is unavailable.", "run_refs": []int{test.ordinal}}}
+					if test.name == "missing" {
+						corrected["limitations"] = []any{}
+					}
+					document, _ = json.Marshal(corrected)
+				}
+				return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
+					ID: "done", Name: ConcludeToolName, Arguments: document,
+				}}}, nil
+			}}
+			agent := configuredTestAgent(t, store, model, testCatalog(t,
+				func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
+					if test.failed {
+						return integrations.ToolResult{}, errors.New("source unavailable")
+					}
+					return integrations.ToolResult{Summary: "A recorded observation"}, nil
+				}))
+			organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
+			opened := investigation.Investigation{ID: uuid.New(), Subject: "question"}
+			if test.name == "unavailable prior" {
+				opened.ConversationID = uuid.New()
+			}
+			if err := agent.Run(context.Background(), organization, opened); err != nil {
+				t.Fatal(err)
+			}
+			wantCalls := 3
+			if test.name == "successful" {
+				wantCalls = 2
+			}
+			if store.status != investigation.StatusConcluded || model.calls != wantCalls {
+				t.Fatalf("status=%s calls=%d", store.status, model.calls)
+			}
+			if test.name != "successful" && len(store.conclusion.Findings) != 0 {
+				t.Fatal("an invalid citation established a Finding")
+			}
+		})
 	}
 }
 

@@ -51,7 +51,7 @@ func TestStructuredConclusionContractRequiresMechanismForAVerifiedCause(t *testi
 		t.Fatal(err)
 	}
 
-	if _, err := decodeConclusion(document, 1, nil); err == nil {
+	if _, err := decodeConclusion(document, []investigation.ToolRun{{Outcome: investigation.RunSucceeded}}, nil); err == nil {
 		t.Fatal("a verified cause without a causal mechanism was accepted")
 	}
 
@@ -92,7 +92,12 @@ func TestStructuredConclusionEvaluationFixtures(t *testing.T) {
 			if marshalErr != nil {
 				t.Fatal(marshalErr)
 			}
-			_, decodeErr := decodeConclusion(encoded, fixture.Runs, nil)
+			runs := make([]investigation.ToolRun, fixture.Runs)
+			for i := range runs {
+				runs[i].Ordinal = i + 1
+				runs[i].Outcome = investigation.RunSucceeded
+			}
+			_, decodeErr := decodeConclusion(encoded, runs, nil)
 			if fixture.Valid && decodeErr != nil {
 				t.Fatalf("valid fixture was rejected: %v", decodeErr)
 			}
@@ -121,7 +126,7 @@ func TestStructuredConclusionRejectsRemovedFindingKinds(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err = decodeConclusion(encoded, 1, nil); err == nil ||
+			if _, err = decodeConclusion(encoded, []investigation.ToolRun{{Outcome: investigation.RunSucceeded}}, nil); err == nil ||
 				!strings.Contains(err.Error(), "declared vocabulary") {
 				t.Fatalf("removed finding kind %q was accepted: %v", kind, err)
 			}
@@ -146,7 +151,7 @@ func TestStructuredConclusionRequiresCitationsForActions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := decodeConclusion(encoded, 1, nil); err == nil {
+	if _, err := decodeConclusion(encoded, []investigation.ToolRun{{Outcome: investigation.RunSucceeded}}, nil); err == nil {
 		t.Fatal("an action without a Run reference was accepted")
 	}
 	action := document["actions"].([]map[string]any)[0]
@@ -157,7 +162,7 @@ func TestStructuredConclusionRequiresCitationsForActions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		conclusion, decodeErr := decodeConclusion(encoded, 1, nil)
+		conclusion, decodeErr := decodeConclusion(encoded, []investigation.ToolRun{{Outcome: investigation.RunSucceeded}}, nil)
 		if len(title) > 512 {
 			if decodeErr == nil {
 				t.Fatal("an action beyond the byte limit was accepted")
@@ -185,7 +190,7 @@ func TestStructuredConclusionRejectsRemovedHypothesisIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = decodeConclusion(encoded, 0, nil); err == nil || !strings.Contains(err.Error(), "unknown field") {
+	if _, err = decodeConclusion(encoded, nil, nil); err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("removed hypothesis identity was accepted: %v", err)
 	}
 }

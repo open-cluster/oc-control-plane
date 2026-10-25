@@ -94,7 +94,6 @@ type runState struct {
 
 	orientation           orientation
 	transcript            []Turn
-	highestOrdinal        int
 	historyBeforeSequence int64
 	missingEvidence       bool
 }
@@ -204,7 +203,7 @@ func (r *Agent) Run(
 
 	// Event streaming ----->
 	r.announce(ctx, events,
-		investigation.StartedPayload(opened, true))
+		investigation.StartedPayload("Reviewing this request and available evidence sources."))
 
 	oriented := r.orientation(ctx, organization, opened, offered, brief)
 	if opened.ConversationID != uuid.Nil {
@@ -330,9 +329,6 @@ func (r *Agent) Run(
 			rendered := make([]ToolResultTurn, 0, len(results))
 			for _, result := range results {
 				rendered = append(rendered, renderResult(result))
-				if !result.Semantic && result.ToolRun.Ordinal > state.highestOrdinal {
-					state.highestOrdinal = result.ToolRun.Ordinal
-				}
 			}
 			if len(state.transcript) == 0 {
 				state.transcript = append(state.transcript, Turn{ToolResults: rendered})
@@ -418,8 +414,23 @@ func (r *Agent) Run(
 					}
 				}
 				conclusion, decodeErr := decodeConclusion(
-					conclusions[0].Arguments, state.highestOrdinal, allowed)
+					conclusions[0].Arguments, state.runs, allowed)
 				invalid = decodeErr
+				if invalid == nil {
+					var refs []investigation.EvidenceRef
+					for _, finding := range conclusion.Findings {
+						refs = append(refs, finding.EvidenceRefs...)
+					}
+					if len(refs) > 0 {
+						missing, checkErr := r.Store.EvidenceMissing(moveCtx, organization, refs)
+						if checkErr != nil {
+							err = Failed(OutcomeRejected, r.modelConfig.Provider, completion.Model,
+								"the prior evidence could not be verified")
+						} else if missing {
+							invalid = fmt.Errorf("a finding cites unavailable prior evidence")
+						}
+					}
+				}
 				if invalid == nil {
 					if state.missingEvidence {
 						conclusion.MarkMissingEvidence()
@@ -505,8 +516,8 @@ func (r *Agent) Run(
 			switch {
 			case call.Error != "":
 				run = droppedRun(opened, call, len(state.runs)+1, call.Error)
-				if source, _, offered := toolNamed(selections(offered), call.Tool); offered {
-					run.IntegrationID = source.integration.ID
+				if source, _, offered := toolNamed(offered, call.Tool); offered {
+					run.IntegrationID = source.Integration.ID
 				}
 			case executedCalls[identity] != 0: // already once executed ----->
 				run = suppressedRun(opened, call, len(state.runs)+1,
@@ -514,8 +525,8 @@ func (r *Agent) Run(
 				run.IntegrationID = state.runs[executedCalls[identity]-1].IntegrationID
 				r.announce(ctx, events,
 					investigation.ProgressPayload(
-						"Skipped a repeat of "+offeredName(offered, call.Tool)+
-							"; the earlier read already answers it"))
+						"Skipped a duplicate request for "+offeredName(offered, call.Tool)+
+							"; see the earlier result"))
 			case state.executed >= state.maxRuns:
 				run = droppedRun(opened, call, len(state.runs)+1, fmt.Sprintf(
 					"not executed: the investigation's read budget of %d was exhausted",
@@ -528,7 +539,7 @@ func (r *Agent) Run(
 				ordinal := len(state.runs) + 1
 				r.announceToolStarted(ctx, state, call, ordinal)
 				var executeErr error
-				run, executeErr = r.execute(ctx, opened, selections(offered),
+				run, executeErr = r.execute(ctx, opened, offered,
 					state.credentials, origin, call, ordinal)
 				if executeErr != nil {
 					terminalErr := failRun(failureReason(executeErr), state.usage)
@@ -599,7 +610,7 @@ func modelPrompt(r *Agent, state *runState, forced bool, reason string) Prompt {
 }
 
 func offeredName(offeredSources []offeredSource, tool string) string {
-	if _, _, offered := toolNamed(selections(offeredSources), tool); offered {
+	if _, _, offered := toolNamed(offeredSources, tool); offered {
 		return tool
 	}
 	return "a tool that is not offered"
@@ -608,7 +619,7 @@ func offeredName(offeredSources []offeredSource, tool string) string {
 func (r *Agent) announceToolStarted(
 	ctx context.Context, state *runState, call toolCall, ordinal int,
 ) {
-	source, _, offered := toolNamed(selections(state.offered), call.Tool)
+	source, _, offered := toolNamed(state.offered, call.Tool)
 	if !offered {
 		return
 	}
@@ -616,8 +627,8 @@ func (r *Agent) announceToolStarted(
 		Ordinal: ordinal,
 		Tool:    call.Tool,
 		Purpose: call.Purpose},
-		source.integration.ID.String(),
-		source.integration.Name)
+		source.Integration.ID.String(),
+		source.Integration.Name)
 	r.announce(ctx, state.events, payload)
 }
 
@@ -625,9 +636,6 @@ func (r *Agent) recordToolRun(
 	ctx context.Context, state *runState, run investigation.ToolRun,
 ) error {
 	state.runs = append(state.runs, run)
-	if run.Ordinal > state.highestOrdinal {
-		state.highestOrdinal = run.Ordinal
-	}
 	if err := r.Store.RecordToolRun(
 		ctx, state.organization, state.opened.ID, state.opened.ClaimToken, run); err != nil {
 		return errProvenance
@@ -806,15 +814,4 @@ func (r *Agent) orientation(
 		oriented.Inventory = inventory
 	}
 	return oriented
-}
-
-func selections(offered []offeredSource) []selection {
-	selections := make([]selection, 0, len(offered))
-	for _, source := range offered {
-		selections = append(selections, selection{
-			integration: source.Integration,
-			tools:       source.Tools,
-		})
-	}
-	return selections
 }

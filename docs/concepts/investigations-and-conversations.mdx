@@ -13,6 +13,10 @@ Read `conclusionStatus`, `limitations`, `stoppedBy`, and `error` separately to u
 the result. A `concluded` event's payload `status` describes assessment certainty;
 it is not the Investigation lifecycle status.
 
+The first activity event explains that OpenCluster is reviewing the request and available
+evidence sources. It does not mean a source has already been read. Older recorded startup
+events may have no explanatory text; their replay remains supported.
+
 ## Conversations and follow-ups
 
 A Conversation is the ordered context a person talks to. Each Message may open a new Investigation. Follow-ups reuse bounded prior Findings and citations without copying raw provider payloads or private model reasoning.
@@ -97,6 +101,11 @@ unresolved assumptions, or essential human input.
 Citations show what OpenCluster read, not that the source was complete or correct. Check
 source timestamps, bounded windows, contradictions, and truncation before accepting a
 Finding.
+
+A Finding must cite successful reads. Failed or skipped reads can explain limitations,
+but cannot establish an observation or cause. A skipped duplicate refers to the original
+read rather than creating another observation. Prior citations must still resolve to
+available successful reads in the same Organization.
 
 The investigator may repeat a read to refresh changing infrastructure or retry a failed
 source within the execution limits. Identical reads requested together execute once;

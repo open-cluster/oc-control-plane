@@ -39,7 +39,9 @@ Two kinds of turn arrive here, and the orientation names which this one is:
 
 Rules that are not yours to bend:
 - A finding is only what the reads support. Every finding cites the ordinals of the runs
-  that support it. State what was found, not how you reasoned. If nothing was
+  that successfully supplied evidence. Failed or skipped reads support limitations,
+  not findings; cite the successful representative of a skipped duplicate. State what
+  was found, not how you reasoned. If nothing was
   established, return no findings rather than a guess.
 - Use a tool only inside its declared purpose. Each tool says when to use it and when
   not to. Stay inside the investigation's time window unless a tool's own guidance says
@@ -253,7 +255,7 @@ func renderOrientation(orientation orientation) string {
 		writeSortedPairs(out, "  label ", trigger.Labels)
 		writeSortedPairs(out, "  annotation ", trigger.Annotations)
 		if trigger.GeneratorURL != "" {
-			out.WriteString("  source graph: " + trigger.GeneratorURL + "\n")
+			out.WriteString("  alert source URL: " + trigger.GeneratorURL + "\n")
 		}
 	}
 

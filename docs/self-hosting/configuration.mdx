@@ -130,6 +130,17 @@ claims about the selected model's maximum capacity. Anthropic retains native thi
 continuation; OpenRouter retains the model's native reasoning continuation without adding
 unsupported reasoning controls.
 
+Anthropic thinking controls follow known model compatibility. Models requiring manual
+thinking retain it during finalization; models that reject forced Tool selection use
+automatic choice with the same structured-result validation. Unrecognized model IDs are
+sent unchanged with provider defaults for optional thinking and effort controls. A model
+that cannot satisfy the result contract fails clearly; OpenCluster does not replace it.
+
+Token usage comes from provider responses. Missing or invalid categories are unavailable,
+not measured zero. When a cache breakdown is missing or inconsistent, input can include
+unsplit prompt usage rather than a measured uncached count. Reasoning is already included
+in output usage. Stored totals sum available measurements and may be incomplete.
+
 ### Advanced: model budgets
 
 For a model with a smaller context or output capacity, lower `OC_AI_CONTEXT_WINDOW_SIZE`

@@ -78,6 +78,15 @@ func assertModelEventSchema(t *testing.T, model *eventContractModel, want []stri
 	for _, event := range assertSerializedEvents(t, body) {
 		kind := event["type"].(string)
 		seen[kind] = true
+		if kind == "started" {
+			if event["payload"].(map[string]any)["text"] != "Reviewing this request and available evidence sources." {
+				t.Fatal("Started event does not describe the initial phase")
+			}
+			event["payload"] = map[string]any{}
+			if err := eventSchema(t).Validate(event); err != nil {
+				t.Fatalf("legacy empty Started payload is no longer readable: %v", err)
+			}
+		}
 		if kind == "concluded" && event["payload"].(map[string]any)["summary"] != final.Summary {
 			t.Fatal("event answer differs from its canonical result")
 		}
