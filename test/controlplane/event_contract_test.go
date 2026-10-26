@@ -40,7 +40,7 @@ func (m *eventContractModel) Complete(ctx context.Context, prompt modelagent.Pro
 }
 
 func TestAvailableToolAndAnswerEventsMatchVersionTwoSchema(t *testing.T) {
-	assertModelEventSchema(t, &eventContractModel{tool: "slack.list_channels"},
+	assertModelEventSchema(t, &eventContractModel{tool: "slack_list_channels"},
 		[]string{"started", "tool_started", "tool_completed", "concluded"})
 }
 

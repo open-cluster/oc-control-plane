@@ -1,15 +1,15 @@
 causes: []
 mustnotclaim: []
 discriminating:
-    - tool: github.read_commits
+    - tool: github_read_commits
       argmarker: ""
 relevanttools:
-    - github.list_repositories
-    - github.read_commits
-    - github.read_commit
-    - github.read_file
-    - slack.list_channels
-    - slack.get_channel_history
+    - github_list_repositories
+    - github_read_commits
+    - github_read_commit
+    - github_read_file
+    - slack_list_channels
+    - slack_get_channel_history
 expectfindings: true
 mustnotanswer:
     - fed321

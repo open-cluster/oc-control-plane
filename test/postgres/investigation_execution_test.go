@@ -178,7 +178,7 @@ func TestAnEventPayloadSurvivesTheRoundTrip(t *testing.T) {
 	id := aTurn(t, database, organization)
 
 	payload := map[string]any{
-		"tool":      "slack.get_channel_history",
+		"tool":      "slack_get_channel_history",
 		"ordinal":   float64(3),
 		"truncated": true,
 		"arguments": map[string]any{"channel": "deploys"},
@@ -198,7 +198,7 @@ func TestAnEventPayloadSurvivesTheRoundTrip(t *testing.T) {
 	if len(read) != 1 {
 		t.Fatalf("%d events, want one", len(read))
 	}
-	if read[0].Payload["tool"] != "slack.get_channel_history" ||
+	if read[0].Payload["tool"] != "slack_get_channel_history" ||
 		read[0].Payload["ordinal"] != float64(3) ||
 		read[0].Payload["truncated"] != true {
 		t.Errorf("payload = %+v, want %+v", read[0].Payload, payload)

@@ -129,7 +129,7 @@ func exchangeTools(orientation orientation) []integrations.ToolDefinition {
 				continue
 			}
 			seen[tool.Name] = true
-			definitions = append(definitions, envelopeDefinition(tool.Definition()))
+			definitions = append(definitions, envelopeDefinition(tool.Definition(), orientation.Sources))
 		}
 	}
 	if orientation.Brief != nil && orientation.Brief.HistoryBefore > 1 {
@@ -138,7 +138,18 @@ func exchangeTools(orientation orientation) []integrations.ToolDefinition {
 	return append(definitions, ConcludeDefinition())
 }
 
-func envelopeDefinition(definition integrations.ToolDefinition) integrations.ToolDefinition {
+func envelopeDefinition(definition integrations.ToolDefinition, sources []offeredSource) integrations.ToolDefinition {
+	var ids []any
+	var names []string
+	for _, source := range sources {
+		for _, tool := range source.Tools {
+			if tool.Name == definition.Name {
+				ids = append(ids, source.Integration.ID.String())
+				names = append(names, source.Integration.Name+" ("+source.Integration.ID.String()+")")
+				break
+			}
+		}
+	}
 	definition.InputSchema = map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -150,6 +161,13 @@ func envelopeDefinition(definition integrations.ToolDefinition) integrations.Too
 		},
 		"required":             []any{"input"},
 		"additionalProperties": false,
+	}
+	if len(ids) > 1 {
+		definition.InputSchema["properties"].(map[string]any)["integrationId"] = map[string]any{
+			"type": "string", "enum": ids,
+			"description": "Select the connected source: " + strings.Join(names, "; "),
+		}
+		definition.InputSchema["required"] = []any{"input", "integrationId"}
 	}
 	return definition
 }
@@ -264,7 +282,7 @@ func renderOrientation(orientation orientation) string {
 			for _, tool := range source.Tools {
 				names = append(names, tool.Name)
 			}
-			out.WriteString("- " + source.Integration.Name + ": " +
+			out.WriteString("- " + source.Integration.Name + " (" + source.Integration.ID.String() + "): " +
 				strings.Join(names, ", ") + "\n")
 		}
 	}

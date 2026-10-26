@@ -1,6 +1,6 @@
 discriminating:
-    - tool: kubernetes.workload.runtime
-relevanttools: ["kubernetes.workload.runtime", "kubernetes.namespace.events"]
+    - tool: kubernetes_workload_runtime
+relevanttools: ["kubernetes_workload_runtime", "kubernetes_namespace_events"]
 expectfindings: true
 mustnotanswer: ["list every workload", "query every integration"]
 answermarkers: ["payments", "checkout"]

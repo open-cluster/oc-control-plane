@@ -33,7 +33,7 @@ func (p *Provider) params(prompt reasoning.Prompt) sdk.MessageNewParams {
 		"claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-mythos-5-1")
 	if prompt.ForceTool != "" && canForce {
 		params.ToolChoice = sdk.ToolChoiceUnionParam{
-			OfTool: &sdk.ToolChoiceToolParam{Name: reasoning.ToolName(prompt.ForceTool)},
+			OfTool: &sdk.ToolChoiceToolParam{Name: prompt.ForceTool},
 		}
 	} else {
 		params.ToolChoice = sdk.ToolChoiceUnionParam{
@@ -132,7 +132,7 @@ func toolParams(definitions []integrations.ToolDefinition) []sdk.ToolUnionParam 
 			schema.ExtraFields = map[string]any{"additionalProperties": additional}
 		}
 		tools = append(tools, sdk.ToolUnionParam{OfTool: &sdk.ToolParam{
-			Name:        reasoning.ToolName(definition.Name),
+			Name:        definition.Name,
 			Description: sdk.String(definition.Description),
 			InputSchema: schema,
 		}})
@@ -179,7 +179,7 @@ func assistantMessage(assistant reasoning.AssistantTurn) sdk.MessageParam {
 		if len(call.Arguments) > 0 {
 			_ = json.Unmarshal(call.Arguments, &input)
 		}
-		blocks = append(blocks, sdk.NewToolUseBlock(call.ID, input, reasoning.ToolName(call.Name)))
+		blocks = append(blocks, sdk.NewToolUseBlock(call.ID, input, call.Name))
 	}
 	return sdk.NewAssistantMessage(blocks...)
 }

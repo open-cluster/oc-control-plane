@@ -455,7 +455,7 @@ func TestSlackRecommendedBotInstallationIsVerifiedWithSearchUnavailable(t *testi
 			created.Integration.Status, created.Integration.VerificationNote)
 	}
 
-	search := created.Integration.tool(t, "slack.search_messages")
+	search := created.Integration.tool(t, "slack_search_messages")
 	if search.Available {
 		t.Error("workspace-wide search reads as available on a token that was never " +
 			"granted it")
@@ -464,7 +464,7 @@ func TestSlackRecommendedBotInstallationIsVerifiedWithSearchUnavailable(t *testi
 		t.Error("search is unavailable and says nothing about why")
 	}
 
-	for _, working := range []string{"slack.list_channels", "slack.get_channel_history"} {
+	for _, working := range []string{"slack_list_channels", "slack_get_channel_history"} {
 		if reported := created.Integration.tool(t, working); !reported.Available {
 			t.Errorf("%s has its scope and reads as unavailable: %+v", working, reported)
 		}

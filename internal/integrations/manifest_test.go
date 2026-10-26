@@ -2,6 +2,7 @@ package integrations
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -14,7 +15,7 @@ func TestCatalogPublishesProviderManifestsAsItsMetadataSource(t *testing.T) {
 			DocumentationSlug: "integrations/collaboration/example",
 			Config: []Field{{Key: "token", Label: "Token",
 				Type: FieldString, Required: true, Secret: true}},
-			Tools: []Tool{{Name: "example.read", Description: "Read one known example. " +
+			Tools: []Tool{{Name: "example_read", Description: "Read one known example. " +
 				"Use when its contents are needed. Do not use without a target.", Run: inertTool}},
 		},
 		Probe: inertProbe,
@@ -28,7 +29,7 @@ func TestCatalogPublishesProviderManifestsAsItsMetadataSource(t *testing.T) {
 		!manifests[0].RequiresRelay ||
 		manifests[0].SourceURL != "https://example.com/docs" ||
 		manifests[0].DocumentationSlug != "integrations/collaboration/example" ||
-		len(manifests[0].Capabilities()) != 1 || manifests[0].Capabilities()[0] != "example.read" ||
+		len(manifests[0].Capabilities()) != 1 || manifests[0].Capabilities()[0] != "example_read" ||
 		len(manifests[0].SecretFields()) != 1 || manifests[0].SecretFields()[0] != "token" ||
 		len(manifests[0].Tools) != 1 || len(manifests[0].ConfigurationSchema()) == 0 {
 		t.Fatalf("manifests = %#v", manifests)
@@ -39,7 +40,7 @@ func TestCatalogPublishesProviderManifestsAsItsMetadataSource(t *testing.T) {
 	if catalog.Manifests()[0].Name != "Example" {
 		t.Fatal("manifest caller mutated catalog metadata")
 	}
-	if catalog.Manifests()[0].Capabilities()[0] != "example.read" ||
+	if catalog.Manifests()[0].Capabilities()[0] != "example_read" ||
 		catalog.Manifests()[0].SecretFields()[0] != "token" {
 		t.Fatal("manifest caller mutated nested metadata")
 	}
@@ -57,3 +58,16 @@ func inertProbe(_ context.Context, _ ProbeInput) Verification {
 }
 
 func inertTool(context.Context, ToolRequest) (ToolResult, error) { return ToolResult{}, nil }
+
+func TestCatalogRejectsProviderIncompatibleToolNames(t *testing.T) {
+	for _, name := range []string{"example.read", strings.Repeat("x", 65)} {
+		_, err := NewCatalog(Definition{
+			Manifest: Manifest{Key: "example", Name: "Example", Category: CategoryCollaboration,
+				Tools: []Tool{{Name: name, Description: "Read an example.", Run: inertTool}}},
+			Probe: inertProbe,
+		})
+		if err == nil {
+			t.Fatalf("catalog accepted provider-incompatible Tool name %q", name)
+		}
+	}
+}

@@ -39,7 +39,7 @@ func request(prompt agent.Prompt) (sdk.ChatRequest, error) {
 			sdk.ChatFunctionToolFunction{
 				Type: sdk.ChatFunctionToolTypeFunction,
 				Function: sdk.ChatFunctionToolFunctionFunction{
-					Name:        agent.ToolName(definition.Name),
+					Name:        definition.Name,
 					Description: &definition.Description,
 					Parameters:  definition.InputSchema,
 				},
@@ -49,7 +49,7 @@ func request(prompt agent.Prompt) (sdk.ChatRequest, error) {
 		chatRequest.ToolChoice = new(sdk.CreateChatToolChoiceChatNamedToolChoice(sdk.ChatNamedToolChoice{
 			Type: sdk.ChatNamedToolChoiceTypeFunction,
 			Function: sdk.ChatNamedToolChoiceFunction{
-				Name: agent.ToolName(prompt.ForceTool),
+				Name: prompt.ForceTool,
 			},
 		}))
 	}
@@ -68,7 +68,7 @@ func request(prompt agent.Prompt) (sdk.ChatRequest, error) {
 					ID:   call.ID,
 					Type: sdk.ChatToolCallTypeFunction,
 					Function: sdk.ChatToolCallFunction{
-						Name:      agent.ToolName(call.Name),
+						Name:      call.Name,
 						Arguments: string(call.Arguments)},
 				})
 			}

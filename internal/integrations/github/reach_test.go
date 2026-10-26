@@ -16,7 +16,7 @@ func TestAReadOutsideTheInstallationsSelectionSaysWhy(t *testing.T) {
 	app := appAgainst(t, fake)
 	client := NewClient(fake.URL)
 
-	_, err := run(t, app, client, "github.read_commits", map[string]any{
+	_, err := run(t, app, client, "github_read_commits", map[string]any{
 		"repositoryId": float64(4242),
 	})
 	if err == nil {
@@ -38,7 +38,7 @@ func TestAReadOutsideTheSelectionIsNotRetried(t *testing.T) {
 	app := appAgainst(t, fake)
 	client := NewClient(fake.URL)
 
-	if _, err := run(t, app, client, "github.read_commits", map[string]any{
+	if _, err := run(t, app, client, "github_read_commits", map[string]any{
 		"repositoryId": float64(4242),
 	}); err == nil {
 		t.Fatal("a repository outside the grant was read")
@@ -68,7 +68,7 @@ func TestRepositoryContentCarryingAnInstructionStaysEvidence(t *testing.T) {
 			_, _ = writer.Write([]byte(injection))
 		}
 
-	result, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github.read_file",
+	result, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github_read_file",
 		map[string]any{"repositoryId": float64(1), "path": "README.md"})
 	if err != nil {
 		t.Fatalf("reading a file: %v", err)
@@ -101,7 +101,7 @@ func TestACommitMessageCarryingAnInstructionStaysEvidence(t *testing.T) {
 		"author":{"login":"dana"},
 		"html_url":"https://github.com/acme-corp/payments/commit/abc123"}]`)
 
-	result, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github.read_commits",
+	result, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github_read_commits",
 		map[string]any{"repositoryId": float64(1)})
 	if err != nil {
 		t.Fatalf("reading commits: %v", err)

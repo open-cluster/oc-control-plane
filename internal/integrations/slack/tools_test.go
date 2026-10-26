@@ -46,7 +46,7 @@ func TestListChannelsSelectsByNameAndTopic(t *testing.T) {
 		{"id":"C2","name":"random","topic":{"value":"pets and lunch"},"purpose":{"value":""}},
 		{"id":"C3","name":"ops","topic":{"value":"PAYMENTS incidents land here"},"purpose":{"value":""}}]}`)
 
-	result, err := run(t, NewClient(fake.URL), "slack.list_channels",
+	result, err := run(t, NewClient(fake.URL), "slack_list_channels",
 		map[string]any{"nameContains": "payments"})
 	if err != nil {
 		t.Fatalf("listing: %v", err)
@@ -72,7 +72,7 @@ func TestListChannelsAsksTheVendorForFullPages(t *testing.T) {
 		_, _ = writer.Write([]byte(`{"ok":true,"channels":[]}`))
 	}
 
-	if _, err := run(t, NewClient(fake.URL), "slack.list_channels", nil); err != nil {
+	if _, err := run(t, NewClient(fake.URL), "slack_list_channels", nil); err != nil {
 		t.Fatalf("listing: %v", err)
 	}
 }
@@ -93,7 +93,7 @@ func TestListChannelsWalksPagesToFindAMatch(t *testing.T) {
 			{"id":"C2","name":"payments-alerts","topic":{"value":""},"purpose":{"value":""}}]}`))
 	}
 
-	result, err := run(t, NewClient(fake.URL), "slack.list_channels",
+	result, err := run(t, NewClient(fake.URL), "slack_list_channels",
 		map[string]any{"nameContains": "payments"})
 	if err != nil {
 		t.Fatalf("listing: %v", err)
@@ -121,7 +121,7 @@ func TestListChannelsFlagsAWalkStoppedAtItsPageBound(t *testing.T) {
 			"response_metadata":{"next_cursor":"more"}}`))
 	}
 
-	result, err := run(t, NewClient(fake.URL), "slack.list_channels",
+	result, err := run(t, NewClient(fake.URL), "slack_list_channels",
 		map[string]any{"nameContains": "payments"})
 	if err != nil {
 		t.Fatalf("listing: %v", err)
@@ -138,7 +138,7 @@ func TestListChannelsFlagsAWalkStoppedAtItsPageBound(t *testing.T) {
 func TestChannelHistoryRefusesAnUndeclaredArgument(t *testing.T) {
 	t.Parallel()
 
-	_, err := run(t, NewClient("http://127.0.0.1:1"), "slack.get_channel_history",
+	_, err := run(t, NewClient("http://127.0.0.1:1"), "slack_get_channel_history",
 		map[string]any{"channel": "C1", "chanel": "typo"})
 	if err == nil || !strings.Contains(err.Error(), "chanel") {
 		t.Fatalf("an undeclared argument must be refused by name, got %v", err)
@@ -148,7 +148,7 @@ func TestChannelHistoryRefusesAnUndeclaredArgument(t *testing.T) {
 func TestChannelHistoryRequiresTheChannel(t *testing.T) {
 	t.Parallel()
 
-	_, err := run(t, NewClient("http://127.0.0.1:1"), "slack.get_channel_history", nil)
+	_, err := run(t, NewClient("http://127.0.0.1:1"), "slack_get_channel_history", nil)
 	if err == nil || !strings.Contains(err.Error(), "channel is required") {
 		t.Fatalf("want a refusal naming the missing channel, got %v", err)
 	}
@@ -157,7 +157,7 @@ func TestChannelHistoryRequiresTheChannel(t *testing.T) {
 func TestChannelHistoryRefusesAnOversizedLimit(t *testing.T) {
 	t.Parallel()
 
-	_, err := run(t, NewClient("http://127.0.0.1:1"), "slack.get_channel_history",
+	_, err := run(t, NewClient("http://127.0.0.1:1"), "slack_get_channel_history",
 		map[string]any{"channel": "C1", "limit": float64(100000)})
 	if err == nil || !strings.Contains(err.Error(), "between 1 and") {
 		t.Fatalf("want a refusal naming the bound, got %v", err)
@@ -167,7 +167,7 @@ func TestChannelHistoryRefusesAnOversizedLimit(t *testing.T) {
 func TestChannelHistoryRefusesAnUnreadableWindow(t *testing.T) {
 	t.Parallel()
 
-	_, err := run(t, NewClient("http://127.0.0.1:1"), "slack.get_channel_history",
+	_, err := run(t, NewClient("http://127.0.0.1:1"), "slack_get_channel_history",
 		map[string]any{"channel": "C1", "oldest": "yesterday-ish"})
 	if err == nil || !strings.Contains(err.Error(), "RFC 3339") {
 		t.Fatalf("want a refusal naming the expected form, got %v", err)
@@ -182,7 +182,7 @@ func TestChannelHistorySurfacesTruncation(t *testing.T) {
 	fake.answer("conversations.history", `{"ok":true,"has_more":true,
 		"messages":[{"ts":"1","user":"U1234567","text":"deploying now"}]}`)
 
-	result, err := run(t, NewClient(fake.URL), "slack.get_channel_history",
+	result, err := run(t, NewClient(fake.URL), "slack_get_channel_history",
 		map[string]any{"channel": "C1"})
 	if err != nil {
 		t.Fatalf("history: %v", err)
@@ -200,7 +200,7 @@ func TestChannelHistoryResolvesAuthorsAndAttachesPermalinks(t *testing.T) {
 	fake.answer("conversations.history", `{"ok":true,"has_more":false,
 		"messages":[{"ts":"1767366200.000200","user":"U1234567","text":"deploying now"}]}`)
 
-	result, err := run(t, NewClient(fake.URL), "slack.get_channel_history",
+	result, err := run(t, NewClient(fake.URL), "slack_get_channel_history",
 		map[string]any{"channel": "C1"})
 	if err != nil {
 		t.Fatalf("history: %v", err)
@@ -227,7 +227,7 @@ func TestChannelHistoryKeepsRawIDsWhenResolutionCannot(t *testing.T) {
 	fake.answer("conversations.history", `{"ok":true,"has_more":false,
 		"messages":[{"ts":"1","user":"U1234567","text":"deploying now"}]}`)
 
-	result, err := run(t, NewClient(fake.URL), "slack.get_channel_history",
+	result, err := run(t, NewClient(fake.URL), "slack_get_channel_history",
 		map[string]any{"channel": "C1"})
 	if err != nil {
 		t.Fatalf("a transcript with raw ids beats a failed read: %v", err)
@@ -248,7 +248,7 @@ func TestARefusedUserResolutionIsAskedOnce(t *testing.T) {
 		"messages":[{"ts":"1","user":"U1234567","text":"deploying"},
 		            {"ts":"2","user":"U1234567","text":"deployed"}]}`)
 
-	if _, err := run(t, NewClient(fake.URL), "slack.get_channel_history",
+	if _, err := run(t, NewClient(fake.URL), "slack_get_channel_history",
 		map[string]any{"channel": "C1"}); err != nil {
 		t.Fatalf("history: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestThreadRepliesReadTheNewestTailOfALongThread(t *testing.T) {
 			"messages":[{"ts":"3","user":"U1234567","text":"the conclusion"}]}`))
 	}
 
-	result, err := run(t, NewClient(fake.URL), "slack.get_thread_replies",
+	result, err := run(t, NewClient(fake.URL), "slack_get_thread_replies",
 		map[string]any{"channel": "C1", "threadTs": "1", "limit": float64(2)})
 	if err != nil {
 		t.Fatalf("replies: %v", err)
@@ -301,7 +301,7 @@ func TestThreadRepliesReturnAWholeThread(t *testing.T) {
 		"messages":[{"ts":"1","user":"U1234567","text":"parent"},
 		            {"ts":"2","user":"U7654321","text":"the fix is out"}]}`)
 
-	result, err := run(t, NewClient(fake.URL), "slack.get_thread_replies",
+	result, err := run(t, NewClient(fake.URL), "slack_get_thread_replies",
 		map[string]any{"channel": "C1", "threadTs": "1"})
 	if err != nil {
 		t.Fatalf("replies: %v", err)
@@ -319,7 +319,7 @@ func TestConversationThreadReadRefusesADifferentChannelOrThread(t *testing.T) {
 	t.Parallel()
 
 	fake := newFakeSlack(t)
-	tool := toolNamed(t, NewClient(fake.URL), "slack.get_thread_replies")
+	tool := toolNamed(t, NewClient(fake.URL), "slack_get_thread_replies")
 	if !tool.SupportsThreadScope {
 		t.Fatal("the originating-thread read must declare its restricted Conversation scope")
 	}
@@ -346,7 +346,7 @@ func TestConversationThreadReadRefusesADifferentChannelOrThread(t *testing.T) {
 func TestSearchRequiresAQuery(t *testing.T) {
 	t.Parallel()
 
-	_, err := run(t, NewClient("http://127.0.0.1:1"), "slack.search_messages", nil)
+	_, err := run(t, NewClient("http://127.0.0.1:1"), "slack_search_messages", nil)
 	if err == nil || !strings.Contains(err.Error(), "query is required") {
 		t.Fatalf("want a refusal naming the missing query, got %v", err)
 	}
@@ -360,7 +360,7 @@ func TestSearchCarriesChannelIdsAndTheRemainderFlag(t *testing.T) {
 	fake.answer("search.messages", `{"ok":true,"messages":{"total":50,"matches":[
 		{"ts":"1","username":"kai","text":"payments timeout","channel":{"id":"C1","name":"incidents"}}]}}`)
 
-	result, err := run(t, NewClient(fake.URL), "slack.search_messages",
+	result, err := run(t, NewClient(fake.URL), "slack_search_messages",
 		map[string]any{"query": "payments timeout", "limit": float64(1)})
 	if err != nil {
 		t.Fatalf("search: %v", err)
@@ -393,7 +393,7 @@ func TestSearchDerivesTheWindowFromTheInvestigation(t *testing.T) {
 		_, _ = writer.Write([]byte(`{"ok":true,"messages":{"total":0,"matches":[]}}`))
 	}
 
-	tool := toolNamed(t, NewClient(fake.URL), "slack.search_messages")
+	tool := toolNamed(t, NewClient(fake.URL), "slack_search_messages")
 	_, err := tool.Run(testContext(t), integrations.ToolRequest{
 		Credential:  "xoxp-user-token",
 		Arguments:   map[string]any{"query": "payments timeout"},
@@ -411,7 +411,7 @@ func TestAVendorRefusalSurfacesFromATool(t *testing.T) {
 	fake := newFakeSlack(t)
 	fake.answer("conversations.history", `{"ok":false,"error":"channel_not_found"}`)
 
-	_, err := run(t, NewClient(fake.URL), "slack.get_channel_history",
+	_, err := run(t, NewClient(fake.URL), "slack_get_channel_history",
 		map[string]any{"channel": "C-gone"})
 	if err == nil || !strings.Contains(err.Error(), "channel_not_found") {
 		t.Fatalf("the vendor's own reason must survive to the caller, got %v", err)
