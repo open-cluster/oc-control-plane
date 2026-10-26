@@ -540,7 +540,7 @@ func TestTheThreadShowsTheWorkAsItHappens(t *testing.T) {
 	fake := newSlackCallLog(t, false)
 	worker, state := answering(t, fake, []investigation.Event{
 		progressed(1, investigation.EventStarted, nil),
-		progressed(2, investigation.EventToolStarted, map[string]any{"tool": "github.commits"}),
+		progressed(2, investigation.EventToolStarted, map[string]any{"tool": "github_read_commits"}),
 		progressed(3, investigation.EventToolCompleted,
 			map[string]any{"summary": "read 40 commits on checkout-api"}),
 	})
@@ -550,7 +550,7 @@ func TestTheThreadShowsTheWorkAsItHappens(t *testing.T) {
 	if !strings.Contains(shown, "read 40 commits on checkout-api") {
 		t.Errorf("a completed read is not in the thread: %q", shown)
 	}
-	if !strings.Contains(shown, "Reading github.commits") {
+	if !strings.Contains(shown, "Reading github_read_commits") {
 		t.Errorf("what it is doing now is not in the thread: %q", shown)
 	}
 }
