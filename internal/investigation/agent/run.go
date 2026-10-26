@@ -514,16 +514,14 @@ func (r *Agent) Run(
 			}
 			var run investigation.ToolRun
 			announceCompletion := false
-			if source, _, offered := toolNamed(offered, call); offered {
+			source, _, sourceFound := toolNamed(offered, call)
+			if sourceFound {
 				call.IntegrationID = source.Integration.ID.String()
 			}
 			identity := callIdentityOf(call)
 			switch {
 			case call.Error != "":
 				run = droppedRun(opened, call, len(state.runs)+1, call.Error)
-				if source, _, offered := toolNamed(offered, call); offered {
-					run.IntegrationID = source.Integration.ID
-				}
 			case executedCalls[identity] != 0: // already once executed ----->
 				run = suppressedRun(opened, call, len(state.runs)+1,
 					executedCalls[identity])
@@ -560,6 +558,9 @@ func (r *Agent) Run(
 				r.RuntimeTelemetry.RanTool(run, canonical)
 				state.executed++
 				executedCalls[identity] = run.Ordinal
+			}
+			if sourceFound {
+				run.IntegrationID = source.Integration.ID
 			}
 			run.Purpose = boundText(call.Purpose, eventTextBound)
 			if recordErr := r.recordToolRun(ctx, state, run); recordErr != nil {
