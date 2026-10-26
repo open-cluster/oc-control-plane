@@ -181,3 +181,38 @@ func TestRunRejectsInvalidSourcesAndAutomaticallyBindsASingleSource(t *testing.T
 		})
 	}
 }
+
+func TestRunKeepsSelectedIntegrationWhenTheReadBudgetIsExhausted(t *testing.T) {
+	candidates := []integrations.Integration{
+		{ID: uuid.New(), Provider: "stub", Name: "Production", Status: integrations.StatusVerified, VerifiedAt: time.Now()},
+		{ID: uuid.New(), Provider: "stub", Name: "Staging", Status: integrations.StatusVerified, VerifiedAt: time.Now()},
+	}
+	store := &records{}
+	model := &scriptedModel{next: func(round int, _ Prompt) (Completion, error) {
+		if round != 1 {
+			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "done", Name: ConcludeToolName,
+				Arguments: validConclusion(t, []int{1})}}}, nil
+		}
+		var calls []CompletionCall
+		for index, candidate := range candidates {
+			arguments, _ := json.Marshal(map[string]any{"integrationId": candidate.ID.String(), "input": map[string]any{}})
+			calls = append(calls, CompletionCall{ID: []string{"production", "staging"}[index], Name: "stub_read", Arguments: arguments})
+		}
+		return Completion{Stop: StopToolUse, ToolCalls: calls}, nil
+	}}
+	reads := 0
+	agent := configuredTestAgent(t, store, model, testCatalog(t,
+		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
+			reads++
+			return integrations.ToolResult{Summary: "read succeeded"}, nil
+		}))
+	agent.Store = &candidateRecords{records: store, candidates: candidates}
+	agent.MaxToolRuns = 1
+	if err := agent.Run(context.Background(), uuid.New(), investigation.Investigation{ID: uuid.New()}); err != nil {
+		t.Fatal(err)
+	}
+	if reads != 1 || len(store.runs) != 2 || store.runs[1].IntegrationID != candidates[1].ID ||
+		store.runs[1].Outcome != investigation.RunFailed {
+		t.Fatalf("budget-refused source lost provenance: reads=%d runs=%+v", reads, store.runs)
+	}
+}
