@@ -60,6 +60,7 @@ type records struct {
 	conclusion      investigation.Conclusion
 	status          investigation.Status
 	terminalErr     error
+	recordErr       error
 	auditErr        error
 	eventErr        error
 	events          []investigation.Event
@@ -71,6 +72,9 @@ type records struct {
 func (r *records) RecordToolRun(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, run investigation.ToolRun) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.recordErr != nil {
+		return r.recordErr
+	}
 	r.runs = append(r.runs, run)
 	return nil
 }
@@ -494,6 +498,33 @@ func TestRunDefersConclusionUntilMixedReadResultsAreRecorded(t *testing.T) {
 	}
 }
 
+func TestRunDoesNotAnnounceAnUnrecordedToolRun(t *testing.T) {
+	store := &records{
+		candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"},
+		recordErr: errors.New("provenance unavailable"),
+	}
+	model := &scriptedModel{next: func(_ int, _ Prompt) (Completion, error) {
+		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
+			ID: "read", Name: "stub.read", Arguments: json.RawMessage(`{"input":{}}`),
+		}}}, nil
+	}}
+	agent := configuredTestAgent(t, store, model, testCatalog(t,
+		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
+			return integrations.ToolResult{Summary: "observed value"}, nil
+		}))
+	if err := agent.Run(context.Background(), uuid.New(), investigation.Investigation{ID: uuid.New()}); err != nil {
+		t.Fatal(err)
+	}
+	if store.status != investigation.StatusFailed || len(store.runs) != 0 {
+		t.Fatalf("unrecorded result was accepted: status=%v runs=%v", store.status, store.runs)
+	}
+	for _, event := range store.events {
+		if event.Type == investigation.EventToolCompleted {
+			t.Fatal("completion activity claimed an unrecorded Tool Run")
+		}
+	}
+}
+
 func TestModelChoosesReadsBeforeWorkloadLabelsCauseExternalAccess(t *testing.T) {
 	integrationID, incidentID := uuid.New(), uuid.New()
 	store := &records{
@@ -656,32 +687,44 @@ func TestRunAuditsCredentialBeforeUsingIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidate := integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}
+	candidate := integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source",
+		Status: integrations.StatusVerified, VerifiedAt: time.Now().UTC()}
 	candidate.CredentialSealed, err = sealer.Seal("secret", integrations.CredentialBinding(candidate.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
+	other := integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "other",
+		Status: integrations.StatusVerified, VerifiedAt: time.Now().UTC()}
+	other.CredentialSealed, err = sealer.Seal("other-secret", integrations.CredentialBinding(other.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical := "stub.read__" + strings.ReplaceAll(candidate.ID.String(), "-", "")
 	store := &records{candidate: candidate}
 	catalog := testCatalog(t, func(_ context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
 		store.mu.Lock()
 		audited := store.unseals == 1
 		store.mu.Unlock()
-		if !audited || request.Credential != "secret" {
-			t.Fatal("credential used before its audit record")
+		if !audited || request.Credential != "secret" || request.Integration.ID != candidate.ID {
+			t.Fatal("Tool used an unaudited credential or the wrong Integration")
 		}
 		return integrations.ToolResult{Summary: "v2", Content: "v2"}, nil
 	})
 	model := &scriptedModel{next: func(call int, _ Prompt) (Completion, error) {
 		if call == 1 {
-			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "c1", Name: "stub.read", Arguments: json.RawMessage(`{"purpose":"read deployment","input":{}}`)}}}, nil
+			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "c1", Name: canonical, Arguments: json.RawMessage(`{"purpose":"read deployment","input":{}}`)}}}, nil
 		}
 		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, []int{1})}}}, nil
 	}}
 	agent := configuredTestAgent(t, store, model, catalog)
+	agent.Store = &candidateRecords{records: store, candidates: []integrations.Integration{other, candidate}}
 	agent.Sealer = sealer
 	organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	if err := agent.Run(context.Background(), organization, investigation.Investigation{ID: uuid.New(), Subject: "deployment"}); err != nil {
 		t.Fatal(err)
+	}
+	if len(store.runs) != 1 || store.runs[0].Tool != canonical || store.runs[0].IntegrationID != candidate.ID {
+		t.Fatalf("Tool Run lost its canonical Integration identity: %+v", store.runs)
 	}
 }
 

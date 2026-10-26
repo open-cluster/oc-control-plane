@@ -29,9 +29,6 @@ func TestStructuredConclusionContractRequiresMechanismForAVerifiedCause(t *testi
 	assertSchemaFields(t, actions["items"], "rationale", "run_refs", "title", "verification")
 	hypotheses := properties["hypotheses"].(map[string]any)
 	assertSchemaFields(t, hypotheses["items"], "run_refs", "statement", "status", "test")
-	if SchemaVersion != "9" {
-		t.Errorf("conclusion schema revision = %q, want 9", SchemaVersion)
-	}
 
 	document, err := json.Marshal(map[string]any{
 		"status":  "verified_cause",

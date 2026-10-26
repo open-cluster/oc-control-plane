@@ -1,7 +1,6 @@
 package anthropic
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -13,28 +12,28 @@ import (
 	reasoning "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 )
 
-func (p *Provider) params(prompt reasoning.Prompt) sdk.MessageNewParams {
+func (p *Provider) params(prompt reasoning.Prompt, names reasoning.ToolNames) sdk.MessageNewParams {
 	params := sdk.MessageNewParams{
 		Model:     prompt.Model,
 		MaxTokens: prompt.MaxOutputTokens,
 		System:    systemBlocks(prompt),
-		Messages:  messages(prompt),
+		Messages:  messages(prompt, names),
 		Thinking:  thinkingOf(prompt.Model, prompt.Effort, prompt.MaxOutputTokens),
 	}
 	if params.Thinking.OfAdaptive != nil || modelIs(prompt.Model, sdk.ModelClaudeOpus4_5) {
 		params.OutputConfig.Effort = effortOf(prompt.Effort)
 	}
 	if len(prompt.Tools) == 0 {
-		params.OutputConfig.Format = sdk.JSONOutputFormatParam{Schema: prompt.Schema.Document}
+		params.OutputConfig.Format = sdk.JSONOutputFormatParam{Schema: prompt.Schema}
 		return params
 	}
-	params.Tools = toolParams(prompt.Tools)
+	params.Tools = toolParams(prompt.Tools, names)
 	// Manual thinking and these documented model exceptions require automatic Tool choice.
 	canForce := params.Thinking.OfEnabled == nil && !modelIs(prompt.Model,
 		"claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-mythos-5-1")
 	if prompt.ForceTool != "" && canForce {
 		params.ToolChoice = sdk.ToolChoiceUnionParam{
-			OfTool: &sdk.ToolChoiceToolParam{Name: anthropicToolName(prompt.ForceTool)},
+			OfTool: &sdk.ToolChoiceToolParam{Name: names.Alias(prompt.ForceTool)},
 		}
 	} else {
 		params.ToolChoice = sdk.ToolChoiceUnionParam{
@@ -116,7 +115,7 @@ func manualThinkingBudget(effort reasoning.Effort) int64 {
 	}
 }
 
-func toolParams(definitions []integrations.ToolDefinition) []sdk.ToolUnionParam {
+func toolParams(definitions []integrations.ToolDefinition, names reasoning.ToolNames) []sdk.ToolUnionParam {
 	tools := make([]sdk.ToolUnionParam, 0, len(definitions))
 	for _, definition := range definitions {
 		schema := sdk.ToolInputSchemaParam{
@@ -133,7 +132,7 @@ func toolParams(definitions []integrations.ToolDefinition) []sdk.ToolUnionParam 
 			schema.ExtraFields = map[string]any{"additionalProperties": additional}
 		}
 		tools = append(tools, sdk.ToolUnionParam{OfTool: &sdk.ToolParam{
-			Name:        anthropicToolName(definition.Name),
+			Name:        names.Alias(definition.Name),
 			Description: sdk.String(definition.Description),
 			InputSchema: schema,
 		}})
@@ -141,10 +140,10 @@ func toolParams(definitions []integrations.ToolDefinition) []sdk.ToolUnionParam 
 	return tools
 }
 
-func messages(prompt reasoning.Prompt) []sdk.MessageParam {
+func messages(prompt reasoning.Prompt, names reasoning.ToolNames) []sdk.MessageParam {
 	rendered := []sdk.MessageParam{sdk.NewUserMessage(contentBlocks(prompt)...)}
 	for _, turn := range prompt.Turns {
-		if assistant := assistantMessage(turn.Assistant); len(assistant.Content) > 0 {
+		if assistant := assistantMessage(turn.Assistant, names); len(assistant.Content) > 0 {
 			rendered = append(rendered, assistant)
 		}
 		if len(turn.ToolResults) > 0 || turn.Instruction != "" {
@@ -162,7 +161,7 @@ func messages(prompt reasoning.Prompt) []sdk.MessageParam {
 	return rendered
 }
 
-func assistantMessage(assistant reasoning.AssistantTurn) sdk.MessageParam {
+func assistantMessage(assistant reasoning.AssistantTurn, names reasoning.ToolNames) sdk.MessageParam {
 	// Prefer the captured vendor message so signed thinking blocks survive tool-loop replay.
 	if len(assistant.Raw) > 0 {
 		var captured sdk.Message
@@ -180,25 +179,9 @@ func assistantMessage(assistant reasoning.AssistantTurn) sdk.MessageParam {
 		if len(call.Arguments) > 0 {
 			_ = json.Unmarshal(call.Arguments, &input)
 		}
-		blocks = append(blocks, sdk.NewToolUseBlock(call.ID, input, anthropicToolName(call.Name)))
+		blocks = append(blocks, sdk.NewToolUseBlock(call.ID, input, names.Alias(call.Name)))
 	}
 	return sdk.NewAssistantMessage(blocks...)
-}
-
-func anthropicToolName(name string) string {
-	return "oc_" + base64.RawURLEncoding.EncodeToString([]byte(name))
-}
-
-func internalToolName(name string) string {
-	encoded, found := strings.CutPrefix(name, "oc_")
-	if !found {
-		return name
-	}
-	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil {
-		return name
-	}
-	return string(decoded)
 }
 
 func systemBlocks(prompt reasoning.Prompt) []sdk.TextBlockParam {

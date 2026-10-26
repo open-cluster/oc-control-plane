@@ -71,7 +71,11 @@ func New(config agent.ModelConfig, options Options) (*Provider, error) {
 }
 
 func (p *Provider) EstimateRequestTokens(prompt agent.Prompt) (int, error) {
-	body, err := request(prompt)
+	names, err := prompt.ProviderToolNames()
+	if err != nil {
+		return 0, err
+	}
+	body, err := request(prompt, names)
 	if err != nil {
 		return 0, err
 	}
@@ -83,7 +87,12 @@ func (p *Provider) EstimateRequestTokens(prompt agent.Prompt) (int, error) {
 }
 
 func (p *Provider) Complete(ctx context.Context, prompt agent.Prompt) (agent.Completion, error) {
-	requestBody, err := request(prompt)
+	names, err := prompt.ProviderToolNames()
+	if err != nil {
+		return agent.Completion{}, agent.Failed(
+			agent.OutcomeMalformed, Name, prompt.Model, "invalid Tool names")
+	}
+	requestBody, err := request(prompt, names)
 	if err != nil {
 		return agent.Completion{}, agent.Failed(
 			agent.OutcomeMalformed, Name, prompt.Model, "invalid model continuation")
@@ -152,12 +161,10 @@ func (p *Provider) Complete(ctx context.Context, prompt agent.Prompt) (agent.Com
 				agent.OutcomeMalformed, Name, prompt.Model, "the provider returned an invalid Tool call")
 		}
 		seen[call.ID] = true
-		name := call.Function.Name
-		for _, definition := range prompt.Tools {
-			if name == toolName(definition.Name) {
-				name = definition.Name
-				break
-			}
+		name, offered := names.Resolve(call.Function.Name)
+		if !offered {
+			return completion, agent.Failed(
+				agent.OutcomeMalformed, Name, prompt.Model, "the provider returned an unoffered Tool")
 		}
 		completion.ToolCalls = append(completion.ToolCalls, agent.CompletionCall{
 			ID:        call.ID,

@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -65,6 +66,42 @@ func assertModelEventSchema(t *testing.T, model *eventContractModel, want []stri
 		t.Fatalf("create Slack = %d: %s", status, body)
 	}
 	_, turn := plane.openConversation(t, "event schema", "investigate checkout")
+	response := openEventStream(t, plane, turn, "")
+	scanner := bufio.NewScanner(response.Body)
+	completed := false
+	for scanner.Scan() {
+		if !strings.HasPrefix(scanner.Text(), "data: ") {
+			continue
+		}
+		var event struct {
+			Type    string `json:"type"`
+			Payload struct {
+				Ordinal int `json:"ordinal"`
+			} `json:"payload"`
+		}
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(scanner.Text(), "data: ")), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Type != "tool_completed" {
+			continue
+		}
+		status, body := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/investigations/"+turn, nil)
+		var detail struct {
+			Runs []struct {
+				Ordinal int `json:"ordinal"`
+			} `json:"runs"`
+		}
+		decodeInto(t, body, &detail)
+		if status != http.StatusOK || len(detail.Runs) != 1 || detail.Runs[0].Ordinal != event.Payload.Ordinal {
+			t.Fatalf("completed activity has no persisted Tool Run: %d %s", status, body)
+		}
+		completed = true
+		break
+	}
+	_ = response.Body.Close()
+	if !completed {
+		t.Fatalf("no Tool completion activity: %v", scanner.Err())
+	}
 	result := plane.awaitInvestigation(t, turn)
 	var final struct {
 		Summary string `json:"summary"`

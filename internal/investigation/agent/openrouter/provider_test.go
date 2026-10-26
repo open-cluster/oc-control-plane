@@ -65,9 +65,13 @@ func TestToolResultsContinueToAForcedConclusion(t *testing.T) {
 		t.Fatal(err)
 	}
 	tool := integrations.Tool{Name: "kubernetes.workload_state__0123456789abcdef0123456789abcdef", Description: "Read workload state."}
+	other := tool
+	other.Name = "kubernetes.workload_state__fedcba9876543210fedcba9876543210"
 	prompt := agent.Prompt{
 		Model: "z-ai/glm-4.7", System: []agent.Block{{Text: "Investigate safely."}}, Content: []agent.Block{{Text: "Check the workload."}},
-		Tools: []integrations.ToolDefinition{tool.Definition(), agent.ConcludeDefinition()}, MaxOutputTokens: 32_000,
+		Tools: []integrations.ToolDefinition{tool.Definition(), other.Definition(),
+			{Name: "github.read_commits"}, {Name: "github_read_commits"},
+			{Name: "github." + strings.Repeat("read_", 20)}, agent.ConcludeDefinition()}, MaxOutputTokens: 32_000,
 	}
 	first, err := provider.Complete(context.Background(), prompt)
 	if err != nil {
@@ -94,11 +98,22 @@ func TestToolResultsContinueToAForcedConclusion(t *testing.T) {
 	if !regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`).MatchString(definition["name"].(string)) || definition["parameters"].(map[string]any)["type"] != "object" {
 		t.Fatalf("function definition = %v", definition)
 	}
+	seenNames := make(map[string]bool)
+	for _, offered := range request["tools"].([]any) {
+		name := offered.(map[string]any)["function"].(map[string]any)["name"].(string)
+		if !regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`).MatchString(name) || seenNames[name] || strings.HasPrefix(name, "oc_") {
+			t.Fatalf("invalid or duplicate alias %q", name)
+		}
+		seenNames[name] = true
+	}
+	if definition["name"] != "kubernetes_workload_state__0123456789abcdef0123456789abcdef" {
+		t.Fatalf("ordinary alias is unreadable: %v", definition["name"])
+	}
 	prompt.Turns = []agent.Turn{{Assistant: agent.AssistantTurn{Calls: first.ToolCalls, Raw: first.Raw}, ToolResults: []agent.ToolResultTurn{
 		{CallID: "read-1", Content: "[run 1] unhealthy workload"}, {CallID: "read-2", Content: "[run 2] invalid Tool input", IsError: true},
 		{CallID: "premature", Content: "Finalization deferred: consider the read results.", IsError: true},
 	}}}
-	prompt.Tools = prompt.Tools[1:]
+	prompt.Tools = []integrations.ToolDefinition{agent.ConcludeDefinition()}
 	prompt.ForceTool = agent.ConcludeToolName
 	conclusion, err := provider.Complete(context.Background(), prompt)
 	if err != nil || len(conclusion.ToolCalls) != 1 || conclusion.ToolCalls[0].Name != "conclude" {
@@ -135,6 +150,7 @@ func TestProviderFailuresAreClassifiedWithoutSourceContent(t *testing.T) {
 		{"invalid response", 200, `{"choices":"` + private + `"}`, agent.ErrMalformed},
 		{"reported model without usage", 200, `{"id":"generation-1","object":"chat.completion","created":1,"model":"actual-model","choices":[]}`, agent.ErrMalformed},
 		{"ambiguous call IDs", 200, `{"id":"generation-1","object":"chat.completion","created":1,"model":"z-ai/glm-4.7","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"tool_calls":[{"id":"same","type":"function","function":{"name":"read","arguments":"{}"}},{"id":"same","type":"function","function":{"name":"read","arguments":"{}"}}]}}]}`, agent.ErrMalformed},
+		{"unoffered Tool", 200, `{"id":"generation-1","object":"chat.completion","created":1,"model":"z-ai/glm-4.7","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"read-1","type":"function","function":{"name":"github.read_commits","arguments":"{}"}}]}}]}`, agent.ErrMalformed},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

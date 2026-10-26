@@ -90,7 +90,8 @@ Tool authorization, execution budgets, evidence recording, and conclusion valida
 
 Findings require citations to successful reads; failed or skipped reads can explain
 limitations but cannot establish a Finding. Startup activity describes the initial phase,
-and recorded activity remains available when a client reconnects.
+and recorded activity remains available when a client reconnects. Tool completion activity
+is published only after its Tool Run has been saved.
 
 ### Relay
 

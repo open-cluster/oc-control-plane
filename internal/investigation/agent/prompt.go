@@ -167,26 +167,22 @@ func ConcludeDefinition() integrations.ToolDefinition {
 			"the findings, which are not bounded by it. Oversized output must be corrected. " +
 			"Propose at most " + strconv.Itoa(investigation.MaxConclusionActions) + " actions; each title, rationale and verification is limited to " +
 			strconv.Itoa(investigation.MaxActionTextLength) + " UTF-8 bytes.",
-		InputSchema: concludeSchema().Document,
+		InputSchema: concludeSchema(),
 	}
 }
 
-func concludeSchema() Schema {
+func concludeSchema() map[string]any {
 	actions := array(actionSchema())
 	actions["maxItems"] = investigation.MaxConclusionActions
-	return Schema{
-		Name:    ConcludeToolName,
-		Version: SchemaVersion,
-		Document: object(properties{
-			"status":      enumField(investigation.ConclusionStatuses...),
-			"summary":     map[string]any{"type": "string", "maxLength": investigation.MaxSummaryLength},
-			"impact":      impactSchema(),
-			"findings":    array(agentFindingSchema()),
-			"hypotheses":  array(hypothesisSchema()),
-			"actions":     actions,
-			"limitations": array(limitationSchema()),
-		}),
-	}
+	return object(properties{
+		"status":      enumField(investigation.ConclusionStatuses...),
+		"summary":     map[string]any{"type": "string", "maxLength": investigation.MaxSummaryLength},
+		"impact":      impactSchema(),
+		"findings":    array(agentFindingSchema()),
+		"hypotheses":  array(hypothesisSchema()),
+		"actions":     actions,
+		"limitations": array(limitationSchema()),
+	})
 }
 
 func impactSchema() map[string]any {

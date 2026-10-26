@@ -169,7 +169,11 @@ func (p *Provider) EstimateRequestTokens(prompt reasoning.Prompt) (int, error) {
 	if err := validateEffort(prompt.Model, prompt.Effort); err != nil {
 		return 0, err
 	}
-	encoded, err := json.Marshal(p.params(prompt))
+	names, err := prompt.ProviderToolNames()
+	if err != nil {
+		return 0, err
+	}
+	encoded, err := json.Marshal(p.params(prompt, names))
 	if err != nil {
 		return 0, err
 	}
@@ -182,10 +186,14 @@ func (p *Provider) Complete(
 	if err := validateEffort(prompt.Model, prompt.Effort); err != nil {
 		return reasoning.Completion{}, reasoning.Failed(reasoning.OutcomeRejected, Name, prompt.Model, err.Error())
 	}
+	names, err := prompt.ProviderToolNames()
+	if err != nil {
+		return reasoning.Completion{}, reasoning.Failed(reasoning.OutcomeMalformed, Name, prompt.Model, "invalid Tool names")
+	}
 	ctx, cancel := context.WithTimeout(ctx, p.config.RequestTimeout)
 	defer cancel()
 	captured := &requestID{}
-	stream := p.client.Messages.NewStreaming(ctx, p.params(prompt), captured.option())
+	stream := p.client.Messages.NewStreaming(ctx, p.params(prompt, names), captured.option())
 
 	message := sdk.Message{}
 	var streamErr error
@@ -220,7 +228,10 @@ func (p *Provider) Complete(
 	}
 
 	completion.Document = []byte(textOf(message))
-	completion.ToolCalls = toolCallsOf(message)
+	completion.ToolCalls, err = toolCallsOf(message, names)
+	if err != nil {
+		return completion, reasoning.Failed(reasoning.OutcomeMalformed, Name, prompt.Model, "the provider returned an unoffered Tool")
+	}
 	// Anthropic requires thinking blocks and their signatures to be replayed verbatim in tool loops.
 	if raw, err := json.Marshal(message); err == nil {
 		completion.Raw = raw
@@ -228,18 +239,22 @@ func (p *Provider) Complete(
 	return completion, nil
 }
 
-func toolCallsOf(message sdk.Message) []reasoning.CompletionCall {
+func toolCallsOf(message sdk.Message, names reasoning.ToolNames) ([]reasoning.CompletionCall, error) {
 	var calls []reasoning.CompletionCall
 	for _, block := range message.Content {
 		if use, isUse := block.AsAny().(sdk.ToolUseBlock); isUse {
+			name, offered := names.Resolve(use.Name)
+			if !offered {
+				return nil, fmt.Errorf("unoffered Tool")
+			}
 			calls = append(calls, reasoning.CompletionCall{
 				ID:        use.ID,
-				Name:      internalToolName(use.Name),
+				Name:      name,
 				Arguments: use.Input,
 			})
 		}
 	}
-	return calls
+	return calls, nil
 }
 
 func textOf(message sdk.Message) string {

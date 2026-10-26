@@ -101,12 +101,13 @@ type Prompt struct {
 	Model           string
 	System          []Block
 	Content         []Block
-	Schema          Schema
+	Schema          map[string]any
 	Tools           []integrations.ToolDefinition
 	ForceTool       string
 	Turns           []Turn
 	MaxOutputTokens int64
 	Effort          Effort
+	availableTools  []integrations.ToolDefinition
 }
 
 type Turn struct {
@@ -136,12 +137,6 @@ type ToolResultTurn struct {
 type Block struct {
 	Text  string
 	Cache bool
-}
-
-type Schema struct {
-	Name     string
-	Version  string
-	Document map[string]any
 }
 
 type Completion struct {

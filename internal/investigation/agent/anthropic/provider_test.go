@@ -152,25 +152,21 @@ func promptFixture() reasoning.Prompt {
 		Model:   "claude-opus-5",
 		System:  []reasoning.Block{{Text: "the frozen preamble", Cache: true}},
 		Content: []reasoning.Block{{Text: "the brief", Cache: true}, {Text: "the task"}},
-		Schema: reasoning.Schema{
-			Name:    "judgement",
-			Version: "1",
-			Document: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"findings": map[string]any{"type": "array",
-						"items": map[string]any{
-							"type": "object",
-							"properties": map[string]any{
-								"statement": map[string]any{"type": "string"},
-							},
-							"required":             []any{"statement"},
-							"additionalProperties": false,
-						}},
-				},
-				"required":             []any{"findings"},
-				"additionalProperties": false,
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"findings": map[string]any{"type": "array",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"statement": map[string]any{"type": "string"},
+						},
+						"required":             []any{"statement"},
+						"additionalProperties": false,
+					}},
 			},
+			"required":             []any{"findings"},
+			"additionalProperties": false,
 		},
 		MaxOutputTokens: 32_000,
 		Effort:          reasoning.EffortHigh,
@@ -455,9 +451,9 @@ func TestComplete_FinalizationPreservesCompatibleThinkingAndContinuation(t *test
 	}{
 		{"claude-haiku-4-5", `"thinking":{"budget_tokens":2048,"type":"enabled"}`, `"tool_choice":{"type":"auto"}`},
 		{"claude-sonnet-4-5-20250929", `"thinking":{"budget_tokens":2048,"type":"enabled"}`, `"tool_choice":{"type":"auto"}`},
-		{"claude-opus-5", `"thinking":{"type":"adaptive"}`, `"tool_choice":{"name":"oc_Y29uY2x1ZGU","type":"tool"}`},
+		{"claude-opus-5", `"thinking":{"type":"adaptive"}`, `"tool_choice":{"name":"conclude","type":"tool"}`},
 		{"claude-sonnet-5-5", "", `"tool_choice":{"type":"auto"}`},
-		{"custom-model-exact-ID", "", `"tool_choice":{"name":"oc_Y29uY2x1ZGU","type":"tool"}`},
+		{"custom-model-exact-ID", "", `"tool_choice":{"name":"conclude","type":"tool"}`},
 	} {
 		t.Run(test.model, func(t *testing.T) {
 			round := &transport{responses: []*http.Response{streamed(`{}`, fullUsage, "end_turn", "")}}
@@ -512,6 +508,48 @@ func TestComplete_FinalizationPreservesCompatibleThinkingAndContinuation(t *test
 			}
 			if test.thinking == "" && (sent["thinking"] != nil || sent["output_config"] != nil) {
 				t.Errorf("unknown model must retain provider defaults: %s", body)
+			}
+		})
+	}
+}
+
+func TestComplete_ResolvesOnlyOfferedToolAliases(t *testing.T) {
+	const first = "github.read_commits__0123456789abcdef0123456789abcdef"
+	const second = "github.read_commits__fedcba9876543210fedcba9876543210"
+	for _, test := range []struct {
+		name      string
+		wantError bool
+	}{
+		{"github_read_commits__fedcba9876543210fedcba9876543210", false},
+		{second, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := streamed("", fullUsage, "tool_use", "")
+			body, err := io.ReadAll(response.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = response.Body.Close()
+			response.Body = io.NopCloser(strings.NewReader(strings.Replace(string(body),
+				`"content_block":{"type":"text","text":""}`,
+				`"content_block":{"type":"tool_use","id":"read-2","name":"`+test.name+`","input":{}}`, 1)))
+			provider, round := providerUnder(t, response)
+			prompt := promptFixture()
+			prompt.Tools = []integrations.ToolDefinition{{Name: first}, {Name: second}}
+			completion, err := provider.Complete(context.Background(), prompt)
+			if test.wantError {
+				if !errors.Is(err, reasoning.ErrMalformed) {
+					t.Fatalf("unoffered name accepted: %v", err)
+				}
+				return
+			}
+			if err != nil || len(completion.ToolCalls) != 1 || completion.ToolCalls[0].Name != second || completion.ToolCalls[0].ID != "read-2" {
+				t.Fatalf("wrong Tool identity: completion=%+v error=%v", completion, err)
+			}
+			for _, alias := range []string{"github_read_commits__0123456789abcdef0123456789abcdef", test.name} {
+				if !strings.Contains(round.lastBody(t), `"name":"`+alias+`"`) {
+					t.Fatalf("missing readable alias %q", alias)
+				}
 			}
 		})
 	}
