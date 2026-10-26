@@ -5,8 +5,9 @@ description: "Configure startup settings, direct or file secrets, and configurat
 
 OpenCluster uses safe defaults for server addresses, local authentication, logs,
 telemetry, investigation limits, concurrency, retention, retries, request timeouts, and
-shutdown. A normal installation supplies database, AI, and encryption files plus its
-public URL. Supply the bootstrap credential only for initial setup, then remove it.
+shutdown. A normal installation supplies database and encryption credentials plus its
+public URL. Add AI credentials to enable Investigations. Supply the bootstrap credential
+only for initial setup, then remove it.
 
 OpenCluster resolves configuration in this order:
 
@@ -23,6 +24,7 @@ invalid values, and additional YAML documents stop startup instead of being igno
 export OC_DATABASE_DSN_FILE=/run/secrets/postgres_dsn
 export OC_BOOTSTRAP_TOKEN_FILE=/run/secrets/bootstrap_token
 export OC_ENCRYPTION_KEY_FILE=/run/secrets/sealing_key
+export OC_PUBLIC_URL=http://localhost:8081
 export OC_AI_PROVIDER=anthropic
 export OC_AI_MODEL=claude-sonnet-5
 export OC_AI_API_KEY_FILE=/run/secrets/model_key
@@ -33,6 +35,49 @@ Direct alternatives are the same names without `_FILE`, for example `OC_AI_API_K
 Use direct values for local development and mounted files for production when practical.
 Never set both forms of one secret. Remove the bootstrap input after initial setup.
 
+The standalone process does not automatically load `.env`. If using `.env.example`,
+copy it to `.env`, fill in the file paths, and export its values before starting:
+
+```sh
+set -a
+. ./.env
+set +a
+go run ./cmd/controlplane
+```
+
+Compose consumes `OPENCLUSTER_*` deployment inputs and supplies `OC_*` variables inside
+the container. Use the [Quickstart exports](/getting-started/quickstart#1-create-local-secret-files)
+for Compose rather than the standalone `.env.example`.
+
+| Requirement | When needed |
+| --- | --- |
+| Database DSN and encryption key | A running HTTP service; retain the encryption key across restarts. Recovery commands need only the database DSN. |
+| Bootstrap token | Initial Organization and Admin creation only. |
+| AI provider, exact model, and API key | Together, to enable Investigations. Without them, the API remains available and Investigation requests report unavailability. |
+| OIDC issuer, client ID, and client secret | Together, when using OIDC. Local authentication remains available. |
+| GitHub App ID and private key | Together, when using GitHub App installation. |
+| Slack App client ID and secret | Together, for Slack installation; signed inbound events also require the signing secret. |
+| Relay listener and SPKI pins | When enabling Relay; use the deployment's separate Relay TLS settings. |
+| Logs, telemetry, session lifetime, worker and model limits | Optional overrides with existing defaults. |
+
+## Backend listener and public origin
+
+The standalone backend listens on `:8081`; its local public origin is
+`http://localhost:8081`. `OC_SERVER_ADDRESS` controls that backend listener.
+`OC_PUBLIC_URL` is the actual public entry point used by browser requests, sign-in and
+Integration callbacks, and generated webhook URLs. It is independent of the listen address.
+
+For production, set `OC_PUBLIC_URL` to the reachable HTTPS origin served by your existing
+edge routing. Browser origins may have one trailing slash; paths, credentials, queries,
+fragments, and invalid hosts or ports are rejected. HTTP is allowed only for `localhost`,
+`127.0.0.1`, and `[::1]` development origins. Session-cookie security is unchanged.
+Use ASCII DNS names or canonical IP addresses; mapped and scoped IPv6 addresses are unsupported.
+
+A separately installed frontend may listen on `http://localhost:8080`. Set that as the
+public origin only after verifying its same-origin proxy to backend `8081` for `/api/`
+(including SSE, authentication, and callbacks) and `/webhooks/`. This repository does
+not supply that frontend or proxy. Without it, access the backend directly on `8081`.
+
 ## Configuration file
 
 Set `OC_CONFIG_FILE` to load product-oriented YAML. Plaintext secrets are not accepted in
@@ -40,7 +85,7 @@ YAML; reference mounted files instead:
 
 ```yaml
 server:
-  address: ":8080"
+  address: ":8081"
   publicURL: "https://opencluster.example"
 telemetry:
   logLevel: info
@@ -171,8 +216,8 @@ and training terms before production use.
 | Variable | Purpose |
 | --- | --- |
 | `OC_CONFIG_FILE` | Optional strict YAML configuration file. |
-| `OC_SERVER_ADDRESS` | HTTP listen address; default `:8080`. |
-| `OC_PUBLIC_URL` | Browser and webhook origin; default `http://localhost:8080`. |
+| `OC_SERVER_ADDRESS` | HTTP listen address; default `:8081`. |
+| `OC_PUBLIC_URL` | Browser and webhook origin; default `http://localhost:8081`. |
 | `OC_DATABASE_DSN` / `OC_DATABASE_DSN_FILE` | PostgreSQL DSN file. Direct value or file; do not set both. |
 | `OC_SESSION_LIFETIME_SECONDS` | Browser session lifetime in seconds; default `43200`, range `300`–`2592000`. |
 | `OC_BOOTSTRAP_TOKEN` / `OC_BOOTSTRAP_TOKEN_FILE` | Optional one-time first-User bootstrap token file. Omit after setup to disable initialization. Direct value or file; do not set both. |

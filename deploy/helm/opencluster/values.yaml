@@ -16,7 +16,8 @@ credentials:
   modelKey: model-key
 
 server:
-  publicURL: "http://localhost:8080"
+  # Required: the actual public HTTPS origin served by your deployment.
+  publicURL: ""
 
 model:
   provider: anthropic
@@ -32,7 +33,7 @@ sessionLifetimeSeconds: 43200
 
 service:
   type: ClusterIP
-  httpPort: 8080
+  httpPort: 8081
 
 relay:
   enabled: false

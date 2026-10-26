@@ -78,10 +78,10 @@ func TestLoadUsesSafeDefaultsAndTheEssentialOSSSurface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.HTTPListenAddress != ":8080" {
+	if cfg.HTTPListenAddress != ":8081" {
 		t.Fatalf("shared HTTP default = %q", cfg.HTTPListenAddress)
 	}
-	if cfg.PublicURL != "http://localhost:8080" {
+	if cfg.PublicURL != "http://localhost:8081" {
 		t.Fatalf("public URL default = %q", cfg.PublicURL)
 	}
 	if cfg.InvestigationWorkers != 8 || cfg.MaxPendingInvestigations != 100 {
@@ -94,6 +94,63 @@ func TestLoadUsesSafeDefaultsAndTheEssentialOSSSurface(t *testing.T) {
 	if cfg.ModelContextWindow != 0 || cfg.ModelMaxOutputTokens != 0 {
 		t.Fatalf("model limit overrides = context %d output %d",
 			cfg.ModelContextWindow, cfg.ModelMaxOutputTokens)
+	}
+}
+
+func TestLoadPublicBrowserOrigins(t *testing.T) {
+	for _, test := range []struct{ input, normalized string }{
+		{"https://console.example.com", "https://console.example.com"},
+		{" HTTPS://Console.Example.COM:443/ ", "https://console.example.com:443"},
+		{"https://192.0.2.1:8443", "https://192.0.2.1:8443"},
+		{"https://[2001:db8::1]", "https://[2001:db8::1]"},
+		{"https://[2001:0db8:0:0:0:0:0:1]", "https://[2001:db8::1]"},
+		{"https://[::ffff:192.0.2.1]", ""},
+		{"http://localhost:8081/", "http://localhost:8081"},
+		{"http://127.0.0.1:8081", "http://127.0.0.1:8081"},
+		{"http://[::1]:8081", "http://[::1]:8081"},
+		{"ftp://localhost", ""}, {"http://console.example.com", ""},
+		{"http://localhost.example.com", ""}, {"http://127.0.0.2", ""},
+		{"https://user:private@console.example.com", ""},
+		{"https://console.example.com/path", ""}, {"https://console.example.com//", ""},
+		{"https://console.example.com/%2f", ""},
+		{"https://console.example.com?private=value", ""}, {"https://console.example.com?", ""},
+		{"https://console.example.com#private", ""}, {"https://console.example.com#", ""},
+		{"https://:8081", ""},
+		{"https://999.1.2.3", ""},
+		{"https://0x7f000001", ""},
+		{"https://İ.example.com", ""},
+		{"https://[localhost]", ""}, {"https://::1", ""},
+		{"https://console.example.com:", ""}, {"https://console.example.com:zero", ""},
+		{"https://console.example.com:0", ""}, {"https://console.example.com:65536", ""},
+	} {
+		t.Run(test.input, func(t *testing.T) {
+			values := essentialEnvironment(t)
+			values[EnvPublicURL] = test.input
+			cfg, err := Load(lookup(values))
+			if test.normalized == "" {
+				if err == nil || !strings.Contains(err.Error(), EnvPublicURL) || strings.Contains(err.Error(), "private") {
+					t.Fatalf("origin was accepted or its error was unsafe: %v", err)
+				}
+			} else if err != nil || cfg.PublicURL != test.normalized {
+				t.Fatalf("origin=%q error=%v, want %q", cfg.PublicURL, err, test.normalized)
+			}
+		})
+	}
+}
+
+func TestLoadEnvironmentOverridesYAMLAndKeepsPublicOriginIndependent(t *testing.T) {
+	values := essentialEnvironment(t)
+	values[EnvConfigFile] = secretFile(t, "server:\n  address: '127.0.0.1:9091'\n  publicURL: 'https://console.example.com'\nai:\n  apiKeyFile: 'missing-key'\n")
+	delete(values, EnvModelKeyFile)
+	values[EnvModelKey] = "environment-key"
+	cfg, err := Load(lookup(values))
+	if err != nil || cfg.HTTPListenAddress != "127.0.0.1:9091" || cfg.PublicURL != "https://console.example.com" || cfg.ModelAPIKey != "environment-key" {
+		t.Fatalf("YAML fallback or direct-secret override failed: %v", err)
+	}
+	values[EnvHTTPAddress] = "127.0.0.1:9092"
+	cfg, err = Load(lookup(values))
+	if err != nil || cfg.HTTPListenAddress != "127.0.0.1:9092" || cfg.PublicURL != "https://console.example.com" {
+		t.Fatalf("listener override changed the public origin: %v", err)
 	}
 }
 

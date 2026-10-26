@@ -14,4 +14,4 @@ docker run --rm --volume "$(pwd):/work" --workdir /work "$image" \
 
 # Mintlify needs an absolute server to render copyable request examples. Keep the canonical
 # contract deployment-neutral and specialize only its generated documentation input.
-sed -i '0,/^  - url: \/$/s||  - url: http://localhost:8080\n    description: Local self-hosted deployment|' "$output"
+sed -i '0,/^  - url: \/$/s||  - url: http://localhost:8081\n    description: Local self-hosted deployment|' "$output"

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -22,7 +23,8 @@ func TestComposePublishesOnlyTheControlPlaneAPI(t *testing.T) {
 	}
 	var configuration struct {
 		Services map[string]struct {
-			Ports []json.RawMessage `json:"ports"`
+			Ports       []json.RawMessage `json:"ports"`
+			Environment map[string]string `json:"environment"`
 		} `json:"services"`
 	}
 	if err := json.Unmarshal(output, &configuration); err != nil {
@@ -45,10 +47,38 @@ func TestComposePublishesOnlyTheControlPlaneAPI(t *testing.T) {
 	if err := json.Unmarshal(api.Ports[0], &port); err != nil {
 		t.Fatal(err)
 	}
-	if port.HostIP != "127.0.0.1" || port.Target != 8080 || port.Published != "8080" {
-		t.Errorf("API port mapping = %+v, want 127.0.0.1:8080:8080", port)
+	if port.HostIP != "127.0.0.1" || port.Target != 8081 || port.Published != "8081" {
+		t.Errorf("API port mapping = %+v, want 127.0.0.1:8081:8081", port)
+	}
+	if api.Environment["OC_SERVER_ADDRESS"] != ":8081" ||
+		!strings.Contains(api.Environment["OC_PUBLIC_URL"], "http://localhost:8081") {
+		t.Fatalf("backend listener and public defaults disagree with the port mapping: %+v", api.Environment)
 	}
 	if len(configuration.Services["postgres"].Ports) != 0 {
 		t.Error("PostgreSQL must not publish a host port")
+	}
+}
+
+func TestHelmRequiresAnExplicitPublicOrigin(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("Helm CLI is unavailable")
+	}
+	command := exec.Command("helm", "template", "opencluster", "deploy/helm/opencluster")
+	command.Dir = "../.."
+	output, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "server.publicURL") {
+		t.Fatalf("chart must require the public origin: %v: %s", err, output)
+	}
+	command = exec.Command("helm", "template", "opencluster", "deploy/helm/opencluster",
+		"--set", "server.publicURL=https://console.example.com")
+	command.Dir = "../.."
+	output, err = command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("rendering with public origin: %v: %s", err, output)
+	}
+	for _, expected := range []string{"value: \"https://console.example.com\"", "containerPort: 8081", "port: 8081"} {
+		if !strings.Contains(string(output), expected) {
+			t.Errorf("rendered deployment is missing %q", expected)
+		}
 	}
 }

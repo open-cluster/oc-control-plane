@@ -14,5 +14,5 @@ RUN apk add --no-cache ca-certificates \
     && adduser -S -D -H -u 65532 -G opencluster opencluster
 COPY --from=build /out/controlplane /usr/local/bin/controlplane
 USER 65532:65532
-EXPOSE 8080 8443
+EXPOSE 8081 8443
 ENTRYPOINT ["/usr/local/bin/controlplane"]

@@ -22,12 +22,13 @@ services:
       context: ../..
       dockerfile: deploy/compose/Dockerfile
     environment:
+      OC_SERVER_ADDRESS: ":8081"
       OC_DATABASE_DSN_FILE: /run/secrets/postgres_dsn
       OC_BOOTSTRAP_TOKEN_FILE: /run/secrets/bootstrap_token
       OC_ENCRYPTION_KEY_FILE: /run/secrets/sealing_key
       OC_AI_API_KEY_FILE: /run/secrets/model_key
       OC_LOG_LEVEL: ${OPENCLUSTER_LOG_LEVEL:-info}
-      OC_PUBLIC_URL: ${OPENCLUSTER_PUBLIC_URL:-http://localhost:8080}
+      OC_PUBLIC_URL: ${OPENCLUSTER_PUBLIC_URL:-http://localhost:8081}
       OC_AI_PROVIDER: ${OPENCLUSTER_AI_PROVIDER:-anthropic}
       OC_AI_MODEL: ${OPENCLUSTER_AI_MODEL:?set the configured model identifier}
       OC_AI_CONTEXT_WINDOW_SIZE: ${OPENCLUSTER_AI_CONTEXT_WINDOW_SIZE:-}
@@ -41,7 +42,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8081:8081"
     secrets:
       - postgres_dsn
       - bootstrap_token

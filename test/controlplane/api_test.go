@@ -239,7 +239,7 @@ func TestRequestCannotSelectAnotherOrganization(t *testing.T) {
 func TestBootstrapTokenComesFromAFile(t *testing.T) {
 	t.Parallel()
 
-	address := "127.0.0.1:8080"
+	address := "127.0.0.1:8081"
 
 	t.Run("omitting the token disables bootstrap", func(t *testing.T) {
 		t.Parallel()
@@ -290,7 +290,7 @@ func environment(t *testing.T, overrides map[string]string) func(string) (string
 		}
 		switch key {
 		case config.EnvHTTPAddress:
-			return "127.0.0.1:8080", true
+			return "127.0.0.1:8081", true
 		case config.EnvDatabaseDSNFile:
 			return dsn, true
 		default:
