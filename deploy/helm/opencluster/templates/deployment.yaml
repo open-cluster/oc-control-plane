@@ -33,7 +33,7 @@ spec:
             - name: OC_SERVER_ADDRESS
               value: ":{{ .Values.service.httpPort }}"
             - name: OC_PUBLIC_URL
-              value: {{ .Values.server.publicURL | quote }}
+              value: {{ required "server.publicURL must be set to the public origin" .Values.server.publicURL | quote }}
             - name: OC_DATABASE_DSN_FILE
               value: "/run/opencluster/secrets/{{ .Values.database.dsnKey }}"
             {{- with .Values.credentials.bootstrapTokenKey }}

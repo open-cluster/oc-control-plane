@@ -35,6 +35,20 @@ Direct alternatives are the same names without `_FILE`, for example `OC_AI_API_K
 Use direct values for local development and mounted files for production when practical.
 Never set both forms of one secret. Remove the bootstrap input after initial setup.
 
+The standalone process does not automatically load `.env`. If using `.env.example`,
+copy it to `.env`, fill in the file paths, and export its values before starting:
+
+```sh
+set -a
+. ./.env
+set +a
+go run ./cmd/controlplane
+```
+
+Compose consumes `OPENCLUSTER_*` deployment inputs and supplies `OC_*` variables inside
+the container. Use the [Quickstart exports](/getting-started/quickstart#1-create-local-secret-files)
+for Compose rather than the standalone `.env.example`.
+
 | Requirement | When needed |
 | --- | --- |
 | Database DSN and encryption key | A running HTTP service; retain the encryption key across restarts. Recovery commands need only the database DSN. |
@@ -57,6 +71,7 @@ For production, set `OC_PUBLIC_URL` to the reachable HTTPS origin served by your
 edge routing. Browser origins may have one trailing slash; paths, credentials, queries,
 fragments, and invalid hosts or ports are rejected. HTTP is allowed only for `localhost`,
 `127.0.0.1`, and `[::1]` development origins. Session-cookie security is unchanged.
+Use ASCII DNS names or canonical IP addresses; mapped and scoped IPv6 addresses are unsupported.
 
 A separately installed frontend may listen on `http://localhost:8080`. Set that as the
 public origin only after verifying its same-origin proxy to backend `8081` for `/api/`

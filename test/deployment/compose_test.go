@@ -58,3 +58,27 @@ func TestComposePublishesOnlyTheControlPlaneAPI(t *testing.T) {
 		t.Error("PostgreSQL must not publish a host port")
 	}
 }
+
+func TestHelmRequiresAnExplicitPublicOrigin(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("Helm CLI is unavailable")
+	}
+	command := exec.Command("helm", "template", "opencluster", "deploy/helm/opencluster")
+	command.Dir = "../.."
+	output, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "server.publicURL") {
+		t.Fatalf("chart must require the public origin: %v: %s", err, output)
+	}
+	command = exec.Command("helm", "template", "opencluster", "deploy/helm/opencluster",
+		"--set", "server.publicURL=https://console.example.com")
+	command.Dir = "../.."
+	output, err = command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("rendering with public origin: %v: %s", err, output)
+	}
+	for _, expected := range []string{"value: \"https://console.example.com\"", "containerPort: 8081", "port: 8081"} {
+		if !strings.Contains(string(output), expected) {
+			t.Errorf("rendered deployment is missing %q", expected)
+		}
+	}
+}

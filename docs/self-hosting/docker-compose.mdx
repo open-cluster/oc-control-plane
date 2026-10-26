@@ -10,10 +10,11 @@ a browser console; visiting `/` returns `404`.
 ## Prerequisites
 
 You need Docker with Docker Compose, an available port `8081`, persistent local storage,
-and outbound HTTPS access to your configured Anthropic or OpenRouter model provider. Create
-the credential files described in `.env.example`; this stack mounts secret files.
-The standalone process also supports direct secret values as described in
-[Configuration](/self-hosting/configuration).
+and outbound HTTPS access to your configured Anthropic or OpenRouter model provider.
+Create the credential files and export the `OPENCLUSTER_*` deployment inputs from
+[Quickstart step 1](/getting-started/quickstart#1-create-local-secret-files).
+Compose mounts those files and supplies `OC_*` settings inside the container.
+The repository's `.env.example` is for the standalone Go process, not Compose.
 
 Set the required `OPENCLUSTER_*` file paths, provider and model, and numeric non-root
 `OPENCLUSTER_RUNTIME_UID` and `OPENCLUSTER_RUNTIME_GID` values. The PostgreSQL DSN uses

@@ -16,7 +16,8 @@ credentials:
   modelKey: model-key
 
 server:
-  publicURL: "http://localhost:8081"
+  # Required: the actual public HTTPS origin served by your deployment.
+  publicURL: ""
 
 model:
   provider: anthropic

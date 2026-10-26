@@ -26,6 +26,9 @@ Do not put their values in Helm values or command history.
 
 Create a values file with the public URL, released image, model provider, and model:
 
+`server.publicURL` is required. Set it to the real public HTTPS origin used for
+sign-in, callbacks, and webhooks; the chart does not default it to a local address.
+
 ```yaml
 image:
   repository: IMAGE_REPOSITORY
