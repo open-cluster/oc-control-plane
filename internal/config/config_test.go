@@ -118,6 +118,7 @@ func TestLoadPublicBrowserOrigins(t *testing.T) {
 		{"https://:8081", ""},
 		{"https://999.1.2.3", ""},
 		{"https://0x7f000001", ""},
+		{"https://İ.example.com", ""},
 		{"https://[localhost]", ""}, {"https://::1", ""},
 		{"https://console.example.com:", ""}, {"https://console.example.com:zero", ""},
 		{"https://console.example.com:0", ""}, {"https://console.example.com:65536", ""},

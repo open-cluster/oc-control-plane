@@ -19,7 +19,7 @@ func optionalBrowserURL(lookup func(string) (string, bool), key string) (string,
 		strings.ContainsAny(value, "?#") || (parsed.EscapedPath() != "" && parsed.EscapedPath() != "/") {
 		return "", fmt.Errorf("%s must be an absolute origin without credentials, path, query or fragment", key)
 	}
-	host := strings.ToLower(parsed.Hostname())
+	host := parsed.Hostname()
 	address, addressErr := netip.ParseAddr(host)
 	if addressErr == nil {
 		if address.Is4In6() || address.Zone() != "" {
@@ -31,10 +31,11 @@ func optionalBrowserURL(lookup func(string) (string, bool), key string) (string,
 		// ambiguous numeric hosts need a canonical IP address instead.
 		last := strings.TrimSuffix(host, ".")
 		last = last[strings.LastIndex(last, ".")+1:]
-		if last == "" || last[0] < 'a' || last[0] > 'z' ||
+		if last == "" || (last[0] < 'a' || last[0] > 'z') && (last[0] < 'A' || last[0] > 'Z') ||
 			strings.Contains(host, ":") || url.PathEscape(host) != host {
 			return "", fmt.Errorf("%s must use an ASCII hostname or a canonical IP address", key)
 		}
+		host = strings.ToLower(host)
 	}
 	bracketed := strings.HasPrefix(parsed.Host, "[")
 	if bracketed != (addressErr == nil && address.Is6()) || strings.HasSuffix(parsed.Host, ":") {
