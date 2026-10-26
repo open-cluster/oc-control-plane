@@ -30,6 +30,14 @@ func decodeToolCalls(calls []CompletionCall) []toolCall {
 		} else if call.Name == historyToolName {
 			translatedCall.Arguments = arguments
 		} else {
+			if selected, present := arguments["integrationId"]; present {
+				id, ok := selected.(string)
+				if !ok || id == "" {
+					translatedCall.Error = "Tool integrationId must be a nonempty string when supplied"
+				} else {
+					translatedCall.IntegrationID = id
+				}
+			}
 			input, ok := arguments["input"].(map[string]any)
 			if !ok || input == nil {
 				translatedCall.Error = "Tool input must be a JSON object"
@@ -44,8 +52,8 @@ func decodeToolCalls(calls []CompletionCall) []toolCall {
 				}
 			}
 			for field := range arguments {
-				if field != "purpose" && field != "input" {
-					translatedCall.Error = "Tool arguments accept only input and optional purpose"
+				if field != "purpose" && field != "input" && field != "integrationId" {
+					translatedCall.Error = "Tool arguments accept only input, optional purpose and source selection"
 				}
 			}
 		}
@@ -112,7 +120,7 @@ func (r *Agent) execute(
 		StartedAt:   time.Now().UTC(),
 	}
 
-	source, tool, offered := toolNamed(selected, call.Tool)
+	source, tool, offered := toolNamed(selected, call)
 	if !offered {
 		run.Outcome = investigation.RunFailed
 		run.Error = "not one of the tools the selected sources offer"
@@ -223,20 +231,16 @@ func firstLine(text string) string {
 	return text
 }
 
-func toolNamed(selected []offeredSource, name string) (offeredSource, integrations.Tool, bool) {
-	for _, source := range selected {
-		for _, tool := range source.Tools {
-			if tool.Name == name {
-				return source, tool, true
-			}
-		}
-	}
+func toolNamed(selected []offeredSource, call toolCall) (offeredSource, integrations.Tool, bool) {
 	var match offeredSource
 	var matched integrations.Tool
 	found := 0
 	for _, source := range selected {
+		if call.IntegrationID != "" && source.Integration.ID.String() != call.IntegrationID {
+			continue
+		}
 		for _, tool := range source.Tools {
-			if base, _, bound := strings.Cut(tool.Name, "__"); bound && base == name {
+			if tool.Name == call.Tool {
 				match, matched = source, tool
 				found++
 			}

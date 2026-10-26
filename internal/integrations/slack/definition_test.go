@@ -97,7 +97,7 @@ func TestEveryToolDeclaresItsWholeContract(t *testing.T) {
 	t.Parallel()
 
 	for _, tool := range Definition(NewClient(""), nil, false).Tools {
-		if tool.Name == "" || !strings.HasPrefix(tool.Name, "slack.") {
+		if tool.Name == "" || !strings.HasPrefix(tool.Name, "slack_") {
 			t.Errorf("tool name %q does not carry the provider prefix", tool.Name)
 		}
 		if strings.TrimSpace(tool.Description) == "" {
@@ -142,7 +142,7 @@ func TestMessageDescriptionsRequireCorroboration(t *testing.T) {
 	t.Parallel()
 
 	for _, tool := range Definition(NewClient(""), nil, false).Tools {
-		if tool.Name == "slack.list_channels" {
+		if tool.Name == "slack_list_channels" {
 			continue
 		}
 		const limitation = "testimony and requires corroboration"

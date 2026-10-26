@@ -8,8 +8,8 @@ import (
 
 func definitionWithTools() Definition {
 	return Definition{Manifest: Manifest{Tools: []Tool{
-		{Name: "slack.list_channels"},
-		{Name: "slack.search_messages", RequiredGrants: []string{"search:read"}},
+		{Name: "slack_list_channels"},
+		{Name: "slack_search_messages", RequiredGrants: []string{"search:read"}},
 	}}}
 }
 
@@ -31,7 +31,7 @@ func TestAToolMissingItsGrantIsUnavailableAndSaysWhich(t *testing.T) {
 
 	found := ToolAvailabilityFor(definitionWithTools(), Integration{Status: StatusVerified, VerifiedAt: time.Now()})
 	for _, one := range found {
-		if one.Tool != "slack.search_messages" {
+		if one.Tool != "slack_search_messages" {
 			continue
 		}
 		if one.Available || one.Reason == "" {
@@ -46,7 +46,7 @@ func TestSupportedToolsUsesTheSameVerifiedGrantDecision(t *testing.T) {
 	t.Parallel()
 
 	without := SupportedTools(definitionWithTools(), Integration{Status: StatusVerified, VerifiedAt: time.Now()})
-	if len(without) != 1 || without[0].Name != "slack.list_channels" {
+	if len(without) != 1 || without[0].Name != "slack_list_channels" {
 		t.Fatalf("ungranted Tool was offered: %+v", without)
 	}
 	with := SupportedTools(definitionWithTools(),

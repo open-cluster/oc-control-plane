@@ -1,7 +1,6 @@
 package anthropic
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -25,7 +24,7 @@ func (p *Provider) params(prompt reasoning.Prompt) sdk.MessageNewParams {
 		params.OutputConfig.Effort = effortOf(prompt.Effort)
 	}
 	if len(prompt.Tools) == 0 {
-		params.OutputConfig.Format = sdk.JSONOutputFormatParam{Schema: prompt.Schema.Document}
+		params.OutputConfig.Format = sdk.JSONOutputFormatParam{Schema: prompt.Schema}
 		return params
 	}
 	params.Tools = toolParams(prompt.Tools)
@@ -34,7 +33,7 @@ func (p *Provider) params(prompt reasoning.Prompt) sdk.MessageNewParams {
 		"claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-mythos-5-1")
 	if prompt.ForceTool != "" && canForce {
 		params.ToolChoice = sdk.ToolChoiceUnionParam{
-			OfTool: &sdk.ToolChoiceToolParam{Name: anthropicToolName(prompt.ForceTool)},
+			OfTool: &sdk.ToolChoiceToolParam{Name: prompt.ForceTool},
 		}
 	} else {
 		params.ToolChoice = sdk.ToolChoiceUnionParam{
@@ -133,7 +132,7 @@ func toolParams(definitions []integrations.ToolDefinition) []sdk.ToolUnionParam 
 			schema.ExtraFields = map[string]any{"additionalProperties": additional}
 		}
 		tools = append(tools, sdk.ToolUnionParam{OfTool: &sdk.ToolParam{
-			Name:        anthropicToolName(definition.Name),
+			Name:        definition.Name,
 			Description: sdk.String(definition.Description),
 			InputSchema: schema,
 		}})
@@ -180,25 +179,9 @@ func assistantMessage(assistant reasoning.AssistantTurn) sdk.MessageParam {
 		if len(call.Arguments) > 0 {
 			_ = json.Unmarshal(call.Arguments, &input)
 		}
-		blocks = append(blocks, sdk.NewToolUseBlock(call.ID, input, anthropicToolName(call.Name)))
+		blocks = append(blocks, sdk.NewToolUseBlock(call.ID, input, call.Name))
 	}
 	return sdk.NewAssistantMessage(blocks...)
-}
-
-func anthropicToolName(name string) string {
-	return "oc_" + base64.RawURLEncoding.EncodeToString([]byte(name))
-}
-
-func internalToolName(name string) string {
-	encoded, found := strings.CutPrefix(name, "oc_")
-	if !found {
-		return name
-	}
-	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil {
-		return name
-	}
-	return string(decoded)
 }
 
 func systemBlocks(prompt reasoning.Prompt) []sdk.TextBlockParam {

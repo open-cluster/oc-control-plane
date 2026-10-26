@@ -9,14 +9,14 @@ import (
 )
 
 const (
-	toolListRepositories = "github.list_repositories"
-	toolReadCommits      = "github.read_commits"
-	toolReadCommit       = "github.read_commit"
-	toolReadPullRequest  = "github.read_pull_request"
-	toolReadWorkflowRuns = "github.read_workflow_runs"
-	toolReadJobLog       = "github.read_job_log"
-	toolReadFile         = "github.read_file"
-	toolListReleases     = "github.list_releases"
+	toolListRepositories = "github_list_repositories"
+	toolReadCommits      = "github_read_commits"
+	toolReadCommit       = "github_read_commit"
+	toolReadPullRequest  = "github_read_pull_request"
+	toolReadWorkflowRuns = "github_read_workflow_runs"
+	toolReadJobLog       = "github_read_job_log"
+	toolReadFile         = "github_read_file"
+	toolListReleases     = "github_list_releases"
 )
 
 func Definition(app *App, client *Client) integrations.Definition {

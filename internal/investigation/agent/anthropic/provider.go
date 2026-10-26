@@ -169,6 +169,9 @@ func (p *Provider) EstimateRequestTokens(prompt reasoning.Prompt) (int, error) {
 	if err := validateEffort(prompt.Model, prompt.Effort); err != nil {
 		return 0, err
 	}
+	if prompt.ForceTool != "" && !prompt.OffersTool(prompt.ForceTool) {
+		return 0, fmt.Errorf("forced Tool was not offered")
+	}
 	encoded, err := json.Marshal(p.params(prompt))
 	if err != nil {
 		return 0, err
@@ -181,6 +184,9 @@ func (p *Provider) Complete(
 ) (reasoning.Completion, error) {
 	if err := validateEffort(prompt.Model, prompt.Effort); err != nil {
 		return reasoning.Completion{}, reasoning.Failed(reasoning.OutcomeRejected, Name, prompt.Model, err.Error())
+	}
+	if prompt.ForceTool != "" && !prompt.OffersTool(prompt.ForceTool) {
+		return reasoning.Completion{}, reasoning.Failed(reasoning.OutcomeRejected, Name, prompt.Model, "forced Tool was not offered")
 	}
 	ctx, cancel := context.WithTimeout(ctx, p.config.RequestTimeout)
 	defer cancel()
@@ -220,7 +226,11 @@ func (p *Provider) Complete(
 	}
 
 	completion.Document = []byte(textOf(message))
-	completion.ToolCalls = toolCallsOf(message)
+	calls, err := toolCallsOf(message, prompt)
+	if err != nil {
+		return completion, reasoning.Failed(reasoning.OutcomeMalformed, Name, prompt.Model, err.Error())
+	}
+	completion.ToolCalls = calls
 	// Anthropic requires thinking blocks and their signatures to be replayed verbatim in tool loops.
 	if raw, err := json.Marshal(message); err == nil {
 		completion.Raw = raw
@@ -228,18 +238,21 @@ func (p *Provider) Complete(
 	return completion, nil
 }
 
-func toolCallsOf(message sdk.Message) []reasoning.CompletionCall {
+func toolCallsOf(message sdk.Message, prompt reasoning.Prompt) ([]reasoning.CompletionCall, error) {
 	var calls []reasoning.CompletionCall
 	for _, block := range message.Content {
 		if use, isUse := block.AsAny().(sdk.ToolUseBlock); isUse {
+			if !prompt.OffersTool(use.Name) {
+				return nil, fmt.Errorf("the provider returned a Tool that was not offered")
+			}
 			calls = append(calls, reasoning.CompletionCall{
 				ID:        use.ID,
-				Name:      internalToolName(use.Name),
+				Name:      use.Name,
 				Arguments: use.Input,
 			})
 		}
 	}
-	return calls
+	return calls, nil
 }
 
 func textOf(message sdk.Message) string {

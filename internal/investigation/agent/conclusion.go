@@ -14,8 +14,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-const SchemaVersion = "9"
-
 type properties map[string]any
 
 var (

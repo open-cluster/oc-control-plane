@@ -93,6 +93,22 @@ func TestLiveProgressEventMatchesSerializedSchema(t *testing.T) {
 		}
 		event := decodeSerializedEvent(t, schema, data)
 		seen = append(seen, event["type"].(string))
+		if event["type"] == "tool_completed" {
+			status, body := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/investigations/"+turn, nil)
+			if status != http.StatusOK {
+				t.Fatalf("Tool Run detail = %d: %s", status, body)
+			}
+			var detail struct {
+				Runs []struct {
+					Ordinal int `json:"ordinal"`
+				} `json:"runs"`
+			}
+			decodeInto(t, body, &detail)
+			ordinal := int(event["payload"].(map[string]any)["ordinal"].(float64))
+			if len(detail.Runs) < ordinal || detail.Runs[ordinal-1].Ordinal != ordinal {
+				t.Fatal("live completion has no committed Tool Run detail")
+			}
+		}
 		if event["type"] == "progress" {
 			sawProgress = true
 			break

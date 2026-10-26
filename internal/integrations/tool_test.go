@@ -7,7 +7,7 @@ import (
 
 func definedTool() Tool {
 	return Tool{
-		Name: "example.read_things",
+		Name: "example_read_things",
 		Description: "Read one thing's records inside a time window. Use to answer what " +
 			"changed before a failure. Do not use to find the thing; use " +
 			"example.list_things first. Results are bounded and report truncation.",
@@ -24,7 +24,7 @@ func definedTool() Tool {
 
 func TestDefinitionPassesTheAuthoredDescriptionThrough(t *testing.T) {
 	definition := definedTool().Definition()
-	if definition.Name != "example.read_things" {
+	if definition.Name != "example_read_things" {
 		t.Fatalf("name = %q", definition.Name)
 	}
 	if definition.Description != definedTool().Description {

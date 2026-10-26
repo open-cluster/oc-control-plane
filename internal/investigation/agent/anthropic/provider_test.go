@@ -119,6 +119,86 @@ func failedWith(status int, body string) *http.Response {
 	return response
 }
 
+func streamedTool(name string) *http.Response {
+	response := streamed("", fullUsage, "tool_use", "")
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response.Body = io.NopCloser(strings.NewReader(strings.Replace(string(body),
+		`"type":"text","text":""`,
+		`"type":"tool_use","id":"native-read","name":`+quoted(name)+`,"input":{}`, 1)))
+	return response
+}
+
+func TestComplete_PreservesOfferedToolNamesAndContinuation(t *testing.T) {
+	fixtures := []string{
+		"github_read_commits",
+		"conclude",
+		"read_conversation_history",
+	}
+	for _, selected := range fixtures {
+		t.Run(selected, func(t *testing.T) {
+			provider, round := providerUnder(t, streamedTool(selected), streamedTool(selected))
+			prompt := promptFixture()
+			for _, fixture := range fixtures {
+				prompt.Tools = append(prompt.Tools, integrations.ToolDefinition{Name: fixture,
+					InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+				})
+			}
+			completion, err := provider.Complete(context.Background(), prompt)
+			if err != nil || len(completion.ToolCalls) != 1 ||
+				completion.ToolCalls[0].Name != selected || completion.ToolCalls[0].ID != "native-read" {
+				t.Fatalf("canonical Tool call = %+v, error = %v", completion.ToolCalls, err)
+			}
+			for _, fixture := range fixtures {
+				if !strings.Contains(round.lastBody(t), `"name":"`+fixture+`"`) {
+					t.Fatalf("missing canonical Tool name %s", fixture)
+				}
+			}
+			prompt.Turns = []reasoning.Turn{{Assistant: reasoning.AssistantTurn{Calls: completion.ToolCalls},
+				ToolResults: []reasoning.ToolResultTurn{{CallID: "native-read", Content: "recorded read"}},
+			}}
+			prompt.Tools = []integrations.ToolDefinition{{Name: selected}}
+			prompt.ForceTool = selected
+			if _, err := provider.Complete(context.Background(), prompt); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(round.lastBody(t), `"tool_choice":{"name":"`+selected+`"`) ||
+				!strings.Contains(round.lastBody(t), `"name":"`+selected+`","type":"tool_use"`) {
+				t.Fatal("forced subset or reconstructed continuation changed the Tool name")
+			}
+		})
+	}
+}
+
+func TestComplete_RejectsUnofferedTools(t *testing.T) {
+	for _, test := range []struct {
+		name, returned, forced string
+		tools                  []integrations.ToolDefinition
+		want                   error
+	}{
+		{"unoffered name", "invented_read", "", []integrations.ToolDefinition{{Name: "github_read_commits"}}, reasoning.ErrMalformed},
+		{"qualified name", "github_read_commits__11111111111141118111111111111111", "", []integrations.ToolDefinition{{Name: "github_read_commits"}}, reasoning.ErrMalformed},
+		{"unoffered forced Tool", "", "conclude", []integrations.ToolDefinition{{Name: "github_read_commits"}}, reasoning.ErrRejected},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider, round := providerUnder(t, streamedTool(test.returned))
+			prompt := promptFixture()
+			prompt.Tools, prompt.ForceTool = test.tools, test.forced
+			if _, err := provider.Complete(context.Background(), prompt); !errors.Is(err, test.want) {
+				t.Fatalf("provider error = %v, want %v", err, test.want)
+			}
+			if test.want == reasoning.ErrRejected {
+				if round.callCount() != 0 {
+					t.Fatal("an unoffered forced Tool reached the provider")
+				}
+				if _, err := provider.EstimateRequestTokens(prompt); err == nil {
+					t.Fatal("request estimation accepted a request execution would reject")
+				}
+			}
+		})
+	}
+}
+
 func quoted(value string) string {
 	escaped := strings.ReplaceAll(value, `\`, `\\`)
 	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
@@ -152,25 +232,21 @@ func promptFixture() reasoning.Prompt {
 		Model:   "claude-opus-5",
 		System:  []reasoning.Block{{Text: "the frozen preamble", Cache: true}},
 		Content: []reasoning.Block{{Text: "the brief", Cache: true}, {Text: "the task"}},
-		Schema: reasoning.Schema{
-			Name:    "judgement",
-			Version: "1",
-			Document: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"findings": map[string]any{"type": "array",
-						"items": map[string]any{
-							"type": "object",
-							"properties": map[string]any{
-								"statement": map[string]any{"type": "string"},
-							},
-							"required":             []any{"statement"},
-							"additionalProperties": false,
-						}},
-				},
-				"required":             []any{"findings"},
-				"additionalProperties": false,
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"findings": map[string]any{"type": "array",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"statement": map[string]any{"type": "string"},
+						},
+						"required":             []any{"statement"},
+						"additionalProperties": false,
+					}},
 			},
+			"required":             []any{"findings"},
+			"additionalProperties": false,
 		},
 		MaxOutputTokens: 32_000,
 		Effort:          reasoning.EffortHigh,
@@ -455,9 +531,9 @@ func TestComplete_FinalizationPreservesCompatibleThinkingAndContinuation(t *test
 	}{
 		{"claude-haiku-4-5", `"thinking":{"budget_tokens":2048,"type":"enabled"}`, `"tool_choice":{"type":"auto"}`},
 		{"claude-sonnet-4-5-20250929", `"thinking":{"budget_tokens":2048,"type":"enabled"}`, `"tool_choice":{"type":"auto"}`},
-		{"claude-opus-5", `"thinking":{"type":"adaptive"}`, `"tool_choice":{"name":"oc_Y29uY2x1ZGU","type":"tool"}`},
+		{"claude-opus-5", `"thinking":{"type":"adaptive"}`, `"tool_choice":{"name":"conclude","type":"tool"}`},
 		{"claude-sonnet-5-5", "", `"tool_choice":{"type":"auto"}`},
-		{"custom-model-exact-ID", "", `"tool_choice":{"name":"oc_Y29uY2x1ZGU","type":"tool"}`},
+		{"custom-model-exact-ID", "", `"tool_choice":{"name":"conclude","type":"tool"}`},
 	} {
 		t.Run(test.model, func(t *testing.T) {
 			round := &transport{responses: []*http.Response{streamed(`{}`, fullUsage, "end_turn", "")}}
@@ -481,7 +557,7 @@ func TestComplete_FinalizationPreservesCompatibleThinkingAndContinuation(t *test
 			}}
 			prompt.ForceTool = "conclude"
 			prompt.Turns = []reasoning.Turn{{
-				Assistant: reasoning.AssistantTurn{Raw: []byte(`{"id":"prior","type":"message","role":"assistant","model":"claude-haiku-4-5","content":[{"type":"thinking","thinking":"Retain the native continuation.","signature":"signed-thinking"},{"type":"tool_use","id":"read-1","name":"oc_cmVhZA","input":{}},{"type":"tool_use","id":"premature","name":"oc_Y29uY2x1ZGU","input":{}}]}`)},
+				Assistant: reasoning.AssistantTurn{Raw: []byte(`{"id":"prior","type":"message","role":"assistant","model":"claude-haiku-4-5","content":[{"type":"thinking","thinking":"Retain the native continuation.","signature":"signed-thinking"},{"type":"tool_use","id":"read-1","name":"github_read_commits","input":{}},{"type":"tool_use","id":"premature","name":"conclude","input":{}}]}`)},
 				ToolResults: []reasoning.ToolResultTurn{
 					{CallID: "read-1", Content: "[run 1] workload state"},
 					{CallID: "premature", Content: "Finalization deferred: consider the read results.", IsError: true},

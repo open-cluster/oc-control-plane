@@ -1,10 +1,8 @@
 package openrouter
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strings"
 
 	sdk "github.com/OpenRouterTeam/go-sdk/models/components"
@@ -12,17 +10,6 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 )
-
-var validToolName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
-
-func toolName(name string) string {
-	if validToolName.MatchString(name) {
-		return name
-	}
-	// Integration-qualified names can exceed the provider's length and character limits.
-	digest := sha256.Sum256([]byte(name))
-	return fmt.Sprintf("oc_%x", digest[:16])
-}
 
 func request(prompt agent.Prompt) (sdk.ChatRequest, error) {
 	chatRequest := sdk.ChatRequest{
@@ -52,7 +39,7 @@ func request(prompt agent.Prompt) (sdk.ChatRequest, error) {
 			sdk.ChatFunctionToolFunction{
 				Type: sdk.ChatFunctionToolTypeFunction,
 				Function: sdk.ChatFunctionToolFunctionFunction{
-					Name:        toolName(definition.Name),
+					Name:        definition.Name,
 					Description: &definition.Description,
 					Parameters:  definition.InputSchema,
 				},
@@ -62,7 +49,7 @@ func request(prompt agent.Prompt) (sdk.ChatRequest, error) {
 		chatRequest.ToolChoice = new(sdk.CreateChatToolChoiceChatNamedToolChoice(sdk.ChatNamedToolChoice{
 			Type: sdk.ChatNamedToolChoiceTypeFunction,
 			Function: sdk.ChatNamedToolChoiceFunction{
-				Name: toolName(prompt.ForceTool),
+				Name: prompt.ForceTool,
 			},
 		}))
 	}
@@ -81,7 +68,7 @@ func request(prompt agent.Prompt) (sdk.ChatRequest, error) {
 					ID:   call.ID,
 					Type: sdk.ChatToolCallTypeFunction,
 					Function: sdk.ChatToolCallFunction{
-						Name:      toolName(call.Name),
+						Name:      call.Name,
 						Arguments: string(call.Arguments)},
 				})
 			}

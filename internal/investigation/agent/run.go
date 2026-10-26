@@ -115,11 +115,12 @@ type offeredSource struct {
 }
 
 type toolCall struct {
-	ID        string
-	Tool      string
-	Purpose   string
-	Arguments map[string]any
-	Error     string
+	ID            string
+	Tool          string
+	IntegrationID string
+	Purpose       string
+	Arguments     map[string]any
+	Error         string
 }
 
 type toolFeedback struct {
@@ -512,20 +513,22 @@ func (r *Agent) Run(
 				continue
 			}
 			var run investigation.ToolRun
+			announceCompletion := false
+			source, _, sourceFound := toolNamed(offered, call)
+			if sourceFound {
+				call.IntegrationID = source.Integration.ID.String()
+			}
 			identity := callIdentityOf(call)
 			switch {
 			case call.Error != "":
 				run = droppedRun(opened, call, len(state.runs)+1, call.Error)
-				if source, _, offered := toolNamed(offered, call.Tool); offered {
-					run.IntegrationID = source.Integration.ID
-				}
 			case executedCalls[identity] != 0: // already once executed ----->
 				run = suppressedRun(opened, call, len(state.runs)+1,
 					executedCalls[identity])
 				run.IntegrationID = state.runs[executedCalls[identity]-1].IntegrationID
 				r.announce(ctx, events,
 					investigation.ProgressPayload(
-						"Skipped a duplicate request for "+offeredName(offered, call.Tool)+
+						"Skipped a duplicate request for "+offeredName(offered, call)+
 							"; see the earlier result"))
 			case state.executed >= state.maxRuns:
 				run = droppedRun(opened, call, len(state.runs)+1, fmt.Sprintf(
@@ -533,7 +536,7 @@ func (r *Agent) Run(
 					state.maxRuns))
 				r.announce(ctx, events,
 					investigation.ProgressPayload(
-						"Did not run "+offeredName(offered, call.Tool)+
+						"Did not run "+offeredName(offered, call)+
 							"; the read budget is exhausted"))
 			default: // executing the tool ----->
 				ordinal := len(state.runs) + 1
@@ -547,15 +550,17 @@ func (r *Agent) Run(
 						investigation.StatusFailed.String(), "")
 					return terminalErr
 				}
-				r.announce(ctx, events,
-					investigation.ToolCompletedPayload(run))
+				announceCompletion = true
 				canonical := "unknown"
 				if run.IntegrationID != uuid.Nil {
-					canonical = strings.TrimSuffix(call.Tool, "__"+strings.ReplaceAll(run.IntegrationID.String(), "-", ""))
+					canonical = call.Tool
 				}
 				r.RuntimeTelemetry.RanTool(run, canonical)
 				state.executed++
 				executedCalls[identity] = run.Ordinal
+			}
+			if sourceFound {
+				run.IntegrationID = source.Integration.ID
 			}
 			run.Purpose = boundText(call.Purpose, eventTextBound)
 			if recordErr := r.recordToolRun(ctx, state, run); recordErr != nil {
@@ -563,6 +568,9 @@ func (r *Agent) Run(
 				r.RuntimeTelemetry.Ended(time.Since(startedAt),
 					investigation.StatusFailed.String(), "")
 				return terminalErr
+			}
+			if announceCompletion {
+				r.announce(ctx, events, investigation.ToolCompletedPayload(run))
 			}
 			result.ToolRun = run
 			results = append(results, result)
@@ -609,9 +617,9 @@ func modelPrompt(r *Agent, state *runState, forced bool, reason string) Prompt {
 	return prompt
 }
 
-func offeredName(offeredSources []offeredSource, tool string) string {
-	if _, _, offered := toolNamed(offeredSources, tool); offered {
-		return tool
+func offeredName(offeredSources []offeredSource, call toolCall) string {
+	if _, _, offered := toolNamed(offeredSources, call); offered {
+		return call.Tool
 	}
 	return "a tool that is not offered"
 }
@@ -619,7 +627,7 @@ func offeredName(offeredSources []offeredSource, tool string) string {
 func (r *Agent) announceToolStarted(
 	ctx context.Context, state *runState, call toolCall, ordinal int,
 ) {
-	source, _, offered := toolNamed(state.offered, call.Tool)
+	source, _, offered := toolNamed(state.offered, call)
 	if !offered {
 		return
 	}
@@ -635,11 +643,11 @@ func (r *Agent) announceToolStarted(
 func (r *Agent) recordToolRun(
 	ctx context.Context, state *runState, run investigation.ToolRun,
 ) error {
-	state.runs = append(state.runs, run)
 	if err := r.Store.RecordToolRun(
 		ctx, state.organization, state.opened.ID, state.opened.ClaimToken, run); err != nil {
 		return errProvenance
 	}
+	state.runs = append(state.runs, run)
 	return nil
 }
 
@@ -665,7 +673,6 @@ func offeredSources(
 		}
 		sources = append(sources, offeredSource{Integration: candidate, Tools: tools})
 	}
-	bindDuplicateToolNames(sources)
 	sortSourcesByName(sources)
 	return sources
 }
@@ -722,23 +729,6 @@ func offeredSourcesForConversation(
 	return scoped
 }
 
-func bindDuplicateToolNames(sources []offeredSource) {
-	counts := map[string]int{}
-	for _, source := range sources {
-		for _, tool := range source.Tools {
-			counts[tool.Name]++
-		}
-	}
-	for sourceIndex := range sources {
-		for toolIndex := range sources[sourceIndex].Tools {
-			tool := &sources[sourceIndex].Tools[toolIndex]
-			if counts[tool.Name] > 1 {
-				tool.Name += "__" + strings.ReplaceAll(sources[sourceIndex].Integration.ID.String(), "-", "")
-			}
-		}
-	}
-}
-
 func suppressedRun(
 	opened investigation.Investigation, call toolCall, ordinal, original int,
 ) investigation.ToolRun {
@@ -764,7 +754,7 @@ func callIdentityOf(call toolCall) string {
 	if err != nil {
 		encoded = []byte(fmt.Sprintf("%v", call.Arguments))
 	}
-	return call.Tool + " " + string(encoded)
+	return call.Tool + " " + call.IntegrationID + " " + string(encoded)
 }
 
 func concludeReason(stoppedBy string, offered int) string {

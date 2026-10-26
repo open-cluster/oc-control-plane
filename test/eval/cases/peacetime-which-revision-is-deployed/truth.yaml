@@ -1,12 +1,12 @@
 causes: []
 mustnotclaim: []
 discriminating:
-    - tool: slack.get_channel_history
+    - tool: slack_get_channel_history
       argmarker: C2
 relevanttools:
-    - slack.list_channels
-    - slack.get_channel_history
-    - github.list_repositories
+    - slack_list_channels
+    - slack_get_channel_history
+    - github_list_repositories
 expectfindings: true
 mustnotanswer:
     - v2.13.9

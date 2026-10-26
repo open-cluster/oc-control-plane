@@ -59,7 +59,7 @@ func TestListRepositoriesReportsStableIDsAndTruncation(t *testing.T) {
 	}
 
 	result, err := run(t, appAgainst(t, fake), NewClient(fake.URL),
-		"github.list_repositories", map[string]any{"limit": float64(2)})
+		"github_list_repositories", map[string]any{"limit": float64(2)})
 	if err != nil {
 		t.Fatalf("listing: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestListRepositoriesReportsStableIDsAndTruncation(t *testing.T) {
 
 	t.Run("a whole walk answers untruncated", func(t *testing.T) {
 		result, err := run(t, appAgainst(t, fake), NewClient(fake.URL),
-			"github.list_repositories", nil)
+			"github_list_repositories", nil)
 		if err != nil {
 			t.Fatalf("listing: %v", err)
 		}
@@ -90,12 +90,12 @@ func TestReadCommitsRequiresTheStableID(t *testing.T) {
 	fake := newFakeGitHub(t)
 	healthyInstallation(fake)
 
-	_, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github.read_commits", nil)
+	_, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github_read_commits", nil)
 	if err == nil || !strings.Contains(err.Error(), "repositoryId is required") {
 		t.Fatalf("want a refusal naming the missing id, got %v", err)
 	}
 
-	_, err = run(t, appAgainst(t, fake), NewClient(fake.URL), "github.read_commits",
+	_, err = run(t, appAgainst(t, fake), NewClient(fake.URL), "github_read_commits",
 		map[string]any{"repositoryId": "acme-corp/payments"})
 	if err == nil || !strings.Contains(err.Error(), "whole positive number") {
 		t.Fatalf("a name where an id belongs must be refused — names break on rename: %v", err)
@@ -124,7 +124,7 @@ func TestReadCommitsIsBoundedToTheWindow(t *testing.T) {
 			"author":{"login":"kai-dev"}}]`))
 	}
 
-	result, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github.read_commits",
+	result, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github_read_commits",
 		map[string]any{
 			"repositoryId": float64(1296269),
 			"since":        "2026-08-15T00:00:00Z",
@@ -145,7 +145,7 @@ func TestReadCommitsRefusesAnUnreadableWindow(t *testing.T) {
 	fake := newFakeGitHub(t)
 	healthyInstallation(fake)
 
-	_, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github.read_commits",
+	_, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github_read_commits",
 		map[string]any{"repositoryId": float64(1296269), "since": "last tuesday"})
 	if err == nil || !strings.Contains(err.Error(), "RFC 3339") {
 		t.Fatalf("want a refusal naming the expected form, got %v", err)
@@ -170,7 +170,7 @@ func TestListRepositoriesFiltersInsideAPaginationWalk(t *testing.T) {
 	}
 
 	result, err := run(t, appAgainst(t, fake), NewClient(fake.URL),
-		"github.list_repositories", map[string]any{"nameContains": "payments"})
+		"github_list_repositories", map[string]any{"nameContains": "payments"})
 	if err != nil {
 		t.Fatalf("listing: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestReadPullRequestCarriesIntentFilesAndChecks(t *testing.T) {
 			{"name":"unit tests","status":"completed","conclusion":"failure"}]}`)
 
 	result, err := run(t, appAgainst(t, fake), NewClient(fake.URL),
-		"github.read_pull_request",
+		"github_read_pull_request",
 		map[string]any{"repositoryId": float64(1296269), "number": float64(98)})
 	if err != nil {
 		t.Fatalf("reading the pull request: %v", err)
@@ -236,7 +236,7 @@ func TestReadPullRequestNamesUnreadableChecksInsteadOfFailing(t *testing.T) {
 	}
 
 	result, err := run(t, appAgainst(t, fake), NewClient(fake.URL),
-		"github.read_pull_request",
+		"github_read_pull_request",
 		map[string]any{"repositoryId": float64(1296269), "number": float64(98)})
 	if err != nil {
 		t.Fatalf("unreadable checks must not fail the whole read: %v", err)
@@ -261,7 +261,7 @@ func TestReadCommitBoundsThePatches(t *testing.T) {
 		 "files":[{"filename":"a.go","status":"modified","additions":400,"deletions":0,
 		           "patch":"`+strings.ReplaceAll(long, "\n", `\n`)+`"}]}`)
 
-	result, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github.read_commit",
+	result, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github_read_commit",
 		map[string]any{"repositoryId": float64(1296269), "sha": "abc123"})
 	if err != nil {
 		t.Fatalf("reading the commit: %v", err)
@@ -291,7 +291,7 @@ func TestReadWorkflowRunsClampsTheWindow(t *testing.T) {
 		_, _ = writer.Write([]byte(`{"total_count":0,"workflow_runs":[]}`))
 	}
 
-	tool := toolNamed(t, appAgainst(t, fake), NewClient(fake.URL), "github.read_workflow_runs")
+	tool := toolNamed(t, appAgainst(t, fake), NewClient(fake.URL), "github_read_workflow_runs")
 	_, err := tool.Run(testContext(t), integrations.ToolRequest{
 		Integration: integrations.Integration{
 			Installation: &integrations.Installation{Key: integrations.InstallationKey{"77"}},
@@ -325,7 +325,7 @@ func TestReadJobLogReadsTheFailingJobsTail(t *testing.T) {
 		_, _ = writer.Write([]byte("--- FAIL: TestPool (0.02s)\n"))
 	}
 
-	result, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github.read_job_log",
+	result, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github_read_job_log",
 		map[string]any{"repositoryId": float64(1296269), "runId": float64(42)})
 	if err != nil {
 		t.Fatalf("reading the log: %v", err)
@@ -349,7 +349,7 @@ func TestReadFileIsBoundedAndAddressedByRef(t *testing.T) {
 		_, _ = writer.Write([]byte("max: 100\n"))
 	}
 
-	result, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github.read_file",
+	result, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github_read_file",
 		map[string]any{
 			"repositoryId": float64(1296269), "path": "config/pool.yaml", "ref": "abc123",
 		})
@@ -373,7 +373,7 @@ func TestListReleasesSaysWhatShipped(t *testing.T) {
 		 "prerelease":false,"author":{"login":"kai-dev"},
 		 "html_url":"https://github.com/acme-corp/payments/releases/tag/v2.3.0"}]`)
 
-	result, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github.list_releases",
+	result, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github_list_releases",
 		map[string]any{"repositoryId": float64(1296269)})
 	if err != nil {
 		t.Fatalf("listing releases: %v", err)
@@ -390,7 +390,7 @@ func TestAnUndeclaredArgumentIsRefusedByName(t *testing.T) {
 	fake := newFakeGitHub(t)
 	healthyInstallation(fake)
 
-	_, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github.read_commits",
+	_, err := run(t, appAgainst(t, fake), NewClient(fake.URL), "github_read_commits",
 		map[string]any{"repositoryId": float64(1), "brach": "main"})
 	if err == nil || !strings.Contains(err.Error(), "brach") {
 		t.Fatalf("an undeclared argument must be refused by name, got %v", err)
@@ -400,7 +400,7 @@ func TestAnUndeclaredArgumentIsRefusedByName(t *testing.T) {
 func TestToolsWithoutAConfiguredAppRefuseByName(t *testing.T) {
 	t.Parallel()
 
-	_, err := run(t, nil, NewClient("http://127.0.0.1:1"), "github.list_repositories", nil)
+	_, err := run(t, nil, NewClient("http://127.0.0.1:1"), "github_list_repositories", nil)
 	if err == nil || !strings.Contains(err.Error(), "GitHub App") {
 		t.Fatalf("an unconfigured deployment must refuse by name, got %v", err)
 	}
