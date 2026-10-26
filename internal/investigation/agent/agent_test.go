@@ -170,7 +170,7 @@ func (r *records) AppendEvent(
 func testCatalog(t *testing.T, run func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error)) integrations.Catalog {
 	t.Helper()
 	catalog, err := integrations.NewCatalog(integrations.Definition{
-		Manifest: integrations.Manifest{Key: "stub", Name: "Stub", Category: integrations.CategoryAlerting, Tools: []integrations.Tool{{Name: "stub.read", Description: "Read a value to answer the question.", Run: run}}},
+		Manifest: integrations.Manifest{Key: "stub", Name: "Stub", Category: integrations.CategoryAlerting, Tools: []integrations.Tool{{Name: "stub_read", Description: "Read a value to answer the question.", Run: run}}},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
 			return integrations.Verification{Status: integrations.StatusVerified}
 		},
@@ -462,7 +462,7 @@ func TestRunDefersConclusionUntilMixedReadResultsAreRecorded(t *testing.T) {
 	model.next = func(call int, prompt Prompt) (Completion, error) {
 		if call == 1 {
 			return Completion{Stop: StopToolUse, Raw: []byte(`{"opaque":"native continuation"}`), ToolCalls: []CompletionCall{
-				{ID: "c1", Name: "stub.read", Arguments: json.RawMessage(`{"purpose":"read deployment","input":{}}`)},
+				{ID: "c1", Name: "stub_read", Arguments: json.RawMessage(`{"purpose":"read deployment","input":{}}`)},
 				{ID: "premature", Name: ConcludeToolName, Arguments: validConclusion(t, []int{1})},
 			}}, nil
 		}
@@ -508,7 +508,7 @@ func TestRunDoesNotAnnounceCompletionWhenProvenanceFails(t *testing.T) {
 			t.Fatal("an uncommitted read reached the next model decision")
 		}
 		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
-			ID: "read", Name: "stub.read", Arguments: json.RawMessage(`{"input":{}}`),
+			ID: "read", Name: "stub_read", Arguments: json.RawMessage(`{"input":{}}`),
 		}}}, nil
 	}}
 	agent := configuredTestAgent(t, store, model, testCatalog(t,
@@ -544,9 +544,9 @@ func TestModelChoosesReadsBeforeWorkloadLabelsCauseExternalAccess(t *testing.T) 
 		return integrations.ToolResult{Summary: request.Arguments["namespace"].(string)}, nil
 	}
 	tools := []integrations.Tool{
-		{Name: "kubernetes.workload.runtime", Description: "Read runtime state.", Run: run},
-		{Name: "kubernetes.namespace.events", Description: "Read namespace events.", Run: run},
-		{Name: "kubernetes.pod.logs", Description: "Read pod logs for diagnosis.", Run: run},
+		{Name: "kubernetes_workload_runtime", Description: "Read runtime state.", Run: run},
+		{Name: "kubernetes_namespace_events", Description: "Read namespace events.", Run: run},
+		{Name: "kubernetes_pod_logs", Description: "Read pod logs for diagnosis.", Run: run},
 	}
 	catalog, err := integrations.NewCatalog(integrations.Definition{
 		Manifest: integrations.Manifest{Key: "kubernetes", Name: "Kubernetes", Category: integrations.CategoryInfrastructure, Tools: tools},
@@ -562,7 +562,7 @@ func TestModelChoosesReadsBeforeWorkloadLabelsCauseExternalAccess(t *testing.T) 
 			if !strings.Contains(prompt.Content[0].Text, "alert source URL: https://alerts.example.test/alert/1") {
 				t.Fatal("the alert URL is not accurately labeled")
 			}
-			for _, expected := range []string{"kubernetes.workload.runtime", "kubernetes.namespace.events", "kubernetes.pod.logs"} {
+			for _, expected := range []string{"kubernetes_workload_runtime", "kubernetes_namespace_events", "kubernetes_pod_logs"} {
 				found := false
 				for _, offered := range prompt.Tools {
 					found = found || offered.Name == expected
@@ -573,7 +573,7 @@ func TestModelChoosesReadsBeforeWorkloadLabelsCauseExternalAccess(t *testing.T) 
 			}
 			modelSelected = true
 			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
-				ID: "logs", Name: "kubernetes.pod.logs", Arguments: json.RawMessage(`{"purpose":"read logs","input":{"namespace":"payments"}}`),
+				ID: "logs", Name: "kubernetes_pod_logs", Arguments: json.RawMessage(`{"purpose":"read logs","input":{"namespace":"payments"}}`),
 			}}}, nil
 		}
 		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
@@ -588,7 +588,7 @@ func TestModelChoosesReadsBeforeWorkloadLabelsCauseExternalAccess(t *testing.T) 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(store.runs) != 1 || store.runs[0].Tool != "kubernetes.pod.logs" {
+	if len(store.runs) != 1 || store.runs[0].Tool != "kubernetes_pod_logs" {
 		t.Fatalf("runs=%+v, want only the model-selected read", store.runs)
 	}
 	for index, recorded := range store.runs {
@@ -634,8 +634,8 @@ func TestRunScopesAProviderConversationToItsOriginThread(t *testing.T) {
 			}
 			catalog, err := integrations.NewCatalog(integrations.Definition{
 				Manifest: integrations.Manifest{Key: "chat", Name: "Chat", Category: integrations.CategoryCollaboration, Tools: []integrations.Tool{
-					{Name: "chat.thread", Description: "Read the originating thread.", SupportsThreadScope: true, Run: read},
-					{Name: "chat.channel", Description: "Read a channel.", Run: read},
+					{Name: "chat_thread", Description: "Read the originating thread.", SupportsThreadScope: true, Run: read},
+					{Name: "chat_channel", Description: "Read a channel.", Run: read},
 				}},
 				Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
 					return integrations.Verification{Status: integrations.StatusVerified}
@@ -647,12 +647,12 @@ func TestRunScopesAProviderConversationToItsOriginThread(t *testing.T) {
 			store.candidate = storeCandidates[0]
 			store.messages = []investigation.AssignedMessage{{Sequence: 1, Text: "Read this thread."}}
 			model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
-				if len(prompt.Tools) != 2 || prompt.Tools[0].Name != "chat.thread" ||
+				if len(prompt.Tools) != 2 || prompt.Tools[0].Name != "chat_thread" ||
 					prompt.Tools[1].Name != ConcludeToolName {
 					t.Fatalf("offered tools = %+v", prompt.Tools)
 				}
 				if call == 1 {
-					return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "thread", Name: "chat.thread",
+					return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "thread", Name: "chat_thread",
 						Arguments: json.RawMessage(`{"purpose":"read the originating thread","input":{}}`)}}}, nil
 				}
 				return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
@@ -707,7 +707,7 @@ func TestRunAuditsCredentialBeforeUsingIt(t *testing.T) {
 	})
 	model := &scriptedModel{next: func(call int, _ Prompt) (Completion, error) {
 		if call == 1 {
-			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "c1", Name: "stub.read", Arguments: json.RawMessage(`{"purpose":"read deployment","input":{}}`)}}}, nil
+			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "c1", Name: "stub_read", Arguments: json.RawMessage(`{"purpose":"read deployment","input":{}}`)}}}, nil
 		}
 		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, []int{1})}}}, nil
 	}}
@@ -736,7 +736,7 @@ func TestRunStopsWhenCredentialAccessCannotBeAudited(t *testing.T) {
 	})
 	model := &scriptedModel{next: func(_ int, _ Prompt) (Completion, error) {
 		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
-			ID: "c1", Name: "stub.read",
+			ID: "c1", Name: "stub_read",
 			Arguments: json.RawMessage(`{"purpose":"read deployment","input":{}}`),
 		}}}, nil
 	}}
@@ -778,7 +778,7 @@ func TestRunRetriesMalformedConclusionOnce(t *testing.T) {
 			{ID: "second", Name: ConcludeToolName, Arguments: validConclusion(t, nil)},
 		}},
 		{name: "reads while finalizing", calls: []CompletionCall{
-			{ID: "read", Name: "stub.read", Arguments: json.RawMessage(`{"purpose":"read deployment","input":{}}`)},
+			{ID: "read", Name: "stub_read", Arguments: json.RawMessage(`{"purpose":"read deployment","input":{}}`)},
 			{ID: "premature", Name: ConcludeToolName, Arguments: validConclusion(t, nil)},
 		}},
 		{name: "ambiguous IDs", fail: true, calls: []CompletionCall{
@@ -889,8 +889,8 @@ func TestRunRejectsInvalidCitationsAtTheAgentBoundary(t *testing.T) {
 			model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
 				if call == 1 {
 					return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{
-						{ID: "read", Name: "stub.read", Arguments: json.RawMessage(`{"input":{}}`)},
-						{ID: "duplicate", Name: "stub.read", Arguments: json.RawMessage(`{"input":{}}`)},
+						{ID: "read", Name: "stub_read", Arguments: json.RawMessage(`{"input":{}}`)},
+						{ID: "duplicate", Name: "stub_read", Arguments: json.RawMessage(`{"input":{}}`)},
 					}}, nil
 				}
 				document := validConclusion(t, []int{test.ordinal})
@@ -1035,12 +1035,12 @@ func TestRunRecordsRefusedAndDuplicateCallsWithoutRepeatingARead(t *testing.T) {
 	model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
 		if call == 1 {
 			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{
-				{ID: "invalid-input", Name: "stub.read", Arguments: json.RawMessage(`{"purpose":"read it","input":[]}`)},
-				{ID: "read", Name: "stub.read", Arguments: json.RawMessage(`{"purpose":"read it","input":{"key":"a"}}`)},
-				{ID: "duplicate", Name: "stub.read", Arguments: json.RawMessage(`{"purpose":"read it","input":{"key":"a"}}`)},
+				{ID: "invalid-input", Name: "stub_read", Arguments: json.RawMessage(`{"purpose":"read it","input":[]}`)},
+				{ID: "read", Name: "stub_read", Arguments: json.RawMessage(`{"purpose":"read it","input":{"key":"a"}}`)},
+				{ID: "duplicate", Name: "stub_read", Arguments: json.RawMessage(`{"purpose":"read it","input":{"key":"a"}}`)},
 				{ID: "unknown", Name: "invented.read", Arguments: json.RawMessage(`{"purpose":"guess","input":{}}`)},
-				{ID: "invalid-json", Name: "stub.read", Arguments: json.RawMessage(`{"input":`)},
-				{ID: "without-purpose", Name: "stub.read", Arguments: json.RawMessage(`{"input":{"key":"b"}}`)},
+				{ID: "invalid-json", Name: "stub_read", Arguments: json.RawMessage(`{"input":`)},
+				{ID: "without-purpose", Name: "stub_read", Arguments: json.RawMessage(`{"input":{"key":"b"}}`)},
 			}}, nil
 		}
 		if call == 2 {
@@ -1050,7 +1050,7 @@ func TestRunRecordsRefusedAndDuplicateCallsWithoutRepeatingARead(t *testing.T) {
 				t.Fatal("invalid Tool input lost its correlated rejection feedback")
 			}
 			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
-				ID: "refresh", Name: "stub.read", Arguments: json.RawMessage(`{"input":{"key":"a"}}`),
+				ID: "refresh", Name: "stub_read", Arguments: json.RawMessage(`{"input":{"key":"a"}}`),
 			}}}, nil
 		}
 		if len(store.runs) != 7 || store.runs[0].IntegrationID != store.candidate.ID {
@@ -1095,7 +1095,7 @@ func TestRunKeepsAToolFailureAsEvidenceAndStillConcludes(t *testing.T) {
 				t.Fatal("unrelated source failures forced a premature conclusion")
 			}
 			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
-				ID: "read", Name: "stub.read", Arguments: json.RawMessage(fmt.Sprintf(`{"input":{"source":%d}}`, call%2)),
+				ID: "read", Name: "stub_read", Arguments: json.RawMessage(fmt.Sprintf(`{"input":{"source":%d}}`, call%2)),
 			}}}, nil
 		}
 		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
@@ -1139,7 +1139,7 @@ func TestRunForcesAnHonestConclusionAtTheTurnLimit(t *testing.T) {
 	model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
 		if call == 1 {
 			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
-				ID: "read", Name: "stub.read", Arguments: json.RawMessage(`{"purpose":"read it","input":{}}`),
+				ID: "read", Name: "stub_read", Arguments: json.RawMessage(`{"purpose":"read it","input":{}}`),
 			}}}, nil
 		}
 		if prompt.ForceTool != ConcludeToolName {
@@ -1230,7 +1230,7 @@ func TestRunRetriesAContextRejectionOnlyAsAForcedConclusion(t *testing.T) {
 	var rejectedOutput int64
 	model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
 		if call == 1 {
-			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "read-1", Name: "stub.read", Arguments: json.RawMessage(`{"purpose":"read deployment","input":{}}`)}}}, nil
+			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "read-1", Name: "stub_read", Arguments: json.RawMessage(`{"purpose":"read deployment","input":{}}`)}}}, nil
 		}
 		if call == 2 {
 			rejectedTurns, _ = json.Marshal(prompt.Turns)
@@ -1380,7 +1380,7 @@ func TestRunRecordsOnlyResourceCeilingsThatForceAConclusion(t *testing.T) {
 					}}}, nil
 				}
 				return Completion{Stop: StopToolUse, Usage: test.usage, ToolCalls: []CompletionCall{{
-					ID: "read", Name: "stub.read", Arguments: arguments,
+					ID: "read", Name: "stub_read", Arguments: arguments,
 				}}}, nil
 			}}
 			agent := configuredTestAgent(t, store, model, testCatalog(t,

@@ -75,13 +75,13 @@ func readCommitTool(app *App, client *Client) integrations.Tool {
 	declared := []integrations.ToolArgument{
 		{
 			Name:        "repositoryId",
-			Description: "The repository's stable numeric id from github.list_repositories.",
+			Description: "The repository's stable numeric id from github_list_repositories.",
 			Type:        integrations.FieldInteger,
 			Required:    true,
 		},
 		{
 			Name:        "sha",
-			Description: "The commit sha from github.read_commits.",
+			Description: "The commit sha from github_read_commits.",
 			Type:        integrations.FieldString,
 			Required:    true,
 		},
@@ -89,7 +89,7 @@ func readCommitTool(app *App, client *Client) integrations.Tool {
 	return integrations.Tool{
 		Name: toolReadCommit,
 		Description: "Read one commit's metadata, changed files, and bounded patches. Use " +
-			"after github.read_commits identifies a relevant commit and the Investigation " +
+			"after github_read_commits identifies a relevant commit and the Investigation " +
 			"needs the actual change. Do not use to list history or prove deployment. " +
 			"Results report omitted files and truncated patches.",
 		Arguments: declared,
@@ -135,7 +135,7 @@ func readPullRequestTool(app *App, client *Client) integrations.Tool {
 	declared := []integrations.ToolArgument{
 		{
 			Name:        "repositoryId",
-			Description: "The repository's stable numeric id from github.list_repositories.",
+			Description: "The repository's stable numeric id from github_list_repositories.",
 			Type:        integrations.FieldInteger,
 			Required:    true,
 		},
@@ -225,7 +225,7 @@ func readWorkflowRunsTool(app *App, client *Client) integrations.Tool {
 	declared := []integrations.ToolArgument{
 		{
 			Name:        "repositoryId",
-			Description: "The repository's stable numeric id from github.list_repositories.",
+			Description: "The repository's stable numeric id from github_list_repositories.",
 			Type:        integrations.FieldInteger,
 			Required:    true,
 		},
@@ -251,7 +251,7 @@ func readWorkflowRunsTool(app *App, client *Client) integrations.Tool {
 		Name: toolReadWorkflowRuns,
 		Description: "Read CI/CD workflow runs for a repository in the Investigation " +
 			"window, newest first. Use to find failed or cancelled runs and obtain a run ID " +
-			"for github.read_job_log. Do not use a successful run to prove production health " +
+			"for github_read_job_log. Do not use a successful run to prove production health " +
 			"or deployment. Results are bounded and report truncation.",
 		Arguments: declared,
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
@@ -311,13 +311,13 @@ func readJobLogTool(app *App, client *Client) integrations.Tool {
 	declared := []integrations.ToolArgument{
 		{
 			Name:        "repositoryId",
-			Description: "The repository's stable numeric id from github.list_repositories.",
+			Description: "The repository's stable numeric id from github_list_repositories.",
 			Type:        integrations.FieldInteger,
 			Required:    true,
 		},
 		{
 			Name:        "runId",
-			Description: "The workflow run id from github.read_workflow_runs.",
+			Description: "The workflow run id from github_read_workflow_runs.",
 			Type:        integrations.FieldInteger,
 			Required:    true,
 		},
@@ -416,7 +416,7 @@ func readFileTool(app *App, client *Client) integrations.Tool {
 	declared := []integrations.ToolArgument{
 		{
 			Name:        "repositoryId",
-			Description: "The repository's stable numeric id from github.list_repositories.",
+			Description: "The repository's stable numeric id from github_list_repositories.",
 			Type:        integrations.FieldInteger,
 			Required:    true,
 		},
@@ -437,7 +437,7 @@ func readFileTool(app *App, client *Client) integrations.Tool {
 		Name: toolReadFile,
 		Description: fmt.Sprintf("Read the first %d bytes of one known file at a branch, "+
 			"tag, or commit. Use when a changed file's surrounding configuration matters. "+
-			"Do not browse with guessed paths or use this instead of github.read_commit for "+
+			"Do not browse with guessed paths or use this instead of github_read_commit for "+
 			"the change itself. Results report truncation.", maxFileToolBytes),
 		Arguments: declared,
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
@@ -486,7 +486,7 @@ func listReleasesTool(app *App, client *Client) integrations.Tool {
 	declared := []integrations.ToolArgument{
 		{
 			Name:        "repositoryId",
-			Description: "The repository's stable numeric id from github.list_repositories.",
+			Description: "The repository's stable numeric id from github_list_repositories.",
 			Type:        integrations.FieldInteger,
 			Required:    true,
 		},

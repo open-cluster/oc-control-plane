@@ -127,7 +127,7 @@ func readCommitsTool(app *App, client *Client) integrations.Tool {
 	declared := []integrations.ToolArgument{
 		{
 			Name:        "repositoryId",
-			Description: "The repository's stable numeric id from github.list_repositories.",
+			Description: "The repository's stable numeric id from github_list_repositories.",
 			Type:        integrations.FieldInteger,
 			Required:    true,
 		},

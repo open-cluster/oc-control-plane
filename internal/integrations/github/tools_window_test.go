@@ -39,7 +39,7 @@ func TestReadCommitsReportsTheWindowItWasNarrowedTo(t *testing.T) {
 	until := mustTime(t, "2026-08-22T10:00:00Z")
 
 	result, err := runInWindow(t, appAgainst(t, fake), NewClient(fake.URL),
-		"github.read_commits", map[string]any{
+		"github_read_commits", map[string]any{
 			"repositoryId": float64(1296269),
 		}, from, until)
 	if err != nil {
@@ -66,7 +66,7 @@ func TestReadWorkflowRunsReportsItsWindow(t *testing.T) {
 	until := mustTime(t, "2026-08-22T10:00:00Z")
 
 	result, err := runInWindow(t, appAgainst(t, fake), NewClient(fake.URL),
-		"github.read_workflow_runs", map[string]any{
+		"github_read_workflow_runs", map[string]any{
 			"repositoryId": float64(1296269),
 		}, from, until)
 	if err != nil {
@@ -89,7 +89,7 @@ func TestAnUnwindowedReadReportsNoWindow(t *testing.T) {
 	}
 
 	result, err := runInWindow(t, appAgainst(t, fake), NewClient(fake.URL),
-		"github.list_repositories", map[string]any{},
+		"github_list_repositories", map[string]any{},
 		mustTime(t, "2026-08-22T08:00:00Z"), mustTime(t, "2026-08-22T10:00:00Z"))
 	if err != nil {
 		t.Fatalf("listing repositories: %v", err)

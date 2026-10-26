@@ -2,17 +2,17 @@ causes: []
 mustnotclaim: []
 discriminating: []
 relevanttools:
-    - slack.list_channels
-    - slack.get_channel_history
-    - github.list_repositories
-    - github.read_commits
-    - github.read_commit
-    - github.read_workflow_runs
-    - github.list_releases
-    - slack.get_thread_replies
-    - github.read_pull_request
-    - github.read_workflow_runs
-    - github.list_releases
+    - slack_list_channels
+    - slack_get_channel_history
+    - github_list_repositories
+    - github_read_commits
+    - github_read_commit
+    - github_read_workflow_runs
+    - github_list_releases
+    - slack_get_thread_replies
+    - github_read_pull_request
+    - github_read_workflow_runs
+    - github_list_releases
 expectfindings: false
 mustnotanswer: []
 answermarkers: []

@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"time"
 )
 
 type Provider string
+
+var validToolName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
 type Category string
 
@@ -237,6 +240,8 @@ func checkDefinition(definition Definition) error {
 		case tool.Name == "" || tool.Run == nil:
 			return fmt.Errorf("integration type %q declares a tool without a name or a run",
 				definition.Key)
+		case !validToolName.MatchString(tool.Name):
+			return fmt.Errorf("integration type %q tool name must use 1–64 letters, digits, underscores or hyphens", definition.Key)
 		case names[tool.Name]:
 			return fmt.Errorf("integration type %q declares tool %q twice",
 				definition.Key, tool.Name)

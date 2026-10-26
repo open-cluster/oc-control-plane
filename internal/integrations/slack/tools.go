@@ -124,7 +124,7 @@ func listChannelsTool(client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: "slack.list_channels",
+		Name: "slack_list_channels",
 		Description: "List public, unarchived Slack channels with IDs, names, topics, " +
 			"purposes, and member counts. Use to select relevant channels before reading " +
 			"history. Do not use to read messages or search for where a phrase was said. " +
@@ -183,7 +183,7 @@ func channelHistoryTool(client *Client) integrations.Tool {
 	declared := []integrations.ToolArgument{
 		{
 			Name:        "channel",
-			Description: "The channel id from slack.list_channels, such as \"C0123456789\".",
+			Description: "The channel id from slack_list_channels, such as \"C0123456789\".",
 			Type:        integrations.FieldString,
 			Required:    true,
 		},
@@ -207,7 +207,7 @@ func channelHistoryTool(client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: "slack.get_channel_history",
+		Name: "slack_get_channel_history",
 		Description: "Read messages from one known Slack channel in the Investigation " +
 			"window, including authors, thread markers, reply counts, and links. Use for " +
 			"incident discussion, reactions, and reported actions. Do not use for thread " +
@@ -278,7 +278,7 @@ func threadRepliesTool(client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: "slack.get_thread_replies",
+		Name: "slack_get_thread_replies",
 		Description: "Read the newest bounded tail of a known Slack thread in message " +
 			"order, including authors, text, and links. Use after channel history identifies " +
 			"a message with replies. Do not use for a channel timeline or speculatively on " +
@@ -352,7 +352,7 @@ func searchMessagesTool(client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: "slack.search_messages",
+		Name: "slack_search_messages",
 		Description: "Search Slack messages for exact identifiers across the workspace " +
 			"within the Investigation window. Use when the relevant channel is unknown and " +
 			"an error string, ticket, service, or hostname is available. Do not use vague " +

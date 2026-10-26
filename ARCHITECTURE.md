@@ -73,8 +73,9 @@ reviewed and records the reviewer and time.
 ## AI contract
 
 The reasoning input contains the safety policy, task instruction, structured Investigation
-context, native read Tools, and result schema. Provider aliases are readable translations
-of canonical Tool identities; they never select an Integration independently of the offered Tools.
+context, native read Tools, and result schema. Catalog Tool names are provider-compatible
+operation names sent unchanged to the model. When several authorized Integrations offer an
+operation, the existing Tool envelope requires an integrationId from its eligible-source enum.
 
 The conclusion decoder rejects invalid status combinations, nonexistent citations,
 causal Findings without mechanisms, unsafe action approval claims, and invented impact.

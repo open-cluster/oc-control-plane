@@ -4,22 +4,22 @@ causes:
         - rate limit
         - cafe01
       tools:
-        - github.read_commits
-        - github.read_commit
-        - github.read_file
+        - github_read_commits
+        - github_read_commit
+        - github_read_file
 mustnotclaim: []
 discriminating:
-    - tool: github.read_commits
+    - tool: github_read_commits
       argmarker: "101"
 relevanttools:
-    - slack.list_channels
-    - slack.get_channel_history
-    - github.list_repositories
-    - github.read_commits
-    - github.read_commit
-    - github.read_workflow_runs
-    - github.list_releases
-    - github.read_file
+    - slack_list_channels
+    - slack_get_channel_history
+    - github_list_repositories
+    - github_read_commits
+    - github_read_commit
+    - github_read_workflow_runs
+    - github_list_releases
+    - github_read_file
 expectfindings: true
 mustnotanswer: []
 answermarkers: []

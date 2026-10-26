@@ -109,6 +109,15 @@ type Prompt struct {
 	Effort          Effort
 }
 
+func (p Prompt) OffersTool(name string) bool {
+	for _, definition := range p.Tools {
+		if definition.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 type Turn struct {
 	Assistant   AssistantTurn
 	ToolResults []ToolResultTurn

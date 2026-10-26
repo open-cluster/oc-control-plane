@@ -1,11 +1,11 @@
 causes: []
 mustnotclaim: []
 discriminating:
-    - tool: slack.get_channel_history
+    - tool: slack_get_channel_history
       argmarker: C2
 relevanttools:
-    - slack.list_channels
-    - slack.get_channel_history
+    - slack_list_channels
+    - slack_get_channel_history
 expectfindings: true
 mustnotanswer: []
 answermarkers:

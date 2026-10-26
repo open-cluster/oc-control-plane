@@ -71,8 +71,8 @@ func New(config agent.ModelConfig, options Options) (*Provider, error) {
 }
 
 func (p *Provider) EstimateRequestTokens(prompt agent.Prompt) (int, error) {
-	if _, err := agent.ToolNames(prompt); err != nil {
-		return 0, err
+	if prompt.ForceTool != "" && !prompt.OffersTool(prompt.ForceTool) {
+		return 0, fmt.Errorf("forced Tool was not offered")
 	}
 	body, err := request(prompt)
 	if err != nil {
@@ -86,9 +86,8 @@ func (p *Provider) EstimateRequestTokens(prompt agent.Prompt) (int, error) {
 }
 
 func (p *Provider) Complete(ctx context.Context, prompt agent.Prompt) (agent.Completion, error) {
-	names, err := agent.ToolNames(prompt)
-	if err != nil {
-		return agent.Completion{}, agent.Failed(agent.OutcomeRejected, Name, prompt.Model, err.Error())
+	if prompt.ForceTool != "" && !prompt.OffersTool(prompt.ForceTool) {
+		return agent.Completion{}, agent.Failed(agent.OutcomeRejected, Name, prompt.Model, "forced Tool was not offered")
 	}
 	requestBody, err := request(prompt)
 	if err != nil {
@@ -159,14 +158,13 @@ func (p *Provider) Complete(ctx context.Context, prompt agent.Prompt) (agent.Com
 				agent.OutcomeMalformed, Name, prompt.Model, "the provider returned an invalid Tool call")
 		}
 		seen[call.ID] = true
-		name, offered := names[call.Function.Name]
-		if !offered {
+		if !prompt.OffersTool(call.Function.Name) {
 			return completion, agent.Failed(
 				agent.OutcomeMalformed, Name, prompt.Model, "the provider returned a Tool that was not offered")
 		}
 		completion.ToolCalls = append(completion.ToolCalls, agent.CompletionCall{
 			ID:        call.ID,
-			Name:      name,
+			Name:      call.Function.Name,
 			Arguments: json.RawMessage(call.Function.Arguments),
 		})
 	}

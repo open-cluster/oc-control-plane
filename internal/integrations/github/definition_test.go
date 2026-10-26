@@ -84,7 +84,7 @@ func TestEveryToolDeclaresItsWholeContract(t *testing.T) {
 	t.Parallel()
 
 	for _, tool := range Definition(nil, NewClient("")).Tools {
-		if !strings.HasPrefix(tool.Name, "github.") {
+		if !strings.HasPrefix(tool.Name, "github_") {
 			t.Errorf("tool name %q does not carry the provider prefix", tool.Name)
 		}
 		if strings.TrimSpace(tool.Description) == "" {

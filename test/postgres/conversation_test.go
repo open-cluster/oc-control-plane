@@ -268,7 +268,7 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 	}
 	if err = database.RecordToolRun(context.Background(), organization,
 		adaTurn.InvestigationID, claimToken(t, database, organization, adaTurn.InvestigationID), investigation.ToolRun{
-			Ordinal: 1, Tool: "kubernetes.workload_runtime",
+			Ordinal: 1, Tool: "kubernetes_workload_runtime",
 			Purpose:   "compare runtime state with the deploy",
 			Arguments: map[string]any{"namespace": "shop"},
 			Outcome:   investigation.RunSucceeded, Summary: "1 workload",

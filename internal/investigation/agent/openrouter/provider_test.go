@@ -64,8 +64,7 @@ func TestToolResultsContinueToAForcedConclusion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tool := integrations.Tool{Name: "kubernetes.workload_state_" + strings.Repeat("details_", 10) +
-		"__0123456789abcdef0123456789abcdef", Description: "Read workload state."}
+	tool := integrations.Tool{Name: "kubernetes_workload_runtime", Description: "Read workload state."}
 	prompt := agent.Prompt{
 		Model: "z-ai/glm-4.7", System: []agent.Block{{Text: "Investigate safely."}}, Content: []agent.Block{{Text: "Check the workload."}},
 		Tools: []integrations.ToolDefinition{tool.Definition(), agent.ConcludeDefinition()}, MaxOutputTokens: 32_000,
@@ -93,7 +92,7 @@ func TestToolResultsContinueToAForcedConclusion(t *testing.T) {
 	}
 	definition := request["tools"].([]any)[0].(map[string]any)["function"].(map[string]any)
 	if !regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`).MatchString(definition["name"].(string)) ||
-		!strings.HasPrefix(definition["name"].(string), "kubernetes_workload_state_") ||
+		definition["name"] != tool.Name ||
 		definition["parameters"].(map[string]any)["type"] != "object" {
 		t.Fatalf("function definition = %v", definition)
 	}
@@ -137,7 +136,7 @@ func TestProviderFailuresAreClassifiedWithoutSourceContent(t *testing.T) {
 		{"context", 400, `{"error":{"code":400,"message":"context length exceeded ` + private + `"}}`, agent.ErrContextWindow},
 		{"invalid response", 200, `{"choices":"` + private + `"}`, agent.ErrMalformed},
 		{"reported model without usage", 200, `{"id":"generation-1","object":"chat.completion","created":1,"model":"actual-model","choices":[]}`, agent.ErrMalformed},
-		{"unoffered canonical name", 200, `{"id":"generation-1","model":"z-ai/glm-4.7","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"read-1","type":"function","function":{"name":"github.read_commits","arguments":"{}"}}]}}]}`, agent.ErrMalformed},
+		{"unoffered name", 200, `{"id":"generation-1","model":"z-ai/glm-4.7","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"read-1","type":"function","function":{"name":"invented_read","arguments":"{}"}}]}}]}`, agent.ErrMalformed},
 		{"ambiguous call IDs", 200, `{"id":"generation-1","object":"chat.completion","created":1,"model":"z-ai/glm-4.7","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"tool_calls":[{"id":"same","type":"function","function":{"name":"read","arguments":"{}"}},{"id":"same","type":"function","function":{"name":"read","arguments":"{}"}}]}}]}`, agent.ErrMalformed},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -154,7 +153,7 @@ func TestProviderFailuresAreClassifiedWithoutSourceContent(t *testing.T) {
 				t.Fatal(err)
 			}
 			completion, err := provider.Complete(context.Background(), agent.Prompt{Model: "z-ai/glm-4.7",
-				Tools: []integrations.ToolDefinition{{Name: "github.read_commits"}, {Name: "read"}},
+				Tools: []integrations.ToolDefinition{{Name: "github_read_commits"}, {Name: "read"}},
 			})
 			if !errors.Is(err, test.want) || strings.Contains(err.Error(), private) || strings.Contains(err.Error(), "test-key") {
 				t.Fatalf("provider error = %v", err)

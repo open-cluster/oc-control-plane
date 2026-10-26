@@ -249,7 +249,7 @@ func TestAPastedSlackTokenOffersItsGrantedTools(t *testing.T) {
 	var created createdBody
 	decodeInto(t, body, &created)
 
-	if reported := created.Integration.tool(t, "slack.list_channels"); !reported.Available {
+	if reported := created.Integration.tool(t, "slack_list_channels"); !reported.Available {
 		t.Errorf("a pasted token lost a read Tool it had: %+v", reported)
 	}
 	if inbound := created.Integration.Inbound; inbound == nil || inbound.Available ||
@@ -269,7 +269,7 @@ func TestAConnectedSlackInstallationReportsItsTools(t *testing.T) {
 	if len(listed) != 1 {
 		t.Fatalf("the tenant holds %d integrations, want one", len(listed))
 	}
-	if reported := listed[0].tool(t, "slack.list_channels"); !reported.Available {
+	if reported := listed[0].tool(t, "slack_list_channels"); !reported.Available {
 		t.Errorf("list channels is unavailable on a connected installation: %+v", reported)
 	}
 	if inbound := listed[0].Inbound; inbound == nil || !inbound.Available {

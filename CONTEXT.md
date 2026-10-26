@@ -40,6 +40,8 @@ backend state, not a setup guide or the signal that makes Connect appear in the 
 A bounded operation offered by an Integration. Its definition has one complete description,
 its arguments, and any verified grants required for availability. An external call may state
 an operator-visible purpose; this explanatory metadata does not authorize execution.
+The operation name is stable across Integrations. When several eligible Integrations offer it,
+the invocation selects an Integration separately; one eligible Integration binds automatically.
 
 ## Alert Event
 
