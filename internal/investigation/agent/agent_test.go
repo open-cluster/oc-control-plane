@@ -55,6 +55,7 @@ type records struct {
 	messages        []investigation.AssignedMessage
 	messagesErr     error
 	runs            []investigation.ToolRun
+	runErr          error
 	unseals         int
 	toolUsed        bool
 	conclusion      investigation.Conclusion
@@ -71,6 +72,9 @@ type records struct {
 func (r *records) RecordToolRun(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, run investigation.ToolRun) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.runErr != nil {
+		return r.runErr
+	}
 	r.runs = append(r.runs, run)
 	return nil
 }
@@ -491,6 +495,36 @@ func TestRunDefersConclusionUntilMixedReadResultsAreRecorded(t *testing.T) {
 	}
 	if store.events[0].Type != investigation.EventStarted || store.events[0].Payload["text"] != "Reviewing this request and available evidence sources." {
 		t.Fatalf("startup activity does not explain the initial phase: %+v", store.events[0])
+	}
+}
+
+func TestRunDoesNotAnnounceCompletionWhenProvenanceFails(t *testing.T) {
+	store := &records{
+		candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"},
+		runErr:    errors.New("database write failed"),
+	}
+	model := &scriptedModel{next: func(round int, _ Prompt) (Completion, error) {
+		if round != 1 {
+			t.Fatal("an uncommitted read reached the next model decision")
+		}
+		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
+			ID: "read", Name: "stub.read", Arguments: json.RawMessage(`{"input":{}}`),
+		}}}, nil
+	}}
+	agent := configuredTestAgent(t, store, model, testCatalog(t,
+		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
+			return integrations.ToolResult{Summary: "read succeeded"}, nil
+		}))
+	if err := agent.Run(context.Background(), uuid.New(), investigation.Investigation{ID: uuid.New()}); err != nil {
+		t.Fatal(err)
+	}
+	if store.status != investigation.StatusFailed || len(store.runs) != 0 {
+		t.Fatalf("status=%s runs=%d", store.status, len(store.runs))
+	}
+	for _, event := range store.events {
+		if event.Type == investigation.EventToolCompleted {
+			t.Fatal("completion claimed an uncommitted Tool Run")
+		}
 	}
 }
 

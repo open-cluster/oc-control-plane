@@ -40,6 +40,7 @@ The following path is the primary product walkthrough.
    truncation, summary, and source identifiers. Results count against investigation
    budgets and may be cited.
 9. **Operational events** describe the read in flight using seven small versioned payloads.
+   Completion activity follows a committed Tool Run; unrecorded results never become evidence.
    Hypotheses are model-local during reasoning and appear only in the final structured
    conclusion.
 10. **Cited Finding** names supporting Tool Run ordinals. A verified cause requires a
@@ -71,8 +72,9 @@ reviewed and records the reviewer and time.
 
 ## AI contract
 
-The reasoning input is split into independently versioned safety policy, task instruction,
-structured Investigation bundle, native read tools, and result schema.
+The reasoning input contains the safety policy, task instruction, structured Investigation
+context, native read Tools, and result schema. Provider aliases are readable translations
+of canonical Tool identities; they never select an Integration independently of the offered Tools.
 
 The conclusion decoder rejects invalid status combinations, nonexistent citations,
 causal Findings without mechanisms, unsafe action approval claims, and invented impact.

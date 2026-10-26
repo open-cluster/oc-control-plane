@@ -512,6 +512,7 @@ func (r *Agent) Run(
 				continue
 			}
 			var run investigation.ToolRun
+			announceCompletion := false
 			identity := callIdentityOf(call)
 			switch {
 			case call.Error != "":
@@ -547,8 +548,7 @@ func (r *Agent) Run(
 						investigation.StatusFailed.String(), "")
 					return terminalErr
 				}
-				r.announce(ctx, events,
-					investigation.ToolCompletedPayload(run))
+				announceCompletion = true
 				canonical := "unknown"
 				if run.IntegrationID != uuid.Nil {
 					canonical = strings.TrimSuffix(call.Tool, "__"+strings.ReplaceAll(run.IntegrationID.String(), "-", ""))
@@ -563,6 +563,9 @@ func (r *Agent) Run(
 				r.RuntimeTelemetry.Ended(time.Since(startedAt),
 					investigation.StatusFailed.String(), "")
 				return terminalErr
+			}
+			if announceCompletion {
+				r.announce(ctx, events, investigation.ToolCompletedPayload(run))
 			}
 			result.ToolRun = run
 			results = append(results, result)
@@ -635,11 +638,11 @@ func (r *Agent) announceToolStarted(
 func (r *Agent) recordToolRun(
 	ctx context.Context, state *runState, run investigation.ToolRun,
 ) error {
-	state.runs = append(state.runs, run)
 	if err := r.Store.RecordToolRun(
 		ctx, state.organization, state.opened.ID, state.opened.ClaimToken, run); err != nil {
 		return errProvenance
 	}
+	state.runs = append(state.runs, run)
 	return nil
 }
 
