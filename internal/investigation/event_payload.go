@@ -13,7 +13,9 @@ type StartedEventPayload struct {
 func (StartedEventPayload) EventType() EventType { return EventStarted }
 
 func StartedPayload(text string) StartedEventPayload {
-	return StartedEventPayload{Text: bounded(text, eventTextBound)}
+	return StartedEventPayload{
+		Text: bounded(text, eventTextBound),
+	}
 }
 
 type ProgressEventPayload struct {
@@ -23,7 +25,9 @@ type ProgressEventPayload struct {
 func (ProgressEventPayload) EventType() EventType { return EventProgress }
 
 func ProgressPayload(text string) ProgressEventPayload {
-	return ProgressEventPayload{Text: bounded(text, eventTextBound)}
+	return ProgressEventPayload{
+		Text: bounded(text, eventTextBound),
+	}
 }
 
 type ToolStartedEventPayload struct {
@@ -99,7 +103,8 @@ func (ConcludedEventPayload) EventType() EventType { return EventConcluded }
 
 func ConcludedPayload(conclusion Conclusion, _ string) ConcludedEventPayload {
 	return ConcludedEventPayload{
-		Status: conclusion.Status, Summary: bounded(conclusion.Summary, MaxSummaryLength),
+		Status:  conclusion.Status,
+		Summary: bounded(conclusion.Summary, MaxSummaryLength),
 	}
 }
 
@@ -110,7 +115,9 @@ type FailedEventPayload struct {
 func (FailedEventPayload) EventType() EventType { return EventFailed }
 
 func FailedPayload(reason string) FailedEventPayload {
-	return FailedEventPayload{Reason: bounded(reason, maxRunErrorLength)}
+	return FailedEventPayload{
+		Reason: bounded(reason, maxRunErrorLength),
+	}
 }
 
 type CancelledEventPayload struct {
@@ -120,5 +127,7 @@ type CancelledEventPayload struct {
 func (CancelledEventPayload) EventType() EventType { return EventCancelled }
 
 func CancelledPayload() CancelledEventPayload {
-	return CancelledEventPayload{Message: "Investigation cancelled by an operator"}
+	return CancelledEventPayload{
+		Message: "Investigation cancelled by an operator",
+	}
 }
