@@ -19,6 +19,8 @@ invalid values, and additional YAML documents stop startup instead of being igno
 
 ## Minimal configuration
 
+For a normal installation that can run Investigations:
+
 ```sh
 export OC_DATABASE_DSN_FILE=/run/secrets/postgres_dsn
 export OC_BOOTSTRAP_TOKEN_FILE=/run/secrets/bootstrap_token
@@ -26,12 +28,33 @@ export OC_ENCRYPTION_KEY_FILE=/run/secrets/sealing_key
 export OC_AI_PROVIDER=anthropic
 export OC_AI_MODEL=claude-sonnet-5
 export OC_AI_API_KEY_FILE=/run/secrets/model_key
+export OC_PUBLIC_URL=http://localhost:8080
 controlplane
 ```
 
 Direct alternatives are the same names without `_FILE`, for example `OC_AI_API_KEY`.
 Use direct values for local development and mounted files for production when practical.
 Never set both forms of one secret. Remove the bootstrap input after initial setup.
+
+| Requirement | When needed |
+| --- | --- |
+| PostgreSQL DSN and encryption key | Required by the shipped API; the key protects Integration credentials. |
+| Bootstrap credential | First-User setup only. Remove it afterward. |
+| AI provider, exact model, and credential | Required to run Investigations. Configure all three together. |
+| Public URL | Set the real browser-visible HTTPS origin outside loopback development. |
+| OIDC, Slack App, GitHub App, Relay | Supply the matching settings only when enabling that feature. Relay also requires its SPKI pins and TLS configuration. |
+| Worker limits, session lifetime, logs, telemetry, listen address | Optional overrides; omit them to use defaults. |
+
+`OC_SERVER_ADDRESS` is the Go backend listener. `OC_PUBLIC_URL` is the browser and
+webhook origin, which may be served through existing deployment routing. It accepts
+HTTPS, or HTTP on `localhost`, `127.0.0.1`, and `::1` for development. An optional trailing
+slash is removed. User information, other paths, queries, fragments, and invalid hosts
+or ports stop startup. Use ASCII DNS names, including punycode where needed.
+
+The backend currently defaults to `:8080`. This repository does not include a frontend
+or browser proxy. Moving the backend to `8081` requires verified frontend routing on
+`8080` for API requests, activity streams, authentication callbacks, and webhooks;
+changing the listener alone does not provide that routing.
 
 ## Configuration file
 

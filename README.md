@@ -147,8 +147,10 @@ The fastest way to run OpenCluster locally is with Docker Compose:
 docker compose -f deploy/compose/compose.yaml up --build
 ```
 
-A local deployment requires PostgreSQL, an administrator bootstrap token, an encryption
-key, and a supported model provider.
+An Investigation-capable deployment needs PostgreSQL, an encryption key, and a supported
+model provider. Supply the administrator bootstrap token for initial setup, then remove
+it. Set `OC_PUBLIC_URL` to the browser-visible origin; `OC_SERVER_ADDRESS` controls the
+Go backend listener and defaults to `:8080`.
 
 Follow the [Quickstart](https://docs.open-cluster.io/getting-started/quickstart) for full setup.
 

@@ -97,6 +97,50 @@ func TestLoadUsesSafeDefaultsAndTheEssentialOSSSurface(t *testing.T) {
 	}
 }
 
+func TestLoadValidatesPublicBrowserOrigins(t *testing.T) {
+	for _, test := range []struct {
+		origin, want string
+	}{
+		{"https://console.example.com", "https://console.example.com"},
+		{" https://CONSOLE.example.com:443/ ", "https://console.example.com:443"},
+		{"http://LOCALHOST:8080/", "http://localhost:8080"},
+		{"http://127.0.0.1", "http://127.0.0.1"},
+		{"http://[::1]:8080", "http://[::1]:8080"},
+		{"ftp://localhost", ""},
+		{"http://console.example.com", ""},
+		{"http://127.0.0.2", ""},
+		{"https://user@console.example.com", ""},
+		{"https://console.example.com/path", ""},
+		{"https://console.example.com//", ""},
+		{"https://console.example.com/%2f", ""},
+		{"https://console.example.com?", ""},
+		{"https://console.example.com?key=value", ""},
+		{"https://console.example.com#", ""},
+		{"https://console.example.com#fragment", ""},
+		{"https://:443", ""},
+		{"https://bad..host", ""},
+		{"https://[not-an-ip]", ""},
+		{"https://[127.0.0.1]", ""},
+		{"https://console.example.com:", ""},
+		{"https://console.example.com:0", ""},
+		{"https://console.example.com:65536", ""},
+		{"https://console.example.com:invalid", ""},
+	} {
+		t.Run(test.origin, func(t *testing.T) {
+			cfg, err := Load(lookup(map[string]string{
+				EnvDatabaseDSN: "postgres://localhost/opencluster", EnvPublicURL: test.origin,
+			}))
+			if test.want == "" {
+				if err == nil {
+					t.Fatal("invalid browser origin accepted")
+				}
+			} else if err != nil || cfg.PublicURL != test.want {
+				t.Fatalf("public URL = %q, error = %v; want %q", cfg.PublicURL, err, test.want)
+			}
+		})
+	}
+}
+
 func TestLoadSessionLifetimeFromEnvironment(t *testing.T) {
 	values := essentialEnvironment(t)
 	values[EnvSessionLifetimeSeconds] = "900"

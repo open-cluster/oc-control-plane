@@ -166,7 +166,7 @@ func (document fileConfiguration) environment(directory string) map[string]strin
 	set(EnvOIDCClientID, document.OIDC.ClientID)
 	set(EnvSlackClientID, document.Slack.ClientID)
 
-	// ENV files ------->
+	// YAML secrets are file references.
 	secretFile(EnvModelKeyFile, document.AI.APIKeyFile)
 	secretFile(EnvOIDCClientSecretFile, document.OIDC.ClientSecretFile)
 	secretFile(EnvSlackClientSecretFile, document.Slack.ClientSecretFile)
