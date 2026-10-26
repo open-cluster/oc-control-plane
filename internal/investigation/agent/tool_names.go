@@ -45,7 +45,7 @@ func (p Prompt) ProviderToolNames() (ToolNames, error) {
 	used := make(map[string]string)
 	for canonical, base := range bases {
 		if canonical == "" {
-			return ToolNames{}, fmt.Errorf("Tool name is empty")
+			return ToolNames{}, fmt.Errorf("tool name is empty")
 		}
 		alias := base
 		if len(base) > 64 || counts[base] > 1 {
@@ -56,7 +56,7 @@ func (p Prompt) ProviderToolNames() (ToolNames, error) {
 			alias = fmt.Sprintf("%s_%x", base, digest[:6])
 		}
 		if previous, exists := used[alias]; exists && previous != canonical {
-			return ToolNames{}, fmt.Errorf("Tool aliases are ambiguous")
+			return ToolNames{}, fmt.Errorf("tool aliases are ambiguous")
 		}
 		used[alias] = canonical
 		names.aliases[canonical] = alias
