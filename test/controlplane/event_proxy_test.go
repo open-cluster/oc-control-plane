@@ -28,7 +28,7 @@ func startEventProxy(t *testing.T, backend string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	configuration = []byte(strings.ReplaceAll(string(configuration), "control-plane:8080",
+	configuration = []byte(strings.ReplaceAll(string(configuration), "control-plane:8081",
 		net.JoinHostPort(testcontainers.HostInternal, port)))
 	path := filepath.Join(t.TempDir(), "nginx.conf")
 	if err := os.WriteFile(path, configuration, 0o600); err != nil {

@@ -16,7 +16,7 @@ credentials:
   modelKey: model-key
 
 server:
-  publicURL: "http://localhost:8080"
+  publicURL: "http://localhost:8081"
 
 model:
   provider: anthropic
@@ -32,7 +32,7 @@ sessionLifetimeSeconds: 43200
 
 service:
   type: ClusterIP
-  httpPort: 8080
+  httpPort: 8081
 
 relay:
   enabled: false

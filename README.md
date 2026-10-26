@@ -152,6 +152,8 @@ A local deployment requires PostgreSQL, an administrator bootstrap token, an enc
 key, and a supported model provider.
 
 Follow the [Quickstart](https://docs.open-cluster.io/getting-started/quickstart) for full setup.
+The standalone backend uses port `8081`; its default local public origin is
+`http://localhost:8081`. A separately deployed frontend must provide its own verified routing.
 
 ## Development
 

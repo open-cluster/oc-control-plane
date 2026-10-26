@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -22,7 +23,8 @@ func TestComposePublishesOnlyTheControlPlaneAPI(t *testing.T) {
 	}
 	var configuration struct {
 		Services map[string]struct {
-			Ports []json.RawMessage `json:"ports"`
+			Ports       []json.RawMessage `json:"ports"`
+			Environment map[string]string `json:"environment"`
 		} `json:"services"`
 	}
 	if err := json.Unmarshal(output, &configuration); err != nil {
@@ -45,8 +47,12 @@ func TestComposePublishesOnlyTheControlPlaneAPI(t *testing.T) {
 	if err := json.Unmarshal(api.Ports[0], &port); err != nil {
 		t.Fatal(err)
 	}
-	if port.HostIP != "127.0.0.1" || port.Target != 8080 || port.Published != "8080" {
-		t.Errorf("API port mapping = %+v, want 127.0.0.1:8080:8080", port)
+	if port.HostIP != "127.0.0.1" || port.Target != 8081 || port.Published != "8081" {
+		t.Errorf("API port mapping = %+v, want 127.0.0.1:8081:8081", port)
+	}
+	if api.Environment["OC_SERVER_ADDRESS"] != ":8081" ||
+		!strings.Contains(api.Environment["OC_PUBLIC_URL"], "http://localhost:8081") {
+		t.Fatalf("backend listener and public defaults disagree with the port mapping: %+v", api.Environment)
 	}
 	if len(configuration.Services["postgres"].Ports) != 0 {
 		t.Error("PostgreSQL must not publish a host port")

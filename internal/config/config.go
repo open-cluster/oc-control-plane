@@ -144,7 +144,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	}
 	lookup = effective
 	cfg := Config{
-		HTTPListenAddress:        ":8080",
+		HTTPListenAddress:        ":8081",
 		InvestigationWorkers:     defaultInvestigationWorkers,
 		MaxPendingInvestigations: defaultInvestigationMaxPendingPerOrganization,
 		SessionLifetime:          defaultSessionLifetime,
@@ -183,7 +183,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.PublicURL == "" {
-		cfg.PublicURL = "http://localhost:8080"
+		cfg.PublicURL = "http://localhost:8081"
 	}
 	if err = authentication(lookup, &cfg); err != nil {
 		return Config{}, err
