@@ -26,21 +26,19 @@ func (s Secret) Reveal() string             { return string(s) }
 func (s Secret) Empty() bool                { return strings.TrimSpace(string(s)) == "" }
 
 type ModelConfig struct {
-	Provider            string
-	Model               string
-	Effort              Effort
-	ContextWindowTokens int
-	MaxOutputTokens     int64
-	BaseURL             string
-	Credential          Secret
-	RequestTimeout      time.Duration
+	Provider        string
+	Model           string
+	Effort          Effort
+	MaxOutputTokens int64
+	BaseURL         string
+	Credential      Secret
+	RequestTimeout  time.Duration
 }
 
 const (
 	defaultRequestTimeout = 5 * time.Minute
-	// Application allowances, rather than provider maximums. The output allowance includes reasoning.
-	defaultContextWindow = 200_000
-	defaultMaxOutput     = 32_000
+	// The output allowance includes reasoning.
+	defaultMaxOutput = 32_000
 )
 
 func (d ModelConfig) WithDefaults() ModelConfig {
@@ -49,9 +47,6 @@ func (d ModelConfig) WithDefaults() ModelConfig {
 	}
 	if d.RequestTimeout <= 0 {
 		d.RequestTimeout = defaultRequestTimeout
-	}
-	if d.ContextWindowTokens <= 0 {
-		d.ContextWindowTokens = defaultContextWindow
 	}
 	if d.MaxOutputTokens <= 0 {
 		d.MaxOutputTokens = defaultMaxOutput
@@ -89,8 +84,7 @@ func (d ModelConfig) Validate() error {
 }
 
 func (d ModelConfig) String() string {
-	return fmt.Sprintf("%s/%s effort=%s context=%d max_output=%d", d.Provider, d.Model, d.Effort,
-		d.ContextWindowTokens, d.MaxOutputTokens)
+	return fmt.Sprintf("%s/%s effort=%s max_output=%d", d.Provider, d.Model, d.Effort, d.MaxOutputTokens)
 }
 
 type Completer interface {

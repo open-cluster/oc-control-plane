@@ -8,7 +8,7 @@ func LoadRecoveryDatabase(lookup func(string) (string, bool)) (string, error) {
 		return "", err
 	}
 	lookup = effective
-	dsn, err := databaseDSN(lookup)
+	dsn, err := readSecretText(lookup, EnvDatabaseDSNFile)
 	if err != nil {
 		return "", err
 	}

@@ -77,8 +77,10 @@ the limit drain in chronological batches of at most 100.
 Each Investigation receives the complete Messages assigned to it, in order, with their
 authors and timestamps. Those assigned user Messages are the authoritative request; there
 is no separate stored question preview.
-Input-size estimates are advisory. Optional inventory and older exchange text are reduced
-first; cited Findings remain until an actual provider rejection requires further reduction.
+Normal requests retain their existing context. After an actual provider context rejection,
+one bounded recovery can omit optional inventory and prior context while preserving current
+Messages, history access and completed Tool exchanges. Omitted observations must be retrieved
+again before they can support Findings.
 If the complete assigned request still cannot fit after one bounded recovery attempt, the
 Investigation is `failed` with a technical error. Its Messages remain stored. A capacity
 error does not mean human information is missing or that the request was answered.

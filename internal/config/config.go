@@ -47,7 +47,6 @@ var SupportedEnvironmentKeys = []string{
 	EnvModelName,
 	EnvModelKey,
 	EnvModelKeyFile,
-	EnvModelContextWindowSize,
 	EnvModelMaxOutputTokens,
 	EnvInvestigationWorkers,
 	EnvInvestigationMaxPendingPerOrganization,
@@ -86,7 +85,6 @@ const (
 	EnvModelName                              = "OC_AI_MODEL"
 	EnvModelKey                               = "OC_AI_API_KEY"
 	EnvModelKeyFile                           = "OC_AI_API_KEY_FILE"
-	EnvModelContextWindowSize                 = "OC_AI_CONTEXT_WINDOW_SIZE"
 	EnvModelMaxOutputTokens                   = "OC_AI_MAX_OUTPUT_SIZE"
 	EnvInvestigationWorkers                   = "OC_INVESTIGATION_WORKERS"
 	EnvInvestigationMaxPendingPerOrganization = "OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION"
@@ -129,7 +127,6 @@ type Config struct {
 	ModelProvider        string
 	ModelName            string
 	ModelAPIKey          string
-	ModelContextWindow   int
 	ModelMaxOutputTokens int64
 
 	InvestigationWorkers     int
@@ -161,7 +158,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if err = validateHostPort(cfg.HTTPListenAddress); err != nil {
 		return Config{}, fmt.Errorf("%s must be a host:port listen address: %w", EnvHTTPAddress, err)
 	}
-	if cfg.DatabaseDSN, err = databaseDSN(lookup); err != nil {
+	if cfg.DatabaseDSN, err = readSecretText(lookup, EnvDatabaseDSNFile); err != nil {
 		return Config{}, err
 	}
 	if cfg.DatabaseDSN == "" {
@@ -201,11 +198,6 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, err
 	}
 
-	if cfg.ModelContextWindow, err = positiveInteger(lookup,
-		EnvModelContextWindowSize,
-		0); err != nil {
-		return Config{}, err
-	}
 	modelOutput, outputErr := positiveInteger(lookup, EnvModelMaxOutputTokens, 0)
 	if outputErr != nil {
 		return Config{}, outputErr
@@ -284,10 +276,6 @@ func authentication(lookup func(string) (string, bool), cfg *Config) error {
 	return nil
 }
 
-func databaseDSN(lookup func(string) (string, bool)) (string, error) {
-	return readSecretText(lookup, EnvDatabaseDSNFile)
-}
-
 func optionalHostPort(lookup func(string) (string, bool), key string) (string, error) {
 	value, ok := lookup(key)
 	if !ok || strings.TrimSpace(value) == "" {
@@ -307,9 +295,6 @@ func validateHostPort(address string) error {
 	}
 	if strings.ContainsAny(host, "/\\") {
 		return fmt.Errorf("invalid host %q", host)
-	}
-	if strings.Contains(port, "/") {
-		return fmt.Errorf("invalid port %q", port)
 	}
 	number, err := strconv.Atoi(port)
 	if err != nil || number < 1 || number > 65_535 {

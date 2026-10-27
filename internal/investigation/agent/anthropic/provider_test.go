@@ -191,9 +191,6 @@ func TestComplete_RejectsUnofferedTools(t *testing.T) {
 				if round.callCount() != 0 {
 					t.Fatal("an unoffered forced Tool reached the provider")
 				}
-				if _, err := provider.EstimateRequestTokens(prompt); err == nil {
-					t.Fatal("request estimation accepted a request execution would reject")
-				}
 			}
 		})
 	}

@@ -165,20 +165,6 @@ func New(config reasoning.ModelConfig, options Options) (*Provider, error) {
 	return &Provider{client: sdk.NewClient(requestOptions...), config: config}, nil
 }
 
-func (p *Provider) EstimateRequestTokens(prompt reasoning.Prompt) (int, error) {
-	if err := validateEffort(prompt.Model, prompt.Effort); err != nil {
-		return 0, err
-	}
-	if prompt.ForceTool != "" && !prompt.OffersTool(prompt.ForceTool) {
-		return 0, fmt.Errorf("forced Tool was not offered")
-	}
-	encoded, err := json.Marshal(p.params(prompt))
-	if err != nil {
-		return 0, err
-	}
-	return reasoning.EstimateSerializedRequest(encoded), nil
-}
-
 func (p *Provider) Complete(
 	ctx context.Context, prompt reasoning.Prompt,
 ) (reasoning.Completion, error) {

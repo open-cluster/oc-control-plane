@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -25,8 +26,6 @@ type Telemetry struct {
 func (t *Telemetry) Ended(duration time.Duration, status, stoppedBy string) {
 	t.ended(duration, status, stoppedBy)
 }
-
-func (t *Telemetry) RanTool(run ToolRun, tool string) { t.ranTool(run, tool) }
 
 func NewTelemetry(logger *slog.Logger) *Telemetry {
 	meter := otel.Meter(meterName)
@@ -95,9 +94,13 @@ func (t *Telemetry) ended(since time.Duration, outcome, stoppedBy string) {
 		metric.WithAttributes(attributes...))
 }
 
-func (t *Telemetry) ranTool(run ToolRun, tool string) {
+func (t *Telemetry) RanTool(run ToolRun) {
 	if t == nil || t.toolDuration == nil {
 		return
+	}
+	tool := "unknown"
+	if run.IntegrationID != uuid.Nil {
+		tool = run.Tool
 	}
 	t.toolDuration.Record(context.Background(),
 		run.FinishedAt.Sub(run.StartedAt).Seconds(),

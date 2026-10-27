@@ -25,7 +25,6 @@ type scriptedModel struct {
 	mu    sync.Mutex
 	calls int
 	next  func(int, Prompt) (Completion, error)
-	size  func(Prompt) (int, error)
 }
 
 func (m *scriptedModel) Complete(_ context.Context, prompt Prompt) (Completion, error) {
@@ -35,17 +34,11 @@ func (m *scriptedModel) Complete(_ context.Context, prompt Prompt) (Completion, 
 	return m.next(m.calls, prompt)
 }
 
-func (m *scriptedModel) EstimateRequestTokens(prompt Prompt) (int, error) {
-	if m.size != nil {
-		return m.size(prompt)
-	}
-	return 0, nil
-}
-
 type records struct {
 	mu              sync.Mutex
 	candidate       integrations.Integration
 	trigger         investigation.Trigger
+	inventory       []string
 	brief           investigation.Brief
 	history         investigation.HistoryPage
 	missingEvidence investigation.EvidenceRef
@@ -131,7 +124,7 @@ func (r *records) RecordCredentialUnseal(context.Context, uuid.UUID, uuid.UUID, 
 	return r.auditErr
 }
 func (r *records) WorkloadInventory(context.Context, uuid.UUID, int) ([]string, error) {
-	return nil, nil
+	return r.inventory, nil
 }
 func (r *records) ConversationBrief(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, int) (investigation.Brief, error) {
 	return r.brief, r.briefErr
@@ -202,7 +195,7 @@ func validConclusion(t *testing.T, refs []int) json.RawMessage {
 
 func configuredTestAgent(t *testing.T, store *records, completer Completer, catalog integrations.Catalog) *Agent {
 	t.Helper()
-	return &Agent{completer: completer, modelConfig: ModelConfig{Provider: "scripted", Model: "test", ContextWindowTokens: 128_000, MaxOutputTokens: 1024}, Store: store, Catalog: catalog, Logger: slog.New(slog.DiscardHandler)}
+	return &Agent{completer: completer, modelConfig: ModelConfig{Provider: "scripted", Model: "test", MaxOutputTokens: 1024}, Store: store, Catalog: catalog, Logger: slog.New(slog.DiscardHandler)}
 }
 
 func TestRunLoadsRecentReplyDetailsAndStopsRepeatedHistoryReads(t *testing.T) {
@@ -428,7 +421,7 @@ func TestRunAcceptsACustomModelWithExplicitLimits(t *testing.T) {
 	}}
 	built, err := NewAgent(ModelConfig{
 		Provider: "anthropic", Model: "claude-future-release",
-		ContextWindowTokens: 128_000, MaxOutputTokens: 1_024,
+		MaxOutputTokens: 1_024,
 	}, model)
 	if err != nil {
 		t.Fatal(err)
@@ -1164,15 +1157,18 @@ func TestRunForcesAnHonestConclusionAtTheTurnLimit(t *testing.T) {
 	}
 }
 
-func TestRunAdmitsCompleteAssignedInputDespiteAnOverflowEstimate(t *testing.T) {
+func TestRunPreservesCompleteContextOnNormalRequests(t *testing.T) {
 	prior := uuid.New()
 	store := &records{
 		candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"},
+		inventory: []string{"cluster/prod/payments"},
+		trigger:   investigation.Trigger{IncidentID: uuid.New(), Title: "High latency"},
 		messages: []investigation.AssignedMessage{
 			{Sequence: 3, Author: "alice", Text: "Read eu-west-2 only."},
 			{Sequence: 4, Author: "bob", Text: "Exclude eu-central-1; preserve this correction."},
 		},
-		brief: investigation.Brief{HistoryBefore: 3, MissingEvidence: true,
+		brief: investigation.Brief{HistoryBefore: 3, NextBefore: 2, MissingEvidence: true,
+			OpenHypotheses: []string{"Check the rollout"},
 			Findings: []investigation.PriorFinding{
 				{InvestigationID: prior, Statement: "KEEP CITED FINDING", Kind: "observation", Runs: []int{1}},
 				{InvestigationID: prior, Statement: "KEEP CITED FINDING", Kind: "contributing_factor", Runs: []int{1}},
@@ -1184,23 +1180,19 @@ func TestRunAdmitsCompleteAssignedInputDespiteAnOverflowEstimate(t *testing.T) {
 			}, Limitations: []string{investigation.MissingEvidenceStatement}},
 	}
 	model := &scriptedModel{
-		size: func(prompt Prompt) (int, error) {
-			if prompt.ForceTool == ConcludeToolName {
-				return 100, nil
-			}
-			return 2_000, nil
-		},
 		next: func(_ int, prompt Prompt) (Completion, error) {
 			if prompt.ForceTool != "" || prompt.MaxOutputTokens != 1_024 {
-				t.Fatal("an advisory estimate forced finalization or shrank the output allowance")
+				t.Fatal("a normal request forced finalization or changed the output allowance")
 			}
 			text := prompt.System[1].Text + prompt.Content[0].Text
 			first, second := strings.Index(text, store.messages[0].Text), strings.Index(text, store.messages[1].Text)
 			if first < 0 || second <= first || !strings.Contains(text, "alice") || !strings.Contains(text, "bob") ||
 				!strings.Contains(text, "TASK follow_up") || !strings.Contains(text, "beforeSequence=3") ||
 				!strings.Contains(text, investigation.MissingEvidenceStatement) ||
+				!strings.Contains(text, "cluster/prod/payments") || !strings.Contains(text, "High latency") ||
+				!strings.Contains(text, "Check the rollout") || !strings.Contains(text, "beforeSequence=2") ||
 				strings.Count(text, "KEEP CITED FINDING") != 3 ||
-				strings.Contains(text, "OLD OPTIONAL CONTEXT") {
+				!strings.Contains(text, "OLD OPTIONAL CONTEXT") {
 				t.Fatalf("admission lost current input or history metadata: %s", text)
 			}
 			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
@@ -1212,11 +1204,10 @@ func TestRunAdmitsCompleteAssignedInputDespiteAnOverflowEstimate(t *testing.T) {
 		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 			return integrations.ToolResult{}, nil
 		}))
-	runner.modelConfig.ContextWindowTokens = 1_500
 
 	organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	if err := runner.Run(context.Background(), organization,
-		investigation.Investigation{ID: uuid.New(), ConversationID: uuid.New(), Turn: 2, Subject: "question"}); err != nil {
+		investigation.Investigation{ID: uuid.New(), IncidentID: store.trigger.IncidentID, ConversationID: uuid.New(), Turn: 2, Subject: "question"}); err != nil {
 		t.Fatal(err)
 	}
 	if store.status != investigation.StatusConcluded || store.stoppedBy != "" || model.calls != 1 {
@@ -1258,12 +1249,6 @@ func TestRunRetriesAContextRejectionOnlyAsAForcedConclusion(t *testing.T) {
 			ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil),
 		}}}, nil
 	}}
-	model.size = func(prompt Prompt) (int, error) {
-		if prompt.ForceTool == ConcludeToolName {
-			return 100, nil
-		}
-		return 2_000, nil
-	}
 	runner := configuredTestAgent(t, store, model, testCatalog(t,
 		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 			return integrations.ToolResult{}, nil
@@ -1299,10 +1284,7 @@ func TestRunBoundsContextRecoveryWithoutLosingInput(t *testing.T) {
 				store.brief = investigation.Brief{HistoryBefore: 2,
 					Findings: []investigation.PriorFinding{{InvestigationID: prior, Statement: "OPTIONAL OBSERVATION", Runs: []int{1}}}}
 			}
-			model := &scriptedModel{size: func(prompt Prompt) (int, error) {
-				encoded, err := json.Marshal(prompt)
-				return len(encoded), err
-			}, next: func(call int, prompt Prompt) (Completion, error) {
+			model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
 				if call > 2 {
 					t.Fatal("context recovery exceeded its bound")
 				}
@@ -1344,6 +1326,9 @@ func TestRunBoundsContextRecoveryWithoutLosingInput(t *testing.T) {
 			}
 			if model.calls != wantCalls || store.status != wantStatus || len(store.conclusion.Limitations) != 0 {
 				t.Fatalf("calls=%d status=%s failure=%s", model.calls, store.status, store.failure)
+			}
+			if test.rejectRetry && (!strings.Contains(store.failure, "context rejected") || store.stoppedBy != "") {
+				t.Fatalf("a second context rejection lost its technical failure: %s", store.failure)
 			}
 		})
 	}

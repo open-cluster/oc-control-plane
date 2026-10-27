@@ -155,6 +155,8 @@ Follow the [Quickstart](https://docs.open-cluster.io/getting-started/quickstart)
 The standalone backend uses port `8081`; its default local public origin is
 `http://localhost:8081`. A separately deployed frontend must provide its own verified routing.
 Helm requires `server.publicURL` to be set to the deployment's actual public origin.
+Model requests use provider context-limit responses for bounded recovery; the output allowance
+remains configurable through `OC_AI_MAX_OUTPUT_SIZE`.
 
 ## Development
 

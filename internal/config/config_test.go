@@ -91,9 +91,8 @@ func TestLoadUsesSafeDefaultsAndTheEssentialOSSSurface(t *testing.T) {
 	if cfg.SessionLifetime != 12*time.Hour {
 		t.Fatalf("session lifetime default = %v", cfg.SessionLifetime)
 	}
-	if cfg.ModelContextWindow != 0 || cfg.ModelMaxOutputTokens != 0 {
-		t.Fatalf("model limit overrides = context %d output %d",
-			cfg.ModelContextWindow, cfg.ModelMaxOutputTokens)
+	if cfg.ModelMaxOutputTokens != 0 {
+		t.Fatalf("model output limit override = %d", cfg.ModelMaxOutputTokens)
 	}
 }
 
@@ -192,18 +191,6 @@ func TestLoadInvestigationLimitsFromEnvironment(t *testing.T) {
 	}
 }
 
-func TestLoadModelContextWindowFromEnvironment(t *testing.T) {
-	values := essentialEnvironment(t)
-	values[EnvModelContextWindowSize] = "200000"
-	cfg, err := Load(lookup(values))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.ModelContextWindow != 200_000 {
-		t.Fatalf("model context window = %d", cfg.ModelContextWindow)
-	}
-}
-
 func TestLoadModelOutputLimitFromEnvironment(t *testing.T) {
 	values := essentialEnvironment(t)
 	values[EnvModelMaxOutputTokens] = "64000"
@@ -229,7 +216,7 @@ func TestLoadRejectsNonPositiveInvestigationLimits(t *testing.T) {
 }
 
 func TestLoadRejectsInvalidModelLimits(t *testing.T) {
-	for _, key := range []string{EnvModelContextWindowSize, EnvModelMaxOutputTokens} {
+	for _, key := range []string{EnvModelMaxOutputTokens} {
 		for _, value := range []string{"0", "-1", "not-a-number"} {
 			t.Run(key+"/"+value, func(t *testing.T) {
 				values := essentialEnvironment(t)
