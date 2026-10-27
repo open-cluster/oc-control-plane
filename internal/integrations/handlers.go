@@ -78,15 +78,14 @@ func (h Handlers) types(writer http.ResponseWriter, request *http.Request) {
 		configured[count.Provider] = count.Count
 	}
 
-	manifests, next, err := listing.SlicePage(h.Catalog.Manifests(), query)
+	definitions, next, err := listing.SlicePage(h.Catalog.All(), query)
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
 		return
 	}
-	views := make([]typeView, 0, len(manifests))
-	for _, manifest := range manifests {
-		definition, _ := h.Catalog.Lookup(manifest.Key)
-		views = append(views, typeViewOf(definition, configured[manifest.Key], h.WebhookTypes[manifest.Key]))
+	views := make([]typeView, 0, len(definitions))
+	for _, definition := range definitions {
+		views = append(views, typeViewOf(definition, configured[definition.Key], h.WebhookTypes[definition.Key]))
 	}
 	writeJSON(writer, http.StatusOK, typeListView{Types: views, Next: listing.CursorPtr(next)})
 }

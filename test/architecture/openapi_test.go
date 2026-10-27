@@ -357,6 +357,24 @@ func TestOpenAPIListOperationsDeclareTheirQueryCapabilities(t *testing.T) {
 	}
 }
 
+func TestOpenAPIIntegrationCatalogOmitsSchemaAndGuideURL(t *testing.T) {
+	t.Parallel()
+	contents, err := os.ReadFile("../../api/openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document openAPIDocument
+	if err := yaml.Unmarshal(contents, &document); err != nil {
+		t.Fatal(err)
+	}
+	catalog := document.Components.Schemas["IntegrationType"]
+	for _, removed := range []string{"configurationSchema", "productDocumentationUrl"} {
+		if _, present := catalog.Properties[removed]; present || slices.Contains(catalog.Required, removed) {
+			t.Errorf("IntegrationType still declares %s", removed)
+		}
+	}
+}
+
 func TestOpenAPISessionDescribesIdentity(t *testing.T) {
 	t.Parallel()
 

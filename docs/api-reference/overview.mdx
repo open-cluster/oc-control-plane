@@ -13,6 +13,22 @@ Set the base URL for your deployment:
 export OPENCLUSTER_URL="https://oc.example.com"
 ```
 
+## Integration catalog
+
+Use `GET /api/v1/integration-types` to discover registered types, their Tools, setup
+capabilities, and configured counts. An omitted `tools` list means no query Tools;
+`receivesWebhooks` identifies alert intake. Per-Integration `toolAvailability` reports
+which Tools are currently usable.
+
+Each integration guide describes its configuration fields and credentials. Secret inputs
+are accepted during setup and never returned in configuration reads.
+
+The pre-production catalog response no longer includes `logo`, `available`, `capabilities`,
+`secretFields`, `documentationSlug`, `documentationUrl`, `productDocumentationUrl`, or
+`configurationSchema`. API clients use the type key for branding, registered catalog
+membership for type availability, and `tools` for operations. Setup instructions and
+vendor references remain in the integration guides.
+
 ## Authentication
 
 Normal product routes authenticate with the opaque `__Host-oc_session` cookie issued by

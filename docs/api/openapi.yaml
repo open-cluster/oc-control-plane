@@ -2224,14 +2224,9 @@ components:
         - name
         - description
         - category
-        - available
-        - capabilities
-        - secretFields
-        - documentationSlug
         - requiresRelay
         - receivesWebhooks
         - supportsConnect
-        - configurationSchema
         - configured
       properties:
         key:
@@ -2245,9 +2240,6 @@ components:
           type: string
           minLength: 1
           maxLength: 1024
-        logo:
-          type: string
-          maxLength: 128
         category:
           type: string
           enum:
@@ -2255,40 +2247,12 @@ components:
             - infrastructure
             - collaboration
             - source-control
-        available:
-          type: boolean
-        capabilities:
-          type: array
-          items:
-            type: string
-            minLength: 1
-            maxLength: 128
-          uniqueItems: true
-        secretFields:
-          type: array
-          items:
-            type: string
-            minLength: 1
-            maxLength: 128
-          uniqueItems: true
-        documentationSlug:
-          type: string
-          pattern: ^integrations/[a-z-]+/[a-z][a-z0-9_]{0,63}$
-        documentationUrl:
-          type: string
-          format: uri
-        productDocumentationUrl:
-          type: string
-          format: uri-reference
         requiresRelay:
           type: boolean
         receivesWebhooks:
           type: boolean
         supportsConnect:
           type: boolean
-        configurationSchema:
-          type: object
-          additionalProperties: true
         tools:
           type: array
           items:

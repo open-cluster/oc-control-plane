@@ -60,6 +60,9 @@ OpenCluster currently supports:
 
 Integrations expose only the capabilities that were successfully verified for that connection.
 
+The Integration type API lists Tools, setup capabilities, and configured counts.
+Registered types are available in the running build.
+
 See the [integration documentation](https://docs.open-cluster.io/integrations).
 
 ## Capabilities

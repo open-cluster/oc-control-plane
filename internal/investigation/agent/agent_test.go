@@ -163,7 +163,7 @@ func (r *records) AppendEvent(
 func testCatalog(t *testing.T, run func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error)) integrations.Catalog {
 	t.Helper()
 	catalog, err := integrations.NewCatalog(integrations.Definition{
-		Manifest: integrations.Manifest{Key: "stub", Name: "Stub", Category: integrations.CategoryAlerting, Tools: []integrations.Tool{{Name: "stub_read", Description: "Read a value to answer the question.", Run: run}}},
+		Key: "stub", Name: "Stub", Category: integrations.CategoryAlerting, Tools: []integrations.Tool{{Name: "stub_read", Description: "Read a value to answer the question.", Run: run}},
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
 			return integrations.Verification{Status: integrations.StatusVerified}
 		},
@@ -542,7 +542,7 @@ func TestModelChoosesReadsBeforeWorkloadLabelsCauseExternalAccess(t *testing.T) 
 		{Name: "kubernetes_pod_logs", Description: "Read pod logs for diagnosis.", Run: run},
 	}
 	catalog, err := integrations.NewCatalog(integrations.Definition{
-		Manifest: integrations.Manifest{Key: "kubernetes", Name: "Kubernetes", Category: integrations.CategoryInfrastructure, Tools: tools},
+		Key: "kubernetes", Name: "Kubernetes", Category: integrations.CategoryInfrastructure, Tools: tools,
 		Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
 			return integrations.Verification{Status: integrations.StatusVerified}
 		},
@@ -626,10 +626,10 @@ func TestRunScopesAProviderConversationToItsOriginThread(t *testing.T) {
 				return integrations.ToolResult{Summary: "origin thread", Content: "origin thread"}, nil
 			}
 			catalog, err := integrations.NewCatalog(integrations.Definition{
-				Manifest: integrations.Manifest{Key: "chat", Name: "Chat", Category: integrations.CategoryCollaboration, Tools: []integrations.Tool{
+				Key: "chat", Name: "Chat", Category: integrations.CategoryCollaboration, Tools: []integrations.Tool{
 					{Name: "chat_thread", Description: "Read the originating thread.", SupportsThreadScope: true, Run: read},
 					{Name: "chat_channel", Description: "Read a channel.", Run: read},
-				}},
+				},
 				Probe: func(context.Context, integrations.ProbeInput) integrations.Verification {
 					return integrations.Verification{Status: integrations.StatusVerified}
 				},

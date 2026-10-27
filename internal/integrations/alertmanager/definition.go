@@ -6,18 +6,13 @@ import (
 
 func Definition() integrations.Definition {
 	return integrations.Definition{
-		Manifest: integrations.Manifest{
-			Key:  "alertmanager",
-			Name: "Prometheus Alertmanager",
-			Description: "Create incidents from firing and resolved Alertmanager alerts " +
-				"delivered through an authenticated webhook.",
-			Logo:              "alertmanager",
-			Category:          integrations.CategoryAlerting,
-			SourceURL:         "https://prometheus.io/docs/alerting/latest/configuration/#webhook_config",
-			DocumentationSlug: "integrations/alerting/alertmanager",
-			Config:            nil,
-		},
-		Verify: verify,
+		Key:  "alertmanager",
+		Name: "Prometheus Alertmanager",
+		Description: "Create incidents from firing and resolved Alertmanager alerts " +
+			"delivered through an authenticated webhook.",
+		Category: integrations.CategoryAlerting,
+		Config:   nil,
+		Verify:   verify,
 	}
 }
 

@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -242,21 +240,28 @@ func TestIntegrationTypeCatalog(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("reading the catalog = %d: %s", status, body)
 	}
+	var rawCatalog struct {
+		Types []map[string]json.RawMessage `json:"types"`
+	}
+	decodeInto(t, body, &rawCatalog)
+	for _, entry := range rawCatalog.Types {
+		for _, removed := range []string{"logo", "available", "capabilities", "secretFields", "documentationSlug", "documentationUrl", "configurationSchema", "productDocumentationUrl"} {
+			if _, present := entry[removed]; present {
+				t.Errorf("catalog type %s still contains %s", entry["key"], removed)
+			}
+		}
+	}
 	type catalogType struct {
 		Key         string `json:"key"`
 		Name        string `json:"name"`
 		Description string `json:"description"`
-		Logo        string `json:"logo"`
 		Category    string `json:"category"`
 		Tools       []struct {
 			Name string `json:"name"`
 		} `json:"tools"`
-		RequiresRelay           bool            `json:"requiresRelay"`
-		ReceivesWebhooks        bool            `json:"receivesWebhooks"`
-		ConfigurationSchema     json.RawMessage `json:"configurationSchema"`
-		Configured              int             `json:"configured"`
-		DocumentationURL        string          `json:"documentationUrl"`
-		ProductDocumentationURL string          `json:"productDocumentationUrl"`
+		RequiresRelay    bool `json:"requiresRelay"`
+		ReceivesWebhooks bool `json:"receivesWebhooks"`
+		Configured       int  `json:"configured"`
 	}
 	var catalog struct {
 		Types []catalogType `json:"types"`
@@ -267,9 +272,13 @@ func TestIntegrationTypeCatalog(t *testing.T) {
 	for index, entry := range catalog.Types {
 		byKey[entry.Key] = index
 	}
-	for _, wanted := range []string{"alertmanager", "kubernetes"} {
-		if _, present := byKey[wanted]; !present {
-			t.Fatalf("the catalog does not serve %q: %s", wanted, body)
+	wantKeys := []string{"alertmanager", "generic_webhook", "github", "kubernetes", "slack"}
+	if len(catalog.Types) != len(wantKeys) {
+		t.Fatalf("catalog has %d types, want %d: %s", len(catalog.Types), len(wantKeys), body)
+	}
+	for index, wanted := range wantKeys {
+		if catalog.Types[index].Key != wanted {
+			t.Errorf("catalog type %d = %q, want %q", index, catalog.Types[index].Key, wanted)
 		}
 	}
 
@@ -290,32 +299,6 @@ func TestIntegrationTypeCatalog(t *testing.T) {
 		t.Errorf("kubernetes declares %d read Tools, want its three bounded Relay reads",
 			len(kubernetes.Tools))
 	}
-	if !strings.Contains(string(kubernetes.ConfigurationSchema), "additionalProperties") {
-		t.Error("the configuration schema is not the closed JSON Schema the create operation enforces")
-	}
-
-	t.Run("every type reaches our own documentation and provider types reach the vendor", func(t *testing.T) {
-		for _, entry := range catalog.Types {
-			if entry.DocumentationURL == "" && entry.Key != "generic_webhook" {
-				t.Errorf("%s names no vendor documentation", entry.Key)
-			}
-			if entry.ProductDocumentationURL == "" {
-				t.Errorf("%s names no OpenCluster documentation page", entry.Key)
-				continue
-			}
-			want := "integrations/" + entry.Category + "/" + entry.Key
-			if !strings.HasSuffix(entry.ProductDocumentationURL, want) {
-				t.Errorf("%s documents at %q, want a page under %q",
-					entry.Key, entry.ProductDocumentationURL, want)
-				continue
-			}
-			page := filepath.Join("..", "..", "docs", filepath.FromSlash(want)+".mdx")
-			if _, err := os.Stat(page); err != nil {
-				t.Errorf("%s documents at %q, and %s does not exist",
-					entry.Key, entry.ProductDocumentationURL, page)
-			}
-		}
-	})
 }
 
 func TestIntegrationLifecycle(t *testing.T) {
