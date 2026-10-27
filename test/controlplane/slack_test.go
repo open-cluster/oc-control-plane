@@ -346,7 +346,7 @@ func TestSlackPatchReplacesTheCredentialWriteOnly(t *testing.T) {
 	})
 }
 
-func TestSlackCatalogEntryRendersTheToolsAndTheWriteOnlySchema(t *testing.T) {
+func TestSlackCatalogEntryRendersTheTools(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-good-token-1234")
 	plane := startSlackPlane(t, vendor)
 
@@ -357,9 +357,8 @@ func TestSlackCatalogEntryRendersTheToolsAndTheWriteOnlySchema(t *testing.T) {
 	}
 	var catalog struct {
 		Types []struct {
-			Key                 string            `json:"key"`
-			ConfigurationSchema json.RawMessage   `json:"configurationSchema"`
-			Tools               []json.RawMessage `json:"tools"`
+			Key   string            `json:"key"`
+			Tools []json.RawMessage `json:"tools"`
 		} `json:"types"`
 	}
 	decodeInto(t, body, &catalog)
@@ -386,9 +385,6 @@ func TestSlackCatalogEntryRendersTheToolsAndTheWriteOnlySchema(t *testing.T) {
 					t.Errorf("tool still renders obsolete %s: %s", removed, raw)
 				}
 			}
-		}
-		if !strings.Contains(string(entry.ConfigurationSchema), `"writeOnly":true`) {
-			t.Error("the schema does not mark the token write-only")
 		}
 		return
 	}

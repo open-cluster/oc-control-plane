@@ -17,7 +17,6 @@ func Definition(client *Client, installer *Installer, servesEvents bool) integra
 		Config: []integrations.Field{
 			{
 				Key:      "botToken",
-				Label:    "Slack token",
 				Type:     integrations.FieldString,
 				Required: true,
 				Secret:   true,

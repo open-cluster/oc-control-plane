@@ -245,7 +245,7 @@ func TestIntegrationTypeCatalog(t *testing.T) {
 	}
 	decodeInto(t, body, &rawCatalog)
 	for _, entry := range rawCatalog.Types {
-		for _, removed := range []string{"logo", "available", "capabilities", "secretFields", "documentationSlug", "documentationUrl"} {
+		for _, removed := range []string{"logo", "available", "capabilities", "secretFields", "documentationSlug", "documentationUrl", "configurationSchema", "productDocumentationUrl"} {
 			if _, present := entry[removed]; present {
 				t.Errorf("catalog type %s still contains %s", entry["key"], removed)
 			}
@@ -259,11 +259,9 @@ func TestIntegrationTypeCatalog(t *testing.T) {
 		Tools       []struct {
 			Name string `json:"name"`
 		} `json:"tools"`
-		RequiresRelay           bool            `json:"requiresRelay"`
-		ReceivesWebhooks        bool            `json:"receivesWebhooks"`
-		ConfigurationSchema     json.RawMessage `json:"configurationSchema"`
-		Configured              int             `json:"configured"`
-		ProductDocumentationURL string          `json:"productDocumentationUrl"`
+		RequiresRelay    bool `json:"requiresRelay"`
+		ReceivesWebhooks bool `json:"receivesWebhooks"`
+		Configured       int  `json:"configured"`
 	}
 	var catalog struct {
 		Types []catalogType `json:"types"`
@@ -300,26 +298,6 @@ func TestIntegrationTypeCatalog(t *testing.T) {
 	if len(kubernetes.Tools) != 3 {
 		t.Errorf("kubernetes declares %d read Tools, want its three bounded Relay reads",
 			len(kubernetes.Tools))
-	}
-	var schema struct {
-		AdditionalProperties bool `json:"additionalProperties"`
-		Properties           map[string]struct {
-			Type      string `json:"type"`
-			WriteOnly bool   `json:"writeOnly"`
-		} `json:"properties"`
-		Required []string `json:"required"`
-	}
-	schema.AdditionalProperties = true
-	decodeInto(t, string(catalog.Types[byKey["slack"]].ConfigurationSchema), &schema)
-	if schema.AdditionalProperties || schema.Properties["botToken"].Type != "string" ||
-		!schema.Properties["botToken"].WriteOnly || len(schema.Required) != 1 || schema.Required[0] != "botToken" {
-		t.Errorf("Slack must declare a required write-only token in a closed schema: %+v", schema)
-	}
-	for _, entry := range catalog.Types {
-		want := "https://docs.open-cluster.io/integrations/" + entry.Category + "/" + entry.Key
-		if entry.ProductDocumentationURL != want {
-			t.Errorf("%s documentation URL = %q, want %q", entry.Key, entry.ProductDocumentationURL, want)
-		}
 	}
 }
 

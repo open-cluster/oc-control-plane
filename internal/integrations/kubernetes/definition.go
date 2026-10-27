@@ -29,9 +29,7 @@ func Definition(executors ...Executor) integrations.Definition {
 		Category: integrations.CategoryInfrastructure,
 		Config: []integrations.Field{
 			{
-				Key: "namespaceAllowList",
-				Label: "Namespaces this integration may read (comma separated; " +
-					"empty means every namespace the Relay's service account can reach)",
+				Key:  "namespaceAllowList",
 				Type: integrations.FieldString,
 			},
 		},

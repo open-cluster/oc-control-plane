@@ -35,7 +35,7 @@ func connectingPrincipal(t *testing.T, organization string) authz.Principal {
 func sealingDefinition(authorized *bool) Definition {
 	return Definition{
 		Key: "stub", Name: "Stub", Category: CategoryCollaboration,
-		Config: []Field{{Key: "token", Label: "Token",
+		Config: []Field{{Key: "token",
 			Type: FieldString, Required: true, Secret: true}},
 		Probe: func(context.Context, ProbeInput) Verification {
 			return Verification{Status: StatusVerified}

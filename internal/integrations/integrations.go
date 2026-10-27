@@ -2,7 +2,6 @@ package integrations
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
@@ -31,7 +30,6 @@ const (
 
 type Field struct {
 	Key      string
-	Label    string
 	Type     FieldType
 	Required bool
 	Secret   bool
@@ -78,47 +76,6 @@ type Definition struct {
 	Probe   func(ctx context.Context, input ProbeInput) Verification
 	Inbound func(Integration) InboundAvailability
 	Connect *Connect
-}
-
-func (d Definition) ConfigurationSchema() json.RawMessage {
-	properties := make(map[string]any, len(d.Config))
-	required := make([]string, 0, len(d.Config))
-
-	for _, field := range d.Config {
-		property := map[string]any{
-			"type":  string(field.Type),
-			"title": field.Label,
-		}
-		if len(field.Options) > 0 {
-			property["enum"] = field.Options
-		}
-		if field.Secret {
-			property["writeOnly"] = true
-		}
-		properties[field.Key] = property
-		if field.Required {
-			required = append(required, field.Key)
-		}
-	}
-	sort.Strings(required)
-
-	schema := map[string]any{
-		"$schema":              "https://json-schema.org/draft/2020-12/schema",
-		"$id":                  "https://opencluster.dev/schemas/integration/" + string(d.Key) + "/configuration.json",
-		"title":                d.Name + " configuration",
-		"type":                 "object",
-		"additionalProperties": false,
-		"properties":           properties,
-	}
-	if len(required) > 0 {
-		schema["required"] = required
-	}
-
-	encoded, err := json.Marshal(schema)
-	if err != nil {
-		return json.RawMessage(`{"error":"this definition's configuration could not be rendered"}`)
-	}
-	return encoded
 }
 
 func (d Definition) Field(key string) (Field, bool) {

@@ -2227,7 +2227,6 @@ components:
         - requiresRelay
         - receivesWebhooks
         - supportsConnect
-        - configurationSchema
         - configured
       properties:
         key:
@@ -2248,18 +2247,12 @@ components:
             - infrastructure
             - collaboration
             - source-control
-        productDocumentationUrl:
-          type: string
-          format: uri-reference
         requiresRelay:
           type: boolean
         receivesWebhooks:
           type: boolean
         supportsConnect:
           type: boolean
-        configurationSchema:
-          type: object
-          additionalProperties: true
         tools:
           type: array
           items:

@@ -17,10 +17,6 @@ var requiredScopes = map[string]string{
 	"users:read":       "resolving message authors to names",
 }
 
-var optionalScopes = map[string]string{
-	"search:read": "searching messages across the workspace",
-}
-
 func probe(ctx context.Context, client *Client, token string) integrations.Verification {
 	identity, err := client.AuthTest(ctx, token)
 	if err != nil {

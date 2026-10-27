@@ -13,17 +13,15 @@ type errorView struct {
 }
 
 type typeView struct {
-	Key                     string          `json:"key"`
-	Name                    string          `json:"name"`
-	Description             string          `json:"description"`
-	Category                string          `json:"category"`
-	ProductDocumentationURL string          `json:"productDocumentationUrl,omitempty"`
-	RequiresRelay           bool            `json:"requiresRelay"`
-	ReceivesWebhooks        bool            `json:"receivesWebhooks"`
-	SupportsConnect         bool            `json:"supportsConnect"`
-	ConfigurationSchema     json.RawMessage `json:"configurationSchema"`
-	Tools                   []toolView      `json:"tools,omitempty"`
-	Configured              int             `json:"configured"`
+	Key              string     `json:"key"`
+	Name             string     `json:"name"`
+	Description      string     `json:"description"`
+	Category         string     `json:"category"`
+	RequiresRelay    bool       `json:"requiresRelay"`
+	ReceivesWebhooks bool       `json:"receivesWebhooks"`
+	SupportsConnect  bool       `json:"supportsConnect"`
+	Tools            []toolView `json:"tools,omitempty"`
+	Configured       int        `json:"configured"`
 }
 
 type toolView struct {
@@ -61,17 +59,15 @@ func typeViewOf(definition Definition, configured int, receivesWebhooks bool) ty
 		})
 	}
 	return typeView{
-		Key:                     string(definition.Key),
-		Name:                    definition.Name,
-		Description:             definition.Description,
-		Category:                string(definition.Category),
-		ProductDocumentationURL: "https://docs.open-cluster.io/integrations/" + string(definition.Category) + "/" + string(definition.Key),
-		RequiresRelay:           definition.RequiresRelay,
-		ReceivesWebhooks:        receivesWebhooks,
-		SupportsConnect:         definition.Connectable(),
-		ConfigurationSchema:     definition.ConfigurationSchema(),
-		Tools:                   tools,
-		Configured:              configured,
+		Key:              string(definition.Key),
+		Name:             definition.Name,
+		Description:      definition.Description,
+		Category:         string(definition.Category),
+		RequiresRelay:    definition.RequiresRelay,
+		ReceivesWebhooks: receivesWebhooks,
+		SupportsConnect:  definition.Connectable(),
+		Tools:            tools,
+		Configured:       configured,
 	}
 }
 
