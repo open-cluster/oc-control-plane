@@ -293,6 +293,10 @@ func (r *Agent) Run(
 				moveCtx, r.completer, r.modelConfig, prompt)
 			state.usage = state.usage.Add(usageOf(completion.Usage))
 			if completeErr != nil {
+
+				// -------- Info --------
+				// IF the provider returns context error, we have to make brief a bit compact.
+				// -------- Info --------
 				if attempt == 0 && errors.Is(completeErr, ErrContextWindow) {
 					reduced := promptOrientation
 					reduced.Inventory = nil
