@@ -183,13 +183,12 @@ func configuredSealer(cfg config.Config) (seal.Sealer, error) {
 
 func modelBoundary(cfg config.Config, logger *slog.Logger, options Options) (*agent.Agent, error) {
 	modelConfig := agent.ModelConfig{
-		Provider:            cfg.ModelProvider,
-		Model:               cfg.ModelName,
-		Effort:              agent.Effort(options.ModelEffort),
-		BaseURL:             options.ModelBaseURL,
-		Credential:          agent.Secret(cfg.ModelAPIKey),
-		ContextWindowTokens: cfg.ModelContextWindow,
-		MaxOutputTokens:     cfg.ModelMaxOutputTokens,
+		Provider:        cfg.ModelProvider,
+		Model:           cfg.ModelName,
+		Effort:          agent.Effort(options.ModelEffort),
+		BaseURL:         options.ModelBaseURL,
+		Credential:      agent.Secret(cfg.ModelAPIKey),
+		MaxOutputTokens: cfg.ModelMaxOutputTokens,
 	}.WithDefaults()
 
 	if err := modelConfig.Validate(); err != nil {

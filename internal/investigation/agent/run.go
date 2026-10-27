@@ -50,9 +50,8 @@ type Agent struct {
 }
 
 func NewAgent(config ModelConfig, completer Completer) (*Agent, error) {
-	if config.ContextWindowTokens <= 0 || config.MaxOutputTokens <= 0 ||
-		int64(config.ContextWindowTokens) <= config.MaxOutputTokens {
-		return nil, fmt.Errorf("model configuration must have valid context and output limits")
+	if config.MaxOutputTokens <= 0 {
+		return nil, fmt.Errorf("model configuration must have a positive output limit")
 	}
 	return &Agent{
 		completer:   completer,
@@ -243,60 +242,7 @@ func (r *Agent) Run(
 	state.missingEvidence = oriented.Brief != nil && oriented.Brief.MissingEvidence
 	var priorEvidence []investigation.EvidenceRef
 
-	preparePrompt := func(concludeRequested bool, reason string, contextRejected bool) (Prompt, error) {
-		prompt := modelPrompt(r, state, concludeRequested, reason)
-		estimator, available := r.completer.(requestEstimator)
-		if !available {
-			if contextRejected {
-				return Prompt{}, fmt.Errorf("the provider rejected the context and a smaller request could not be established")
-			}
-			return prompt, nil
-		}
-		input, err := estimator.EstimateRequestTokens(prompt)
-		if err != nil {
-			return Prompt{}, fmt.Errorf("estimating the provider request: %w", err)
-		}
-		if contextRejected || int64(input)+prompt.MaxOutputTokens > int64(r.modelConfig.ContextWindowTokens) {
-			state.orientation.Inventory = nil
-			if brief := state.orientation.Brief; brief != nil {
-				state.orientation.Brief = &investigation.Brief{
-					Turn:            brief.Turn,
-					HistoryBefore:   brief.HistoryBefore,
-					NextBefore:      brief.NextBefore,
-					MissingEvidence: brief.MissingEvidence,
-				}
-				if !contextRejected {
-					state.orientation.Brief.Findings = brief.Findings
-					state.orientation.Brief.OpenHypotheses = brief.OpenHypotheses
-					state.orientation.Brief.Limitations = brief.Limitations
-				} else if brief.MissingEvidence {
-					state.orientation.Brief.Limitations = []string{investigation.MissingEvidenceStatement}
-				}
-			}
-			prompt = modelPrompt(r, state, concludeRequested, reason)
-		}
-		if !contextRejected {
-			return prompt, nil
-		}
-		reduced, err := estimator.EstimateRequestTokens(prompt)
-		if err != nil {
-			return Prompt{}, fmt.Errorf("estimating the recovery request: %w", err)
-		}
-		if reduced < input {
-			return prompt, nil
-		}
-		if !concludeRequested && len(prompt.Tools) > 1 {
-			prompt = modelPrompt(r, state, true, concludeReason(investigation.StoppedByContext, len(state.offered)))
-			reduced, err = estimator.EstimateRequestTokens(prompt)
-			if err != nil {
-				return Prompt{}, fmt.Errorf("estimating the finalization request: %w", err)
-			}
-			if reduced < input {
-				return prompt, nil
-			}
-		}
-		return Prompt{}, fmt.Errorf("the provider rejected the context and no meaningfully smaller request is available")
-	}
+	promptOrientation := state.orientation
 
 	var results []toolFeedback
 	stoppedBy := ""
@@ -341,27 +287,41 @@ func (r *Agent) Run(
 		forcedToConclude := mustConclude
 		move := modelMove{}
 		moveCtx, done := context.WithTimeout(ctx, decideTimeout)
-		contextRejected := false
 		for attempt := range 2 {
-			prompt, prepareErr := preparePrompt(forcedToConclude, reason, contextRejected)
-			if prepareErr != nil {
-				err = Failed(OutcomeRejected, r.modelConfig.Provider, r.modelConfig.Model,
-					prepareErr.Error())
-				break
-			}
-			if contextRejected && !forcedToConclude && prompt.ForceTool != "" {
-				stoppedBy = investigation.StoppedByContext
-				r.announce(ctx, events, investigation.ProgressPayload(ceilingProgress(stoppedBy)))
-				reason = concludeReason(stoppedBy, len(state.offered))
-				forcedToConclude = true
-			}
+			prompt := modelPrompt(r, promptOrientation, state.transcript, forcedToConclude, reason)
 			completion, completeErr := r.telemetry.complete(
 				moveCtx, r.completer, r.modelConfig, prompt)
 			state.usage = state.usage.Add(usageOf(completion.Usage))
 			if completeErr != nil {
+
+				// -------- Info --------
+				// IF the provider returns context error, we have to make brief a bit compact.
+				// -------- Info --------
 				if attempt == 0 && errors.Is(completeErr, ErrContextWindow) {
-					contextRejected = true
-					continue
+					reduced := promptOrientation
+					reduced.Inventory = nil
+					if brief := promptOrientation.Brief; brief != nil {
+						compact := *brief
+						compact.Findings = nil
+						compact.OpenHypotheses = nil
+						compact.Recent = nil
+						compact.Limitations = nil
+						if brief.MissingEvidence {
+							compact.Limitations = []string{investigation.MissingEvidenceStatement}
+						}
+						reduced.Brief = &compact
+					}
+					if len(renderOrientation(reduced)) < len(renderOrientation(promptOrientation)) {
+						promptOrientation = reduced
+						continue
+					}
+					if !forcedToConclude && len(prompt.Tools) > 1 {
+						stoppedBy = investigation.StoppedByContext
+						r.announce(ctx, events, investigation.ProgressPayload(ceilingProgress(stoppedBy)))
+						reason = concludeReason(stoppedBy, len(state.offered))
+						forcedToConclude = true
+						continue
+					}
 				}
 				err = completeErr
 				break
@@ -409,7 +369,7 @@ func (r *Agent) Run(
 				invalid = fmt.Errorf("call conclude exactly once with the evidence-bounded conclusion")
 			default:
 				allowed := append([]investigation.EvidenceRef(nil), priorEvidence...)
-				if brief := state.orientation.Brief; brief != nil {
+				if brief := promptOrientation.Brief; brief != nil {
 					for _, finding := range dedupeFindings(brief.Findings) {
 						allowed = append(allowed, finding.References()...)
 					}
@@ -551,11 +511,7 @@ func (r *Agent) Run(
 					return terminalErr
 				}
 				announceCompletion = true
-				canonical := "unknown"
-				if run.IntegrationID != uuid.Nil {
-					canonical = call.Tool
-				}
-				r.RuntimeTelemetry.RanTool(run, canonical)
+				r.RuntimeTelemetry.RanTool(run)
 				state.executed++
 				executedCalls[identity] = run.Ordinal
 			}
@@ -578,7 +534,7 @@ func (r *Agent) Run(
 	}
 }
 
-func modelPrompt(r *Agent, state *runState, forced bool, reason string) Prompt {
+func modelPrompt(r *Agent, oriented orientation, transcript []Turn, forced bool, reason string) Prompt {
 	prompt := Prompt{
 		Model: r.modelConfig.Model,
 		System: []Block{
@@ -587,18 +543,18 @@ func modelPrompt(r *Agent, state *runState, forced bool, reason string) Prompt {
 				Cache: true,
 			},
 			{
-				Text:  taskInstruction(state.orientation),
+				Text:  taskInstruction(oriented),
 				Cache: true,
 			},
 		},
 		Content: []Block{
 			{
-				Text:  renderOrientation(state.orientation),
+				Text:  renderOrientation(oriented),
 				Cache: true,
 			},
 		},
-		Tools:           exchangeTools(state.orientation),
-		Turns:           state.transcript,
+		Tools:           exchangeTools(oriented),
+		Turns:           transcript,
 		MaxOutputTokens: r.modelConfig.MaxOutputTokens,
 		Effort:          r.modelConfig.Effort,
 	}

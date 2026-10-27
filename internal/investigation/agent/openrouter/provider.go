@@ -70,21 +70,6 @@ func New(config agent.ModelConfig, options Options) (*Provider, error) {
 	}, nil
 }
 
-func (p *Provider) EstimateRequestTokens(prompt agent.Prompt) (int, error) {
-	if prompt.ForceTool != "" && !prompt.OffersTool(prompt.ForceTool) {
-		return 0, fmt.Errorf("forced Tool was not offered")
-	}
-	body, err := request(prompt)
-	if err != nil {
-		return 0, err
-	}
-	encoded, err := json.Marshal(body)
-	if err != nil {
-		return 0, fmt.Errorf("encoding the model request for budgeting")
-	}
-	return agent.EstimateSerializedRequest(encoded), nil
-}
-
 func (p *Provider) Complete(ctx context.Context, prompt agent.Prompt) (agent.Completion, error) {
 	if prompt.ForceTool != "" && !prompt.OffersTool(prompt.ForceTool) {
 		return agent.Completion{}, agent.Failed(agent.OutcomeRejected, Name, prompt.Model, "forced Tool was not offered")

@@ -122,7 +122,7 @@ security:
 ```
 
 Omit optional sections that the deployment does not use. Values are strings except
-`relay.spkiPins` (an array), `ai.contextWindow`, `ai.maxOutputTokens`,
+`relay.spkiPins` (an array), `ai.maxOutputTokens`,
 `investigations.workers`, and `investigations.maxPendingPerOrganization` (integers).
 `session.lifetime` is a Go duration such as `12h`.
 
@@ -169,9 +169,9 @@ fallbacks, denies data collection, requires zero data retention, and sorts eligi
 endpoints by price. Account restrictions still apply. If no endpoint satisfies these
 requirements, the Investigation fails; OpenCluster never relaxes them or selects another model.
 
-Both providers use application allowances of 200,000 context tokens and 32,000 output
-tokens per model request, including reasoning tokens. These are execution budgets, not
-claims about the selected model's maximum capacity. Anthropic retains native thinking
+Both providers default to an output allowance of 32,000 tokens per model request,
+including reasoning. This allowance does not describe the model's context capacity.
+Anthropic retains native thinking
 continuation; OpenRouter retains the model's native reasoning continuation without adding
 unsupported reasoning controls.
 
@@ -188,13 +188,13 @@ in output usage. Stored totals sum available measurements and may be incomplete.
 
 ### Advanced: model budgets
 
-For a model with a smaller context or output capacity, lower `OC_AI_CONTEXT_WINDOW_SIZE`
-and `OC_AI_MAX_OUTPUT_SIZE` to fit its published limits. The context allowance must exceed
-the output allowance. Larger explicit allowances are also supported when the selected
-model permits them. In YAML, the optional fields are `ai.contextWindow` and
-`ai.maxOutputTokens`. No model discovery request or local model allowlist is required.
-The context allowance guides optional inventory and older exchange reduction using an approximate token estimate.
-An estimate alone does not reject your request; the provider determines whether it fits.
+Set `OC_AI_MAX_OUTPUT_SIZE` (YAML: `ai.maxOutputTokens`) to an output allowance supported
+by the selected model, including reasoning. Its default is `32000` tokens.
+Requests are sent directly; the provider determines whether the context fits. After an
+actual context rejection, OpenCluster can retry once with optional context removed,
+or with only finalization available when no optional context can be removed. Current
+Messages and completed Tool exchanges remain intact. A rejected recovery fails the
+Investigation rather than claiming an answer.
 
 Provider retries share the configured request deadline, including time spent waiting.
 Anthropic retry delays are respected without shortening them. An ambiguous connection failure
@@ -229,7 +229,6 @@ and training terms before production use.
 | `OC_AI_PROVIDER` | AI provider: `anthropic` or `openrouter`. |
 | `OC_AI_MODEL` | Exact model identifier. |
 | `OC_AI_API_KEY` / `OC_AI_API_KEY_FILE` | AI provider credential file. Direct value or file; do not set both. |
-| `OC_AI_CONTEXT_WINDOW_SIZE` | Optional advisory context allowance in tokens; default `200000`. Lower it for smaller models. |
 | `OC_AI_MAX_OUTPUT_SIZE` | Optional output allowance in tokens, including reasoning; default `32000`. |
 | `OC_INVESTIGATION_WORKERS` | Concurrent Investigation workers per replica; default `8`. |
 | `OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION` | Maximum unclaimed Investigations per Organization; default `100`. |

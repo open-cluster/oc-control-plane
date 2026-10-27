@@ -48,10 +48,6 @@ spec:
               value: {{ .Values.model.provider | quote }}
             - name: OC_AI_MODEL
               value: {{ .Values.model.name | quote }}
-            {{- with .Values.model.contextWindowTokens }}
-            - name: OC_AI_CONTEXT_WINDOW_SIZE
-              value: {{ . | quote }}
-            {{- end }}
             {{- with .Values.model.maxOutputTokens }}
             - name: OC_AI_MAX_OUTPUT_SIZE
               value: {{ . | quote }}

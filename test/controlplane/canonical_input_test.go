@@ -46,7 +46,6 @@ func TestLargeAssignedInputReachesModelIntact(t *testing.T) {
 		digest := sha256.Sum256([]byte(surfaceToken))
 		cfg.BootstrapTokenDigest = digest[:]
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "openrouter", "z-ai/glm-4.7", "scripted-model-key"
-		cfg.ModelContextWindow = 33000
 		cfg.ModelMaxOutputTokens = 32000
 	}, app.Options{Completer: concludingModel{prompts: prompts}})
 	plane := &integrationPlane{controlPlane: running, api: address, intake: address}

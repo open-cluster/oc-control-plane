@@ -36,7 +36,6 @@ type fileConfiguration struct {
 		Provider        *string `yaml:"provider"`
 		Model           *string `yaml:"model"`
 		APIKeyFile      *string `yaml:"apiKeyFile"`
-		ContextWindow   *int    `yaml:"contextWindow"`
 		MaxOutputTokens *int64  `yaml:"maxOutputTokens"`
 	} `yaml:"ai"`
 	Investigations struct {
@@ -154,7 +153,6 @@ func (document fileConfiguration) environment(directory string) map[string]strin
 	}
 	set(EnvModelProvider, document.AI.Provider)
 	set(EnvModelName, document.AI.Model)
-	integer(EnvModelContextWindowSize, document.AI.ContextWindow)
 	if document.AI.MaxOutputTokens != nil {
 		values[EnvModelMaxOutputTokens] = strconv.FormatInt(*document.AI.MaxOutputTokens, 10)
 	}
