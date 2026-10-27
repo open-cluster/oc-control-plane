@@ -242,7 +242,7 @@ func (r *Agent) Run(
 	state.missingEvidence = oriented.Brief != nil && oriented.Brief.MissingEvidence
 	var priorEvidence []investigation.EvidenceRef
 
-	visible := state.orientation
+	promptOrientation := state.orientation
 
 	var results []toolFeedback
 	stoppedBy := ""
@@ -288,29 +288,27 @@ func (r *Agent) Run(
 		move := modelMove{}
 		moveCtx, done := context.WithTimeout(ctx, decideTimeout)
 		for attempt := range 2 {
-			prompt := modelPrompt(r, visible, state.transcript, forcedToConclude, reason)
+			prompt := modelPrompt(r, promptOrientation, state.transcript, forcedToConclude, reason)
 			completion, completeErr := r.telemetry.complete(
 				moveCtx, r.completer, r.modelConfig, prompt)
 			state.usage = state.usage.Add(usageOf(completion.Usage))
 			if completeErr != nil {
 				if attempt == 0 && errors.Is(completeErr, ErrContextWindow) {
-					reduced := visible
-					optional := len(reduced.Inventory) > 0
+					reduced := promptOrientation
 					reduced.Inventory = nil
-					if brief := visible.Brief; brief != nil {
-						copy := *brief
-						copy.Findings, copy.OpenHypotheses, copy.Recent, copy.Limitations = nil, nil, nil, nil
-						for _, limitation := range brief.Limitations {
-							if brief.MissingEvidence && limitation == investigation.MissingEvidenceStatement {
-								copy.Limitations = append(copy.Limitations, limitation)
-							}
+					if brief := promptOrientation.Brief; brief != nil {
+						compact := *brief
+						compact.Findings = nil
+						compact.OpenHypotheses = nil
+						compact.Recent = nil
+						compact.Limitations = nil
+						if brief.MissingEvidence {
+							compact.Limitations = []string{investigation.MissingEvidenceStatement}
 						}
-						optional = optional || len(brief.Findings) > 0 || len(brief.OpenHypotheses) > 0 ||
-							len(brief.Recent) > 0 || len(copy.Limitations) < len(brief.Limitations)
-						reduced.Brief = &copy
+						reduced.Brief = &compact
 					}
-					if optional {
-						visible = reduced
+					if len(renderOrientation(reduced)) < len(renderOrientation(promptOrientation)) {
+						promptOrientation = reduced
 						continue
 					}
 					if !forcedToConclude && len(prompt.Tools) > 1 {
@@ -367,7 +365,7 @@ func (r *Agent) Run(
 				invalid = fmt.Errorf("call conclude exactly once with the evidence-bounded conclusion")
 			default:
 				allowed := append([]investigation.EvidenceRef(nil), priorEvidence...)
-				if brief := visible.Brief; brief != nil {
+				if brief := promptOrientation.Brief; brief != nil {
 					for _, finding := range dedupeFindings(brief.Findings) {
 						allowed = append(allowed, finding.References()...)
 					}

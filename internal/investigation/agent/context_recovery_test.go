@@ -13,6 +13,103 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
+func TestRunDoesNotRetryUnchangedRenderedContext(t *testing.T) {
+	store := &records{
+		messages: []investigation.AssignedMessage{{Sequence: 2, Author: "alice", Text: "Keep this request."}},
+		brief: investigation.Brief{Findings: []investigation.PriorFinding{{
+			InvestigationID: uuid.New(), Runs: []int{1},
+		}}},
+	}
+	model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
+		if call != 1 {
+			t.Fatal("filtered-out findings caused an unchanged recovery request")
+		}
+		if !strings.Contains(prompt.Content[0].Text, store.messages[0].Text) ||
+			strings.Contains(prompt.Content[0].Text, "PRIOR OBSERVATIONS") {
+			t.Fatal("normal request lost authorized input or rendered an empty finding")
+		}
+		return Completion{}, ContextRejected("scripted", "test", "context rejected", nil)
+	}}
+	runner := configuredTestAgent(t, store, model, integrations.Catalog{})
+	if err := runner.Run(context.Background(), uuid.New(), investigation.Investigation{
+		ID: uuid.New(), ConversationID: uuid.New(), Turn: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if model.calls != 1 || store.status != investigation.StatusFailed || store.stoppedBy != "" ||
+		!strings.Contains(store.failure, "context rejected") {
+		t.Fatalf("unchanged context recovery: calls=%d status=%s failure=%s", model.calls, store.status, store.failure)
+	}
+}
+
+func TestRunCitesOnlyEvidencePresentedToTheSuccessfulRequest(t *testing.T) {
+	for _, test := range []struct {
+		name                    string
+		recover, empty, missing bool
+		ordinal                 int
+		want                    investigation.Status
+	}{
+		{name: "visible finding", ordinal: 1, want: investigation.StatusConcluded},
+		{name: "omitted finding", recover: true, ordinal: 1, want: investigation.StatusFailed},
+		{name: "unoffered ordinal", ordinal: 2, want: investigation.StatusFailed},
+		{name: "unavailable evidence", ordinal: 1, missing: true, want: investigation.StatusFailed},
+		{name: "empty finding", ordinal: 1, empty: true, want: investigation.StatusFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			prior := uuid.New()
+			finding := investigation.PriorFinding{InvestigationID: prior, Kind: "observation",
+				Statement: "The prior deployment was v1.", Runs: []int{1}}
+			if test.empty {
+				finding.Statement = ""
+			}
+			store := &records{
+				candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "Production"},
+				messages:  []investigation.AssignedMessage{{Sequence: 3, Text: "Check the deployment."}},
+				brief:     investigation.Brief{HistoryBefore: 3, Findings: []investigation.PriorFinding{finding}},
+			}
+			if test.missing {
+				store.missingEvidence = investigation.EvidenceRef{InvestigationID: prior, ToolRunOrdinal: 1}
+			}
+			model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
+				if call > 2 {
+					t.Fatal("evidence validation exceeded the two-request bound")
+				}
+				if test.recover && call == 1 {
+					return Completion{}, ContextRejected("scripted", "test", "context rejected", nil)
+				}
+				wantShown := !test.recover && !test.empty
+				if shown := strings.Contains(prompt.Content[0].Text, prior.String()); shown != wantShown {
+					t.Fatal("the successful request exposed the wrong Brief evidence")
+				}
+				var document map[string]any
+				if err := json.Unmarshal(validConclusion(t, nil), &document); err != nil {
+					t.Fatal(err)
+				}
+				document["findings"] = []any{map[string]any{
+					"statement": "The prior deployment was v1.", "kind": "observation", "mechanism": "", "run_refs": []int{},
+					"evidence_refs": []investigation.EvidenceRef{{InvestigationID: prior, ToolRunOrdinal: test.ordinal}},
+				}}
+				encoded, _ := json.Marshal(document)
+				return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "done", Name: ConcludeToolName, Arguments: encoded}}}, nil
+			}}
+			runner := configuredTestAgent(t, store, model, testCatalog(t,
+				func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
+					t.Fatal("citation validation executed an unrequested Tool")
+					return integrations.ToolResult{}, nil
+				}))
+			if err := runner.Run(context.Background(), uuid.New(), investigation.Investigation{
+				ID: uuid.New(), ConversationID: uuid.New(), Turn: 2,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if store.status != test.want || store.stoppedBy != "" || len(store.brief.Findings) != 1 ||
+				store.brief.Findings[0].Statement != finding.Statement {
+				t.Fatalf("citation eligibility: status=%s failure=%s", store.status, store.failure)
+			}
+		})
+	}
+}
+
 func TestRunContinuesAfterContextRecoveryWithHistoryAndToolEvidence(t *testing.T) {
 	prior := uuid.New()
 	store := &records{
@@ -22,7 +119,7 @@ func TestRunContinuesAfterContextRecoveryWithHistoryAndToolEvidence(t *testing.T
 			Recent:         []investigation.BriefMessage{{Text: "OPTIONAL EXCHANGE"}},
 			Findings:       []investigation.PriorFinding{{InvestigationID: prior, Statement: "OPTIONAL FINDING", Kind: "observation", Runs: []int{1}}},
 			OpenHypotheses: []string{"OPTIONAL HYPOTHESIS"},
-			Limitations:    []string{investigation.MissingEvidenceStatement}},
+			Limitations:    []string{"OPTIONAL LIMITATION"}},
 		history: investigation.HistoryPage{NextBefore: 3, Exchange: []investigation.BriefMessage{{
 			Sequence: 5, InvestigationID: prior, Text: "The earlier value was v1.",
 			Answer: &investigation.Conclusion{Findings: []investigation.Finding{{
@@ -35,7 +132,7 @@ func TestRunContinuesAfterContextRecoveryWithHistoryAndToolEvidence(t *testing.T
 	model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
 		text := prompt.System[1].Text + prompt.Content[0].Text
 		for _, retained := range []string{"TASK follow_up", "beforeSequence=7", "beforeSequence=3",
-			"current turn 2", "Production", "alice", store.messages[0].Text, investigation.MissingEvidenceStatement} {
+			"current turn 2", "Production", "alice", store.messages[0].Text} {
 			if !strings.Contains(text, retained) {
 				t.Fatalf("request %d lost %q", call, retained)
 			}
@@ -46,8 +143,9 @@ func TestRunContinuesAfterContextRecoveryWithHistoryAndToolEvidence(t *testing.T
 		if call <= 2 && !strings.Contains(text, "OPTIONAL EXCHANGE") {
 			t.Fatal("normal requests lost existing context before a provider rejection")
 		}
-		if call >= 3 && strings.Contains(text, "OPTIONAL") {
-			t.Fatal("recovery did not retain its reduced model-visible view")
+		if call >= 3 && (strings.Contains(text, "OPTIONAL") ||
+			strings.Count(text, investigation.MissingEvidenceStatement) != 1) {
+			t.Fatal("recovery lost its reduced view or canonical missing-evidence warning")
 		}
 		if call >= 2 {
 			if len(prompt.Turns) == 0 || !bytes.Equal(prompt.Turns[0].Assistant.Raw, continuation) ||
