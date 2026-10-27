@@ -22,15 +22,11 @@ const (
 func Definition(app *App, client *Client) integrations.Definition {
 	where := deployment{app: app, client: client}
 	return integrations.Definition{
-		Manifest: integrations.Manifest{
-			Key: "github", Name: "GitHub",
-			Description: "Give investigations read-only access to selected repositories for " +
-				"commits, pull requests, CI failures, files, and releases.",
-			Logo: "github", Category: integrations.CategorySourceControl,
-			SourceURL:         "https://docs.github.com/apps/using-github-apps/installing-a-github-app-from-a-third-party",
-			DocumentationSlug: "integrations/source-control/github",
-			Tools:             tools(app, client),
-		},
+		Key: "github", Name: "GitHub",
+		Description: "Give investigations read-only access to selected repositories for " +
+			"commits, pull requests, CI failures, files, and releases.",
+		Category: integrations.CategorySourceControl,
+		Tools:    tools(app, client),
 		Probe: func(ctx context.Context, input integrations.ProbeInput) integrations.Verification {
 			installation, err := installationOf(input.Integration)
 			if err != nil {

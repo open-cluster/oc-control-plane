@@ -31,16 +31,13 @@ func TestEveryIntegrationHasItsDocumentedProductRolePage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, manifest := range catalog.Manifests() {
-		slug := "integrations/" + string(manifest.Category) + "/" + string(manifest.Key)
-		if manifest.DocumentationSlug != slug {
-			t.Errorf("Integration %q documentation slug = %q, want %q", manifest.Key, manifest.DocumentationSlug, slug)
-		}
+	for _, definition := range catalog.All() {
+		slug := "integrations/" + string(definition.Category) + "/" + string(definition.Key)
 		if _, err := os.Stat(filepath.Join(moduleRoot, "docs", filepath.FromSlash(slug)+".mdx")); err != nil {
-			t.Errorf("Integration %q has no documentation page: %v", manifest.Key, err)
+			t.Errorf("Integration %q has no documentation page: %v", definition.Key, err)
 		}
 		if !strings.Contains(string(navigation), `"`+slug+`"`) {
-			t.Errorf("Integration %q documentation is absent from navigation", manifest.Key)
+			t.Errorf("Integration %q documentation is absent from navigation", definition.Key)
 		}
 	}
 }

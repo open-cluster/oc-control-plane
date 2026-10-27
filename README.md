@@ -60,6 +60,10 @@ OpenCluster currently supports:
 
 Integrations expose only the capabilities that were successfully verified for that connection.
 
+The Integration type API lists Tools, setup requirements, a configuration schema, and a product
+guide link. Secret inputs are marked `writeOnly` in the schema; registered types are available
+in the running build.
+
 See the [integration documentation](https://docs.open-cluster.io/integrations).
 
 ## Capabilities

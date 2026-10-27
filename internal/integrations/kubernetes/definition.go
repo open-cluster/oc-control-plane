@@ -22,24 +22,20 @@ func Definition(executors ...Executor) integrations.Definition {
 		executor = executors[0]
 	}
 	return integrations.Definition{
-		Manifest: integrations.Manifest{
-			Key:  "kubernetes",
-			Name: "Kubernetes",
-			Description: "Give investigations read-only access to Kubernetes workload " +
-				"runtime, namespace events, and bounded container logs through an outbound Relay.",
-			Logo: "kubernetes", Category: integrations.CategoryInfrastructure,
-			SourceURL:         "https://kubernetes.io/docs/reference/access-authn-authz/rbac/#role-and-clusterrole",
-			DocumentationSlug: "integrations/infrastructure/kubernetes",
-			Config: []integrations.Field{
-				{
-					Key: "namespaceAllowList",
-					Label: "Namespaces this integration may read (comma separated; " +
-						"empty means every namespace the Relay's service account can reach)",
-					Type: integrations.FieldString,
-				},
+		Key:  "kubernetes",
+		Name: "Kubernetes",
+		Description: "Give investigations read-only access to Kubernetes workload " +
+			"runtime, namespace events, and bounded container logs through an outbound Relay.",
+		Category: integrations.CategoryInfrastructure,
+		Config: []integrations.Field{
+			{
+				Key: "namespaceAllowList",
+				Label: "Namespaces this integration may read (comma separated; " +
+					"empty means every namespace the Relay's service account can reach)",
+				Type: integrations.FieldString,
 			},
-			RequiresRelay: true, Tools: tools(executor),
 		},
+		RequiresRelay: true, Tools: tools(executor),
 		Verify: verify,
 	}
 }

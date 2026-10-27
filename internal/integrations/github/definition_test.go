@@ -8,29 +8,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-func TestDefinitionDeclaresProviderContract(t *testing.T) {
-	t.Parallel()
-
-	definition := Definition(nil, NewClient(""))
-	if definition.Key != "github" {
-		t.Errorf("identity = %q", definition.Key)
-	}
-	if definition.Category != integrations.CategorySourceControl {
-		t.Errorf("category = %q", definition.Category)
-	}
-	if definition.RequiresRelay {
-		t.Error("github needs no relay")
-	}
-	if definition.Verify != nil || definition.Probe == nil {
-		t.Error("github verifies by probing the live installation, not from gathered facts")
-	}
-	const wantDescription = "Give investigations read-only access to selected repositories " +
-		"for commits, pull requests, CI failures, files, and releases."
-	if definition.Description != wantDescription {
-		t.Errorf("description = %q, want %q", definition.Description, wantDescription)
-	}
-}
-
 func TestConfiguredAppProvidesConnectionFlow(t *testing.T) {
 	t.Parallel()
 

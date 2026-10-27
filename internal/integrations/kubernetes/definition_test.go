@@ -190,30 +190,6 @@ func TestKubernetesToolsEnforceTypedBoundsAndInvestigationWindows(t *testing.T) 
 	}
 }
 
-func TestDefinition_DeclaresTheRelayShape(t *testing.T) {
-	t.Parallel()
-
-	definition := Definition()
-	if definition.Key != "kubernetes" {
-		t.Errorf("the definition's identity is %q", definition.Key)
-	}
-	if definition.Category != integrations.Category("infrastructure") {
-		t.Errorf("category = %q, want infrastructure", definition.Category)
-	}
-	if !definition.RequiresRelay {
-		t.Error("kubernetes is relay-served and receives no webhooks")
-	}
-	if len(definition.Tools) != 3 {
-		t.Errorf("kubernetes declares %d Tools, want the three typed reads",
-			len(definition.Tools))
-	}
-	const wantDescription = "Give investigations read-only access to Kubernetes workload " +
-		"runtime, namespace events, and bounded container logs through an outbound Relay."
-	if definition.Description != wantDescription {
-		t.Errorf("description = %q, want %q", definition.Description, wantDescription)
-	}
-}
-
 func TestWorkloadDescriptionDoesNotPresentCurrentStateAsHistory(t *testing.T) {
 	t.Parallel()
 

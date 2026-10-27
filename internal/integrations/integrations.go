@@ -66,40 +66,25 @@ type InboundAvailability struct {
 }
 
 type Definition struct {
-	Manifest
+	Key           Provider
+	Name          string
+	Description   string
+	Category      Category
+	RequiresRelay bool
+	Config        []Field
+	Tools         []Tool
+
 	Verify  func(VerifyInput) Verification
 	Probe   func(ctx context.Context, input ProbeInput) Verification
 	Inbound func(Integration) InboundAvailability
 	Connect *Connect
 }
 
-type Manifest struct {
-	Key               Provider
-	Name              string
-	Description       string
-	Logo              string
-	Category          Category
-	DocumentationSlug string
-	SourceURL         string
-	RequiresRelay     bool
-	Config            []Field
-	Tools             []Tool
-}
+func (d Definition) ConfigurationSchema() json.RawMessage {
+	properties := make(map[string]any, len(d.Config))
+	required := make([]string, 0, len(d.Config))
 
-const documentationSite = "https://docs.open-cluster.io"
-
-func (m Manifest) ProductDocumentationURL() string {
-	if m.DocumentationSlug == "" {
-		return ""
-	}
-	return documentationSite + "/" + m.DocumentationSlug
-}
-
-func (m Manifest) ConfigurationSchema() json.RawMessage {
-	properties := make(map[string]any, len(m.Config))
-	required := make([]string, 0, len(m.Config))
-
-	for _, field := range m.Config {
+	for _, field := range d.Config {
 		property := map[string]any{
 			"type":  string(field.Type),
 			"title": field.Label,
@@ -119,8 +104,8 @@ func (m Manifest) ConfigurationSchema() json.RawMessage {
 
 	schema := map[string]any{
 		"$schema":              "https://json-schema.org/draft/2020-12/schema",
-		"$id":                  "https://opencluster.dev/schemas/integration/" + string(m.Key) + "/configuration.json",
-		"title":                m.Name + " configuration",
+		"$id":                  "https://opencluster.dev/schemas/integration/" + string(d.Key) + "/configuration.json",
+		"title":                d.Name + " configuration",
 		"type":                 "object",
 		"additionalProperties": false,
 		"properties":           properties,
@@ -134,24 +119,6 @@ func (m Manifest) ConfigurationSchema() json.RawMessage {
 		return json.RawMessage(`{"error":"this definition's configuration could not be rendered"}`)
 	}
 	return encoded
-}
-
-func (m Manifest) Capabilities() []string {
-	capabilities := make([]string, 0, len(m.Tools))
-	for _, tool := range m.Tools {
-		capabilities = append(capabilities, tool.Name)
-	}
-	return capabilities
-}
-
-func (m Manifest) SecretFields() []string {
-	fields := make([]string, 0, len(m.Config))
-	for _, field := range m.Config {
-		if field.Secret {
-			fields = append(fields, field.Key)
-		}
-	}
-	return fields
 }
 
 func (d Definition) Field(key string) (Field, bool) {
@@ -207,11 +174,6 @@ func NewCatalog(definitions ...Definition) (Catalog, error) {
 }
 
 func checkDefinition(definition Definition) error {
-	wantDocumentationSlug := "integrations/" + string(definition.Category) + "/" + string(definition.Key)
-	if definition.DocumentationSlug != "" && definition.DocumentationSlug != wantDocumentationSlug {
-		return fmt.Errorf("integration type %q documentation slug is %q, want %q",
-			definition.Key, definition.DocumentationSlug, wantDocumentationSlug)
-	}
 	if (definition.Verify == nil) == (definition.Probe == nil) {
 		return fmt.Errorf("integration type %q must declare exactly one of Verify and Probe",
 			definition.Key)
@@ -279,33 +241,6 @@ func checkArguments(key string, tool Tool) error {
 }
 
 func (c Catalog) All() []Definition { return append([]Definition(nil), c.ordered...) }
-
-func (c Catalog) Manifests() []Manifest {
-	manifests := make([]Manifest, 0, len(c.ordered))
-	for _, definition := range c.ordered {
-		manifest := definition.Manifest
-		manifest.Config = append([]Field(nil), manifest.Config...)
-		for index := range manifest.Config {
-			manifest.Config[index].Options = append([]string(nil), manifest.Config[index].Options...)
-		}
-		manifest.Tools = append([]Tool(nil), manifest.Tools...)
-		for index := range manifest.Tools {
-			manifest.Tools[index].Arguments = append([]ToolArgument(nil), manifest.Tools[index].Arguments...)
-			manifest.Tools[index].RequiredGrants = append(
-				[]string(nil), manifest.Tools[index].RequiredGrants...)
-		}
-		manifests = append(manifests, manifest)
-	}
-	return manifests
-}
-
-func (c Catalog) Tools() []Tool {
-	var tools []Tool
-	for _, definition := range c.ordered {
-		tools = append(tools, definition.Tools...)
-	}
-	return tools
-}
 
 func (c Catalog) Lookup(key Provider) (Definition, bool) {
 	definition, ok := c.byKey[key]

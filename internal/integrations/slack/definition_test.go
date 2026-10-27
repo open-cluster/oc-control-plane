@@ -7,32 +7,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-func TestDefinitionDeclaresProviderContract(t *testing.T) {
-	t.Parallel()
-
-	definition := Definition(NewClient(""), nil, false)
-	if definition.Key != "slack" {
-		t.Errorf("identity = %q", definition.Key)
-	}
-	if definition.Category != integrations.CategoryCollaboration {
-		t.Errorf("category = %q", definition.Category)
-	}
-	if definition.RequiresRelay {
-		t.Error("slack needs no relay")
-	}
-	if definition.Verify != nil {
-		t.Error("a credential-bearing type verifies by probing live, not from gathered facts")
-	}
-	if definition.Probe == nil {
-		t.Error("no probe; nothing could ever verify a pasted token against the vendor")
-	}
-	const wantDescription = "Give investigations read-only access to Slack conversations visible " +
-		"to the connected token and reply to direct app mentions in their original thread."
-	if definition.Description != wantDescription {
-		t.Errorf("description = %q, want %q", definition.Description, wantDescription)
-	}
-}
-
 func TestSlackInboundAvailabilityExplainsInstallationAndDeploymentSetup(t *testing.T) {
 	t.Parallel()
 

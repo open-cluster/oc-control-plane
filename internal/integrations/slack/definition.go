@@ -9,26 +9,21 @@ import (
 func Definition(client *Client, installer *Installer, servesEvents bool) integrations.Definition {
 	connection := connect(installer, client)
 	return integrations.Definition{
-		Manifest: integrations.Manifest{
-			Key:  "slack",
-			Name: "Slack",
-			Description: "Give investigations read-only access to Slack conversations visible " +
-				"to the connected token and reply to direct app mentions in their original thread.",
-			Logo:              "slack",
-			Category:          integrations.CategoryCollaboration,
-			SourceURL:         "https://api.slack.com/authentication/token-types#bot",
-			DocumentationSlug: "integrations/collaboration/slack",
-			Config: []integrations.Field{
-				{
-					Key:      "botToken",
-					Label:    "Slack token",
-					Type:     integrations.FieldString,
-					Required: true,
-					Secret:   true,
-				},
+		Key:  "slack",
+		Name: "Slack",
+		Description: "Give investigations read-only access to Slack conversations visible " +
+			"to the connected token and reply to direct app mentions in their original thread.",
+		Category: integrations.CategoryCollaboration,
+		Config: []integrations.Field{
+			{
+				Key:      "botToken",
+				Label:    "Slack token",
+				Type:     integrations.FieldString,
+				Required: true,
+				Secret:   true,
 			},
-			Tools: tools(client),
 		},
+		Tools: tools(client),
 		Probe: func(ctx context.Context, input integrations.ProbeInput) integrations.Verification {
 			return probe(ctx, client, input.Credential)
 		},

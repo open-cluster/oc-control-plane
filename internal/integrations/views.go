@@ -16,13 +16,7 @@ type typeView struct {
 	Key                     string          `json:"key"`
 	Name                    string          `json:"name"`
 	Description             string          `json:"description"`
-	Logo                    string          `json:"logo,omitempty"`
 	Category                string          `json:"category"`
-	Available               bool            `json:"available"`
-	Capabilities            []string        `json:"capabilities"`
-	SecretFields            []string        `json:"secretFields"`
-	DocumentationSlug       string          `json:"documentationSlug"`
-	DocumentationURL        string          `json:"documentationUrl,omitempty"`
 	ProductDocumentationURL string          `json:"productDocumentationUrl,omitempty"`
 	RequiresRelay           bool            `json:"requiresRelay"`
 	ReceivesWebhooks        bool            `json:"receivesWebhooks"`
@@ -51,7 +45,6 @@ type typeListView struct {
 }
 
 func typeViewOf(definition Definition, configured int, receivesWebhooks bool) typeView {
-	manifest := definition.Manifest
 	tools := make([]toolView, 0, len(definition.Tools))
 	for _, tool := range definition.Tools {
 		arguments := make([]toolArgumentView, 0, len(tool.Arguments))
@@ -68,21 +61,15 @@ func typeViewOf(definition Definition, configured int, receivesWebhooks bool) ty
 		})
 	}
 	return typeView{
-		Key:                     string(manifest.Key),
-		Name:                    manifest.Name,
-		Description:             manifest.Description,
-		Logo:                    manifest.Logo,
-		Category:                string(manifest.Category),
-		Available:               true,
-		Capabilities:            manifest.Capabilities(),
-		SecretFields:            manifest.SecretFields(),
-		DocumentationSlug:       manifest.DocumentationSlug,
-		DocumentationURL:        manifest.SourceURL,
-		ProductDocumentationURL: manifest.ProductDocumentationURL(),
-		RequiresRelay:           manifest.RequiresRelay,
+		Key:                     string(definition.Key),
+		Name:                    definition.Name,
+		Description:             definition.Description,
+		Category:                string(definition.Category),
+		ProductDocumentationURL: "https://docs.open-cluster.io/integrations/" + string(definition.Category) + "/" + string(definition.Key),
+		RequiresRelay:           definition.RequiresRelay,
 		ReceivesWebhooks:        receivesWebhooks,
 		SupportsConnect:         definition.Connectable(),
-		ConfigurationSchema:     manifest.ConfigurationSchema(),
+		ConfigurationSchema:     definition.ConfigurationSchema(),
 		Tools:                   tools,
 		Configured:              configured,
 	}

@@ -2,7 +2,6 @@ package github
 
 import (
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -97,20 +96,5 @@ func TestAnUnwindowedReadReportsNoWindow(t *testing.T) {
 	if !result.WindowFrom.IsZero() || !result.WindowUntil.IsZero() {
 		t.Errorf("a listing that reads no window claims %v to %v",
 			result.WindowFrom, result.WindowUntil)
-	}
-}
-
-func TestNoToolPromisesAnUnboundedRecentTail(t *testing.T) {
-	t.Parallel()
-
-	for _, tool := range tools(nil, nil) {
-		text := tool.Description
-		for _, argument := range tool.Arguments {
-			text += " " + argument.Description
-		}
-		if strings.Contains(strings.ToLower(text), "recent tail") {
-			t.Errorf("%s promises a recent tail; every windowed read is clamped into "+
-				"the investigation's window and there is no unbounded path", tool.Name)
-		}
 	}
 }

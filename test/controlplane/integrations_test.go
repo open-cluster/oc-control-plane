@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -242,11 +240,21 @@ func TestIntegrationTypeCatalog(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("reading the catalog = %d: %s", status, body)
 	}
+	var rawCatalog struct {
+		Types []map[string]json.RawMessage `json:"types"`
+	}
+	decodeInto(t, body, &rawCatalog)
+	for _, entry := range rawCatalog.Types {
+		for _, removed := range []string{"logo", "available", "capabilities", "secretFields", "documentationSlug", "documentationUrl"} {
+			if _, present := entry[removed]; present {
+				t.Errorf("catalog type %s still contains %s", entry["key"], removed)
+			}
+		}
+	}
 	type catalogType struct {
 		Key         string `json:"key"`
 		Name        string `json:"name"`
 		Description string `json:"description"`
-		Logo        string `json:"logo"`
 		Category    string `json:"category"`
 		Tools       []struct {
 			Name string `json:"name"`
@@ -255,7 +263,6 @@ func TestIntegrationTypeCatalog(t *testing.T) {
 		ReceivesWebhooks        bool            `json:"receivesWebhooks"`
 		ConfigurationSchema     json.RawMessage `json:"configurationSchema"`
 		Configured              int             `json:"configured"`
-		DocumentationURL        string          `json:"documentationUrl"`
 		ProductDocumentationURL string          `json:"productDocumentationUrl"`
 	}
 	var catalog struct {
@@ -267,9 +274,13 @@ func TestIntegrationTypeCatalog(t *testing.T) {
 	for index, entry := range catalog.Types {
 		byKey[entry.Key] = index
 	}
-	for _, wanted := range []string{"alertmanager", "kubernetes"} {
-		if _, present := byKey[wanted]; !present {
-			t.Fatalf("the catalog does not serve %q: %s", wanted, body)
+	wantKeys := []string{"alertmanager", "generic_webhook", "github", "kubernetes", "slack"}
+	if len(catalog.Types) != len(wantKeys) {
+		t.Fatalf("catalog has %d types, want %d: %s", len(catalog.Types), len(wantKeys), body)
+	}
+	for index, wanted := range wantKeys {
+		if catalog.Types[index].Key != wanted {
+			t.Errorf("catalog type %d = %q, want %q", index, catalog.Types[index].Key, wanted)
 		}
 	}
 
@@ -290,32 +301,26 @@ func TestIntegrationTypeCatalog(t *testing.T) {
 		t.Errorf("kubernetes declares %d read Tools, want its three bounded Relay reads",
 			len(kubernetes.Tools))
 	}
-	if !strings.Contains(string(kubernetes.ConfigurationSchema), "additionalProperties") {
-		t.Error("the configuration schema is not the closed JSON Schema the create operation enforces")
+	var schema struct {
+		AdditionalProperties bool `json:"additionalProperties"`
+		Properties           map[string]struct {
+			Type      string `json:"type"`
+			WriteOnly bool   `json:"writeOnly"`
+		} `json:"properties"`
+		Required []string `json:"required"`
 	}
-
-	t.Run("every type reaches our own documentation and provider types reach the vendor", func(t *testing.T) {
-		for _, entry := range catalog.Types {
-			if entry.DocumentationURL == "" && entry.Key != "generic_webhook" {
-				t.Errorf("%s names no vendor documentation", entry.Key)
-			}
-			if entry.ProductDocumentationURL == "" {
-				t.Errorf("%s names no OpenCluster documentation page", entry.Key)
-				continue
-			}
-			want := "integrations/" + entry.Category + "/" + entry.Key
-			if !strings.HasSuffix(entry.ProductDocumentationURL, want) {
-				t.Errorf("%s documents at %q, want a page under %q",
-					entry.Key, entry.ProductDocumentationURL, want)
-				continue
-			}
-			page := filepath.Join("..", "..", "docs", filepath.FromSlash(want)+".mdx")
-			if _, err := os.Stat(page); err != nil {
-				t.Errorf("%s documents at %q, and %s does not exist",
-					entry.Key, entry.ProductDocumentationURL, page)
-			}
+	schema.AdditionalProperties = true
+	decodeInto(t, string(catalog.Types[byKey["slack"]].ConfigurationSchema), &schema)
+	if schema.AdditionalProperties || schema.Properties["botToken"].Type != "string" ||
+		!schema.Properties["botToken"].WriteOnly || len(schema.Required) != 1 || schema.Required[0] != "botToken" {
+		t.Errorf("Slack must declare a required write-only token in a closed schema: %+v", schema)
+	}
+	for _, entry := range catalog.Types {
+		want := "https://docs.open-cluster.io/integrations/" + entry.Category + "/" + entry.Key
+		if entry.ProductDocumentationURL != want {
+			t.Errorf("%s documentation URL = %q, want %q", entry.Key, entry.ProductDocumentationURL, want)
 		}
-	})
+	}
 }
 
 func TestIntegrationLifecycle(t *testing.T) {

@@ -7,10 +7,10 @@ import (
 )
 
 func definitionWithTools() Definition {
-	return Definition{Manifest: Manifest{Tools: []Tool{
+	return Definition{Tools: []Tool{
 		{Name: "slack_list_channels"},
 		{Name: "slack_search_messages", RequiredGrants: []string{"search:read"}},
-	}}}
+	}}
 }
 
 func TestAvailabilityIsReportedPerToolWithoutAGenericCapabilityDeclaration(t *testing.T) {
