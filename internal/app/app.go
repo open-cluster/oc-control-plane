@@ -16,6 +16,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations/genericwebhook"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/github"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/kubernetes"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/prometheus"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/investigation/agent"
@@ -124,6 +125,7 @@ func Run(
 		slack.Definition(slack.NewClient(options.SlackAPIURL), slackInstaller, cfg.SlackSigningSecret != ""),
 		github.Definition(gitHubApp, gitHubClient),
 		genericwebhook.Definition(),
+		prometheus.Definition(),
 	)
 	if err != nil {
 		return fmt.Errorf("assembling the integration catalog: %w", err)

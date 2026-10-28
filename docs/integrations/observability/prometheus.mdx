@@ -1,0 +1,129 @@
+---
+title: "Prometheus"
+description: "Investigate metric changes using an approved, reachable Prometheus source."
+---
+
+Connect Prometheus to discover metric names and compare errors, latency, CPU or memory
+with an Incident's Kubernetes and GitHub evidence. Prometheus provides measurements;
+metrics alone do not establish what caused a failure.
+
+## Before you connect
+
+This first release supports **self-hosted deployments with deployment-approved Prometheus
+endpoints** that the control plane can reach. A deployment administrator must approve the
+destination and network access before an Integration is created. Users allowed to configure
+Integrations must be trusted to select those destinations.
+
+Admins and Editors can revise an Integration's URL. A URL-only edit retains its bearer
+credential, which subsequent verification and queries send to the revised destination.
+Grant configuration access only to trusted destination administrators, and obtain deployment
+approval before changing a destination. OpenCluster does not enforce a destination allowlist.
+
+Private endpoints and unauthenticated HTTP can be appropriate on a trusted self-hosted
+network. Prefer HTTPS and a read-only bearer credential. TLS certificates are verified;
+redirects are refused, so configure the final base URL, including any reverse-proxy prefix.
+URLs containing credentials, query parameters or fragments are rejected.
+
+This is not a general outbound proxy or a Cloud-safe policy for arbitrary customer URLs.
+A multi-tenant Cloud deployment needs a separate destination-approval and egress policy
+before exposing this Integration. Private customer networks may also need a future Relay
+capability; this release does not route Prometheus requests through a Relay.
+
+## Create the Integration
+
+As an Admin, create a **Prometheus** Integration with a name and these configuration values:
+
+| Configuration key | Required | Meaning |
+| --- | --- | --- |
+| `url` | Yes | Approved HTTP(S) base URL, for example `https://metrics.example.com/prometheus`. |
+| `bearerToken` | No | Read-only bearer credential. Omit it when creating an Integration for an unauthenticated source. |
+
+The authenticated product API accepts:
+
+```json
+{
+  "type": "prometheus",
+  "name": "Production metrics",
+  "configuration": {
+    "url": "https://metrics.example.com/prometheus"
+  }
+}
+```
+
+Use `POST /api/v1/integrations` with the authentication requirements in the
+[API overview](/api-reference/overview#authentication). Include `bearerToken` in
+`configuration` when required. It is encrypted for later use and never returned in
+configuration reads. Omitting it during an edit preserves the existing credential.
+Basic authentication and arbitrary custom headers are not supported.
+
+Creation verifies actual query access by evaluating `vector(1)`. A successful health check
+alone is insufficient. A successful verification makes the two Prometheus Tools eligible
+through OpenCluster's normal access checks. Provider access may subsequently change;
+use **Verify** again to check the current credential. Metric discovery can require
+additional endpoint permission even when query verification succeeds.
+
+## Investigate a metric change
+
+Ask: **“Why did checkout's API error rate rise between 10:00 and 10:30? Compare the
+metrics with deployment and workload evidence.”**
+
+OpenCluster can first discover metric names with a hint such as `http` and a service
+selector such as `{job="checkout"}`. The hint is literal text, not an unrestricted regex.
+Discovery returns names, not metric values, and is limited to 50 names. Absence from a
+limited result does not prove a metric is unavailable.
+
+The Investigation can then evaluate a PromQL expression such as:
+
+```promql
+sum(rate(http_requests_total{job="checkout",code=~"5.."}[5m]))
+```
+
+Actual metric and label names depend on your instrumentation. Discover them before
+assuming this example applies. OpenCluster can cite the returned measurements alongside
+workload and deployment evidence.
+
+| Tool | Inputs | Result |
+| --- | --- | --- |
+| `prometheus_discover_metrics` | Required `hint`; optional `selector` containing label matchers in braces. | Relevant metric names, the evaluated selector/window, annotations and incomplete-result status. |
+| `prometheus_query` | Required `query` and `mode` (`instant` or `range`); optional RFC 3339 `start`/`end` and integer range `step` in seconds. | Expression, effective evaluation times/step, labeled samples, annotations and incomplete-result status. |
+
+Instant queries evaluate at the requested end time or the Investigation's end.
+Range timestamps are clamped to the Investigation window. Disjoint intervals are refused.
+Discovery and range queries cover at most the latest 24 hours of that window.
+
+## Limits and interpretation
+
+- Range steps are at least one second and are raised as needed to evaluate at most
+  240 timestamps per series. The effective step is reported.
+- At most 50 series and 240 samples per returned series are retained. If a backend ignores
+  limits, extra samples are sampled across the returned span, preserving its endpoints.
+  Omitted data, coarsened requested steps, and provider annotations mark a result incomplete.
+- Provider calls have a 10-second HTTP deadline; PromQL evaluation requests a 5-second
+  server timeout. Cancellation and the Investigation's own deadlines still apply.
+- Responses are limited to 2 MiB after decompression; normalized results must fit 256 KiB.
+  Oversized results fail explicitly: narrow the expression or service selector and retry.
+- Vector, matrix and scalar results are supported. Sample values remain strings, including
+  `NaN`, `+Inf` and `-Inf`; these are not zero. Native histogram samples require a
+  float-valued PromQL expression, and unsupported or malformed results fail explicitly.
+- Warnings and information annotations are retained in bounded form. An empty successful
+  result means no matching observations were returned, not that the service was healthy.
+
+**Evaluation bounds are not strict historical data isolation.** PromQL offsets, range
+selectors, subqueries and lookback can consult data earlier than the HTTP evaluation times.
+Apply retention, query-cost, historical-access and tenant isolation policies at the
+approved Prometheus endpoint. Do not treat the evaluation window as an authorization boundary.
+
+Only the official metric-name, instant-query and range-query read APIs are used. The Agent
+cannot choose an endpoint URL or arbitrary path. See the
+[Prometheus HTTP API](https://prometheus.io/docs/prometheus/latest/querying/api/) for syntax.
+
+## Credential changes and failures
+
+Replace `configuration.bearerToken` through `PATCH /api/v1/integrations/{integration}`.
+The replacement must verify before it takes effect. Disabling the Integration stops new
+Tool use; existing cited Tool Runs remain part of the Investigation record.
+
+Permission refusals, invalid queries, timeouts/unavailable sources and size-limit failures
+are reported as failures rather than empty measurements. A failed discovery request does
+not imply that all queries are forbidden; review the endpoint's permissions. Redirect
+failures require correcting the configured URL, not disabling TLS or forwarding credentials.

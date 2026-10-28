@@ -57,6 +57,7 @@ OpenCluster currently supports:
 - **GitHub** — repository and change context
 - **Slack** — operational context and threaded conversations
 - **Prometheus Alertmanager** — alert and Incident intake
+- **Prometheus** — metric discovery and bounded PromQL queries against approved self-hosted sources
 
 Integrations expose only the capabilities that were successfully verified for that connection.
 

@@ -11,6 +11,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations/genericwebhook"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/github"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/kubernetes"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/prometheus"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 )
 
@@ -23,6 +24,7 @@ func TestEveryIntegrationHasItsDocumentedProductRolePage(t *testing.T) {
 		slack.Definition(slack.NewClient(""), nil, false),
 		github.Definition(nil, github.NewClient("")),
 		genericwebhook.Definition(),
+		prometheus.Definition(),
 	)
 	if err != nil {
 		t.Fatal(err)
