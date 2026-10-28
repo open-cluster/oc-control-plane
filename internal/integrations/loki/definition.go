@@ -11,14 +11,16 @@ const queryGrant = "loki:query"
 
 func Definition() integrations.Definition {
 	return integrations.Definition{
-		Key: "loki", Name: "Loki", Category: integrations.CategoryObservability,
+		Key:         "loki",
+		Name:        "Loki",
+		Category:    integrations.CategoryObservability,
 		Description: "Query bounded log excerpts from an approved Loki source during an Investigation.",
 		Config: []integrations.Field{
-			{Key: "url", Type: integrations.FieldString, Required: true},
-			{Key: "auth", Type: integrations.FieldString, Required: true, Options: []string{"bearer", "basic"}},
-			{Key: "token", Type: integrations.FieldString, Secret: true},
 			{Key: "username", Type: integrations.FieldString},
 			{Key: "tenantId", Type: integrations.FieldString},
+			{Key: "url", Type: integrations.FieldString, Required: true},
+			{Key: "token", Type: integrations.FieldString, Secret: true},
+			{Key: "auth", Type: integrations.FieldString, Required: true, Options: []string{"bearer", "basic"}},
 		},
 		Probe: probe,
 		Tools: []integrations.Tool{queryTool()},
@@ -35,6 +37,8 @@ func probe(ctx context.Context, input integrations.ProbeInput) integrations.Veri
 		return integrations.Verification{Status: integrations.StatusFailed, Note: err.Error()}
 	}
 	return integrations.Verification{
-		Status: integrations.StatusVerified, Note: "Loki log query access verified", Grants: []string{queryGrant},
+		Status: integrations.StatusVerified,
+		Note:   "Loki log query access verified",
+		Grants: []string{queryGrant},
 	}
 }

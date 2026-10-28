@@ -67,7 +67,13 @@ func newClient(configuration map[string]any, credential string) (*client, error)
 		return nil, errors.New("loki auth must explicitly select bearer or basic")
 	}
 	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/loki/api/v1/query_range"
-	return &client{endpoint: endpoint, credential: credential, tenant: tenant, auth: auth, username: username}, nil
+	return &client{
+		endpoint:   endpoint,
+		credential: credential,
+		tenant:     tenant,
+		auth:       auth,
+		username:   username,
+	}, nil
 }
 
 type entry struct {
@@ -80,7 +86,11 @@ func (c *client) query(ctx context.Context, query string, from, until time.Time,
 	endpoint := *c.endpoint
 	endpoint.RawQuery = url.Values{
 		"query": {query}, "start": {strconv.FormatInt(from.UnixNano(), 10)},
-		"end": {strconv.FormatInt(until.UnixNano(), 10)}, "limit": {strconv.Itoa(limit)}, "direction": {direction},
+		"end": {
+			strconv.FormatInt(until.UnixNano(), 10),
+		},
+		"limit":     {strconv.Itoa(limit)},
+		"direction": {direction},
 	}.Encode()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
@@ -138,7 +148,10 @@ func (c *client) query(ctx context.Context, query string, from, until time.Time,
 			} `json:"result"`
 		} `json:"data"`
 	}
-	if json.Unmarshal(body, &decoded) != nil || decoded.Status != "success" || decoded.Data.ResultType != "streams" || decoded.Data.Result == nil {
+	if json.Unmarshal(body, &decoded) != nil ||
+		decoded.Status != "success" ||
+		decoded.Data.ResultType != "streams" ||
+		decoded.Data.Result == nil {
 		return nil, errors.New("loki returned a malformed or unsupported log result")
 	}
 	entries := make([]entry, 0)

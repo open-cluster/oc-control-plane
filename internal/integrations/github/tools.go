@@ -185,7 +185,10 @@ func readCommitsTool(app *App, client *Client) integrations.Tool {
 			}
 
 			read, err := client.Commits(ctx, token, CommitsQuery{
-				RepositoryID: repository, Since: since, Until: until, Limit: limit,
+				RepositoryID: repository,
+				Since:        since,
+				Until:        until,
+				Limit:        limit,
 			})
 			if err != nil {
 				return integrations.ToolResult{}, err
@@ -193,8 +196,11 @@ func readCommitsTool(app *App, client *Client) integrations.Tool {
 			content := make([]commitContent, 0, len(read.Commits))
 			for _, one := range read.Commits {
 				content = append(content, commitContent{
-					SHA: one.SHA, Message: one.Message, Author: one.Author,
-					AuthorAt: one.AuthorAt, Permalink: one.HTMLURL,
+					SHA:       one.SHA,
+					Message:   one.Message,
+					Author:    one.Author,
+					AuthorAt:  one.AuthorAt,
+					Permalink: one.HTMLURL,
 				})
 			}
 			return integrations.ToolResult{
