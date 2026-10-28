@@ -17,32 +17,71 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations/tempo"
 )
 
-func TestVerificationQueriesTheConfiguredSource(t *testing.T) {
-	for _, auth := range []string{"bearer", "basic"} {
-		t.Run(auth, func(t *testing.T) {
+func TestConnectionVerifiesAndQueriesTheConfiguredSource(t *testing.T) {
+	for _, sourceConfig := range []struct{ name, auth, token, tenant string }{
+		{"bearer", "bearer", "fixture-token", "production"},
+		{"basic", "basic", "fixture-token", "production"},
+		{"unauthenticated", "bearer", "", ""},
+	} {
+		t.Run(sourceConfig.name, func(t *testing.T) {
 			source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodGet || r.URL.Path != "/prefix/api/search" || r.URL.Query().Get("q") != "{}" ||
-					r.URL.Query().Get("limit") != "1" || r.URL.Query().Get("start") == "" || r.Header.Get("X-Scope-OrgID") != "production" {
-					t.Errorf("verification = %s %s", r.Method, r.URL)
+				if r.Method != http.MethodGet || r.URL.Query().Get("start") == "" || r.URL.Query().Get("end") == "" ||
+					r.Header.Get("Accept") != "application/json" || r.Header.Get("X-Scope-OrgID") != sourceConfig.tenant {
+					t.Errorf("connection request = %s %s", r.Method, r.URL)
 				}
-				if auth == "basic" {
+				if sourceConfig.auth == "basic" {
 					user, token, ok := r.BasicAuth()
-					if !ok || user != "123456" || token != "fixture-token" {
+					if !ok || user != "123456" || token != sourceConfig.token {
 						t.Error("Basic credential missing")
 					}
-				} else if r.Header.Get("Authorization") != "Bearer fixture-token" {
-					t.Error("Bearer credential missing")
+				} else {
+					wanted := ""
+					if sourceConfig.token != "" {
+						wanted = "Bearer " + sourceConfig.token
+					}
+					if r.Header.Get("Authorization") != wanted {
+						t.Error("Bearer credential was not applied correctly")
+					}
 				}
-				_, _ = w.Write([]byte(`{"traces":[],"metrics":{"completedJobs":1,"totalJobs":1}}`))
+				switch r.URL.Path {
+				case "/prefix/api/search":
+					if r.URL.Query().Get("q") != "{}" || (r.URL.Query().Get("limit") != "1" && r.URL.Query().Get("limit") != "20") {
+						t.Errorf("search parameters = %s", r.URL)
+					}
+					_, _ = w.Write([]byte(`{"traces":[{"traceID":"1","startTimeUnixNano":"1700000000000000000"}],"metrics":{"completedJobs":1,"totalJobs":1}}`))
+				case "/prefix/api/v2/traces/00000000000000000000000000000001":
+					_, _ = w.Write([]byte(traceFixture))
+				default:
+					t.Errorf("unexpected connection path: %s", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
 			}))
 			defer source.Close()
-			configuration := map[string]any{"url": source.URL + "/prefix", "auth": auth, "tenantId": "production"}
-			if auth == "basic" {
+			configuration := map[string]any{"url": source.URL + "/prefix/", "auth": sourceConfig.auth, "tenantId": sourceConfig.tenant}
+			if sourceConfig.auth == "basic" {
 				configuration["username"] = "123456"
 			}
-			verified := tempo.Definition().Probe(t.Context(), integrations.ProbeInput{Integration: integrations.Integration{Configuration: configuration}, Credential: "fixture-token"})
+			definition := tempo.Definition()
+			verified := definition.Probe(t.Context(), integrations.ProbeInput{Integration: integrations.Integration{Configuration: configuration}, Credential: sourceConfig.token})
 			if verified.Status != integrations.StatusVerified || !slices.Contains(verified.Grants, "tempo:query") {
 				t.Fatalf("verification = %+v", verified)
+			}
+			for _, operation := range definition.Tools {
+				arguments := map[string]any{"query": "{}"}
+				if operation.Name == "tempo_get_trace" {
+					arguments = map[string]any{"traceId": "1"}
+				}
+				input := request(source.URL, arguments)
+				input.Integration.Configuration = configuration
+				input.Credential = sourceConfig.token
+				result, err := operation.Run(t.Context(), input)
+				if err != nil {
+					t.Fatalf("%s after verification: %v", operation.Name, err)
+				}
+				encoded, _ := json.Marshal(result.Content)
+				if len(result.Sources) == 0 || !strings.Contains(string(encoded), "00000000000000000000000000000001") {
+					t.Fatalf("%s did not return source evidence: %s", operation.Name, encoded)
+				}
 			}
 		})
 	}

@@ -14,7 +14,7 @@ func Definition() integrations.Definition {
 		Key:         "tempo",
 		Name:        "Tempo",
 		Category:    integrations.CategoryObservability,
-		Description: "Search traces and read bounded span relationships from an approved Tempo source.",
+		Description: "Search traces and read bounded span relationships from a Tempo source.",
 		Config: []integrations.Field{
 			{Key: "url", Type: integrations.FieldString, Required: true},
 			{Key: "token", Type: integrations.FieldString, Secret: true},
