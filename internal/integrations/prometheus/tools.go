@@ -160,6 +160,9 @@ func normalize(value model.Value) ([]series, bool, error) {
 	limited := false
 	switch typed := value.(type) {
 	case model.Vector:
+		if typed == nil {
+			return nil, false, errors.New("prometheus returned a missing vector result")
+		}
 		if len(typed) > maxSeries {
 			typed, limited = typed[:maxSeries], true
 		}
@@ -180,6 +183,9 @@ func normalize(value model.Value) ([]series, bool, error) {
 				}}})
 		}
 	case model.Matrix:
+		if typed == nil {
+			return nil, false, errors.New("prometheus returned a missing matrix result")
+		}
 		if len(typed) > maxSeries {
 			typed, limited = typed[:maxSeries], true
 		}

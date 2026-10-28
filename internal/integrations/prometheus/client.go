@@ -1,6 +1,7 @@
 package prometheus
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -28,7 +29,7 @@ var (
 
 func newClient(address, credential string) (prom.API, error) {
 	addressUrl, err := url.Parse(address)
-	if err != nil || len(address) > 2048 || addressUrl == nil ||
+	if err != nil || len(address) > 2048 ||
 		(addressUrl.Scheme != "http" && addressUrl.Scheme != "https") || addressUrl.Hostname() == "" ||
 		addressUrl.User != nil || addressUrl.RawQuery != "" || addressUrl.ForceQuery || addressUrl.Fragment != "" ||
 		addressUrl.RawPath != "" || addressUrl.Opaque != "" {
@@ -94,33 +95,16 @@ func (t *readTransport) RoundTrip(request *http.Request) (*http.Response, error)
 		_ = response.Body.Close()
 		return nil, errResponse
 	}
-	response.Body = &limitedBody{
-		ReadCloser: response.Body,
-		remaining:  maxResponseBytes,
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
+	_ = response.Body.Close()
+	if err != nil {
+		return nil, err
 	}
+	if len(body) > maxResponseBytes {
+		return nil, errResponse
+	}
+	response.Body = io.NopCloser(bytes.NewReader(body))
 	return response, nil
-}
-
-type limitedBody struct {
-	io.ReadCloser
-	remaining int
-}
-
-func (b *limitedBody) Read(p []byte) (int, error) {
-	if b.remaining == 0 {
-		var extra [1]byte
-		n, err := b.ReadCloser.Read(extra[:])
-		if n > 0 {
-			return 0, errResponse
-		}
-		return 0, err
-	}
-	if len(p) > b.remaining {
-		p = p[:b.remaining]
-	}
-	n, err := b.ReadCloser.Read(p)
-	b.remaining -= n
-	return n, err
 }
 
 func queryError(err error) error {

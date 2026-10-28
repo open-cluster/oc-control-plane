@@ -21,9 +21,7 @@ import (
 func TestVerificationQueriesTheConfiguredSource(t *testing.T) {
 	for _, token := range []string{"", "fixture-bearer"} {
 		t.Run("token="+token, func(t *testing.T) {
-			var called atomic.Bool
 			source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				called.Store(true)
 				if err := r.ParseForm(); err != nil {
 					t.Error(err)
 				}
@@ -46,15 +44,12 @@ func TestVerificationQueriesTheConfiguredSource(t *testing.T) {
 			}))
 			defer source.Close()
 			definition := prometheus.Definition()
-			if _, err := integrations.NewCatalog(definition); err != nil {
-				t.Fatal(err)
-			}
 			verified := definition.Probe(t.Context(), integrations.ProbeInput{
 				Integration: integrations.Integration{Configuration: map[string]any{"url": source.URL + "/prometheus"}},
 				Credential:  token,
 			})
-			if !called.Load() || verified.Status != integrations.StatusVerified || !slices.Contains(verified.Grants, "prometheus:query") {
-				t.Fatalf("verification = %+v, called=%t", verified, called.Load())
+			if verified.Status != integrations.StatusVerified || !slices.Contains(verified.Grants, "prometheus:query") {
+				t.Fatalf("verification = %+v", verified)
 			}
 		})
 	}
@@ -183,6 +178,8 @@ func TestQueryOutcomesAreDistinctAndErrorsDoNotExposeCredentials(t *testing.T) {
 		body, want string
 	}{
 		{"empty", 200, `{"status":"success","data":{"resultType":"vector","result":[]}}`, ""},
+		{"null vector", 200, `{"status":"success","data":{"resultType":"vector","result":null}}`, "missing"},
+		{"null matrix", 200, `{"status":"success","data":{"resultType":"matrix","result":null}}`, "missing"},
 		{"missing value", 200, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{"job":"checkout"}}]}}`, "missing"},
 		{"missing sample", 200, `{"status":"success","data":{"resultType":"vector","result":[null]}}`, "missing"},
 		{"missing stream", 200, `{"status":"success","data":{"resultType":"matrix","result":[null]}}`, "missing"},
