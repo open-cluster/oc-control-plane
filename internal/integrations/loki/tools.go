@@ -3,11 +3,11 @@ package loki
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
@@ -79,7 +79,19 @@ func queryTool() integrations.Tool {
 			if len(entries) > limit {
 				entries = entries[:limit]
 			}
+			var secrets []string
+			if request.Credential != "" {
+				secrets = append(secrets, request.Credential)
+				if encoded, basic := strings.CutPrefix(client.authorization, "Basic "); basic {
+					secrets = append(secrets, encoded)
+				}
+			}
 			for index := range entries {
+				for _, secret := range secrets {
+					if strings.Contains(entries[index].Line, secret) {
+						return integrations.ToolResult{}, errors.New("loki result could expose its credential; response withheld")
+					}
+				}
 				runes := []rune(entries[index].Line)
 				if len(runes) > 2000 {
 					entries[index].Line = string(runes[:2000]) + "…"
@@ -116,16 +128,10 @@ func queryTool() integrations.Tool {
 			if err != nil || len(encoded) > maxResultBytes {
 				return integrations.ToolResult{}, errors.New("loki result exceeds safe output bounds; narrow the query")
 			}
-			if request.Credential != "" {
-				secrets := []string{request.Credential}
-				if client.auth == "basic" {
-					secrets = append(secrets, base64.StdEncoding.EncodeToString([]byte(client.username+":"+request.Credential)))
-				}
-				for _, secret := range secrets {
-					quoted, _ := json.Marshal(secret)
-					if bytes.Contains(encoded, quoted[1:len(quoted)-1]) {
-						return integrations.ToolResult{}, errors.New("loki result could expose its credential; response withheld")
-					}
+			for _, secret := range secrets {
+				quoted, _ := json.Marshal(secret)
+				if bytes.Contains(encoded, quoted[1:len(quoted)-1]) {
+					return integrations.ToolResult{}, errors.New("loki result could expose its credential; response withheld")
 				}
 			}
 			return integrations.ToolResult{

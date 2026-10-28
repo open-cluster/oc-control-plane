@@ -49,7 +49,9 @@ func TestOutcomesAndMalformedResults(t *testing.T) {
 		{"missing line", 200, `{"status":"success","data":{"resultType":"streams","result":[{"stream":{},"values":[["1700000000000000000",null]]}]}}`, "malformed"},
 		{"exclusive end", 200, `{"status":"success","data":{"resultType":"streams","result":[{"stream":{},"values":[["1700000060000000000","outside"]]}]}}`, "out-of-window"},
 		{"reflected credential", 200, `{"status":"success","data":{"resultType":"streams","result":[{"stream":{},"values":[["1700000000000000000","fixture-token"]]}]}}`, "credential"},
+		{"credential at excerpt boundary", 200, fmt.Sprintf(`{"status":"success","data":{"resultType":"streams","result":[{"stream":{},"values":[["1700000000000000000",%q]]}]}}`, strings.Repeat("x", 1995)+"fixture-token"), "credential"},
 		{"Basic credential reflection", 200, `{"status":"success","data":{"resultType":"streams","result":[{"stream":{},"values":[["1700000000000000000","Basic MTIzNDU2OmZpeHR1cmUtdG9rZW4="]]}]}}`, "credential"},
+		{"Basic credential at excerpt boundary", 200, fmt.Sprintf(`{"status":"success","data":{"resultType":"streams","result":[{"stream":{},"values":[["1700000000000000000",%q]]}]}}`, strings.Repeat("x", 1995)+"MTIzNDU2OmZpeHR1cmUtdG9rZW4="), "credential"},
 		{"syntax", 400, "fixture-token", "rejected"},
 		{"denied", 403, "fixture-token", "permission denied"},
 		{"rate limit", 429, "fixture-token", "rate limit"},
@@ -63,7 +65,7 @@ func TestOutcomesAndMalformedResults(t *testing.T) {
 			defer source.Close()
 			input := queryRequest(source.URL, map[string]any{"query": `{app="checkout"}`})
 			input.Credential = "fixture-token"
-			if example.name == "Basic credential reflection" {
+			if strings.HasPrefix(example.name, "Basic credential") {
 				input.Integration.Configuration["auth"] = "basic"
 				input.Integration.Configuration["username"] = "123456"
 			}

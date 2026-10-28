@@ -2,6 +2,7 @@ package loki
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -23,8 +24,9 @@ var httpClient = &http.Client{
 }
 
 type client struct {
-	endpoint                           *url.URL
-	credential, tenant, auth, username string
+	endpoint      *url.URL
+	tenant        string
+	authorization string
 }
 
 func newClient(configuration map[string]any, credential string) (*client, error) {
@@ -54,25 +56,28 @@ func newClient(configuration map[string]any, credential string) (*client, error)
 	}
 	auth, _ := configuration["auth"].(string)
 	username, _ := configuration["username"].(string)
+	authorization := ""
 	switch auth {
 	case "bearer":
 		if username != "" {
 			return nil, errors.New("loki username is only supported with Basic authentication")
 		}
+		if credential != "" {
+			authorization = "Bearer " + credential
+		}
 	case "basic":
 		if username == "" || len(username) > 256 || strings.ContainsAny(username, ":\r\n") || credential == "" {
 			return nil, errors.New("loki Basic authentication requires a valid username and token")
 		}
+		authorization = "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+credential))
 	default:
 		return nil, errors.New("loki auth must explicitly select bearer or basic")
 	}
 	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/loki/api/v1/query_range"
 	return &client{
-		endpoint:   endpoint,
-		credential: credential,
-		tenant:     tenant,
-		auth:       auth,
-		username:   username,
+		endpoint:      endpoint,
+		tenant:        tenant,
+		authorization: authorization,
 	}, nil
 }
 
@@ -97,10 +102,8 @@ func (c *client) query(ctx context.Context, query string, from, until time.Time,
 		return nil, errors.New("loki request could not be configured")
 	}
 	request.Header.Set("Accept", "application/json")
-	if c.auth == "basic" {
-		request.SetBasicAuth(c.username, c.credential)
-	} else if c.credential != "" {
-		request.Header.Set("Authorization", "Bearer "+c.credential)
+	if c.authorization != "" {
+		request.Header.Set("Authorization", c.authorization)
 	}
 	if c.tenant != "" {
 		request.Header.Set("X-Scope-OrgID", c.tenant)
