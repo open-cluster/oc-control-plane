@@ -1219,7 +1219,7 @@ components:
         key: { type: string, pattern: "^[a-z][a-z0-9_]{0,63}$" }
         name: { type: string, minLength: 1, maxLength: 128 }
         description: { type: string, minLength: 1, maxLength: 1024 }
-        category: { type: string, enum: [alerting, infrastructure, collaboration, source-control] }
+        category: { type: string, enum: [alerting, infrastructure, collaboration, source-control, observability] }
         requiresRelay: { type: boolean }
         receivesWebhooks: { type: boolean }
         supportsConnect: { type: boolean }

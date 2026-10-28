@@ -2247,6 +2247,7 @@ components:
             - infrastructure
             - collaboration
             - source-control
+            - observability
         requiresRelay:
           type: boolean
         receivesWebhooks:

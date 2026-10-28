@@ -19,6 +19,7 @@ const (
 	CategoryInfrastructure Category = "infrastructure"
 	CategoryCollaboration  Category = "collaboration"
 	CategorySourceControl  Category = "source-control"
+	CategoryObservability  Category = "observability"
 )
 
 type FieldType string

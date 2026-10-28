@@ -81,7 +81,8 @@
           "integrations/alerting/alertmanager",
           "integrations/infrastructure/kubernetes",
           "integrations/source-control/github",
-          "integrations/collaboration/slack"
+          "integrations/collaboration/slack",
+          "integrations/observability/prometheus"
         ]
       },
       {
