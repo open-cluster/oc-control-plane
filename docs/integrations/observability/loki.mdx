@@ -1,0 +1,117 @@
+---
+title: "Loki"
+description: "Investigate service logs using an approved Loki source."
+---
+
+Connect Loki to compare timestamped log excerpts with metrics, workload state and code
+changes during an Investigation. Log lines are evidence, not instructions; a matching
+message alone does not prove what caused an Incident.
+
+## Before you connect
+
+This release supports approved endpoints reachable from a **self-hosted OpenCluster
+deployment**, including self-hosted Loki and Grafana Cloud Loki. A deployment administrator
+must approve each destination and its network access. Prefer HTTPS and a read-only token.
+TLS certificates are verified, redirects are refused, and private endpoints must be directly
+reachable; Loki requests do not use a Relay.
+
+Admins and Editors can revise Integration configuration. A configuration-only edit retains
+the existing token, and subsequent verification or queries use it with the revised URL,
+authentication and tenant settings. Trust configuration administrators accordingly, approve
+changes before applying them, and verify again after an edit. OpenCluster does not enforce
+a destination allowlist. A multi-tenant OpenCluster Cloud offering needs a separate egress
+and destination policy before accepting arbitrary customer URLs.
+
+## Create the Integration
+
+As an Admin, create a **Loki** Integration with these configuration values:
+
+| Key | Required | Meaning |
+| --- | --- | --- |
+| `url` | Yes | Approved HTTP(S) base URL. Include any reverse-proxy prefix, but not `/loki/api/v1/query_range`. Credentials, query parameters and fragments are rejected. |
+| `auth` | Yes | Explicitly choose `bearer` or `basic`. |
+| `token` | For Basic | One read-only token, encrypted for later use. Optional in Bearer mode for a trusted unauthenticated source. |
+| `username` | For Basic | Basic-auth username. For Grafana Cloud, use the user value from your stack's Loki settings. Omit in Bearer mode. |
+| `tenantId` | No | Single Loki tenant sent as `X-Scope-OrgID`. Omit when the deployment does not require this header. Tenant federation is not supported. |
+
+For Grafana Cloud, use its Loki URL and user, select `basic`, and supply a read-only access
+policy token. For a self-hosted gateway, select the authentication mechanism it documents.
+No arbitrary headers or additional authentication mechanisms are supported.
+
+The authenticated product API accepts a Bearer configuration such as:
+
+```json
+{
+  "type": "loki",
+  "name": "Production logs",
+  "configuration": {
+    "url": "https://logs.example.com",
+    "auth": "bearer",
+    "tenantId": "production"
+  }
+}
+```
+
+Use `POST /api/v1/integrations` with the authentication described in the
+[API overview](/api-reference/overview#authentication). Include `token` when required;
+it is never returned in configuration reads. To replace it, use
+`PATCH /api/v1/integrations/{integration}` with the complete non-secret configuration
+and the new `token`. Omitting `token` during an edit preserves the existing credential.
+
+Creation verifies actual read access with a one-minute log query, `{job=~".+"}`, limited
+to one entry. A valid empty response also proves access; it does not prove that a `job`
+label or matching logs exist. A readiness check alone is insufficient. Successful
+verification makes the log Tool eligible through the normal access checks.
+
+## Investigate service logs
+
+Ask: **“What errors did checkout log during the latency spike? Compare them with its
+metrics and the deployment.”** Use a known service label and a focused expression:
+
+```logql
+{app="checkout"} |= "error"
+```
+
+Actual label names depend on your logging pipeline. This phase exposes one Tool,
+`loki_query_logs`; label discovery is not exposed. Supply known selectors from your
+instrumentation or available context rather than assuming all deployments use `app`.
+
+| Input | Meaning |
+| --- | --- |
+| `query` | Required LogQL log expression, at most 8192 bytes. |
+| `start`, `end` | Optional RFC3339 times, clamped to the Investigation window. Start is inclusive; end is exclusive. |
+| `limit` | At most 200 excerpts, default 100. |
+| `direction` | `backward` (newest first, default) or `forward` (oldest first). |
+
+The result includes the actual expression, applied window, direction and limit,
+timestamped excerpts with stream labels, and an `empty`, `data` or `incomplete` outcome.
+Timestamps retain nanosecond precision. Entries are ordered across streams before the
+local limit is applied. URLs, credentials and tenant IDs are selected from Integration
+configuration, never Tool arguments.
+
+## Limits and interpretation
+
+- The query covers at most the latest 24 hours of the requested Investigation interval.
+  A narrowed window is marked incomplete. Empty and disjoint intervals are refused.
+- Reaching the requested entry limit is conservatively marked incomplete, even when the
+  source may have exactly that many entries. Longer lines are excerpted to 2000 characters
+  and marked incomplete. Query a narrower interval or selector when more detail is needed.
+- HTTP calls have a 10-second timeout and respect Investigation cancellation. Responses
+  are limited to 2 MiB after decompression; normalized results must fit 256 KiB.
+  Oversized results fail explicitly rather than sending unlimited logs to the model.
+- Only the read-only `GET /loki/api/v1/query_range` endpoint is used. Metric results,
+  malformed streams and invalid or out-of-window entry timestamps fail explicitly.
+  Structured metadata and query statistics are not included in excerpts.
+- Empty results do not prove health, absence of an error, or causation. Log retention,
+  ingestion delays, permissions and query selection affect which entries are available.
+- Arbitrary LogQL is evaluated by Loki. Time bounds are not a complete historical-access
+  or query-cost policy; apply retention, tenant isolation and query limits at the source.
+  Select log fields carefully because upstream logs can themselves contain sensitive data.
+
+Invalid queries, permission refusals, rate limits, unavailable sources, redirects and
+response-size failures are returned as failures, not empty observations. Correct the
+endpoint or credential rather than disabling TLS verification. Use **Verify** to check
+access again; disabling the Integration stops new Tool use.
+
+See the [Loki HTTP API](https://grafana.com/docs/loki/latest/reference/loki-http-api/)
+for query and authentication details.

@@ -82,7 +82,8 @@
           "integrations/infrastructure/kubernetes",
           "integrations/source-control/github",
           "integrations/collaboration/slack",
-          "integrations/observability/prometheus"
+          "integrations/observability/prometheus",
+          "integrations/observability/loki"
         ]
       },
       {

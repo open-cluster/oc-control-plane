@@ -16,6 +16,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations/genericwebhook"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/github"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/kubernetes"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/loki"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/prometheus"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
@@ -126,6 +127,7 @@ func Run(
 		github.Definition(gitHubApp, gitHubClient),
 		genericwebhook.Definition(),
 		prometheus.Definition(),
+		loki.Definition(),
 	)
 	if err != nil {
 		return fmt.Errorf("assembling the integration catalog: %w", err)

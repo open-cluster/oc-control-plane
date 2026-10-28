@@ -282,7 +282,10 @@ func readWorkflowRunsTool(app *App, client *Client) integrations.Tool {
 			}
 
 			read, err := client.WorkflowRuns(ctx, token, RunsQuery{
-				RepositoryID: repository, Since: since, Until: until, Limit: limit,
+				RepositoryID: repository,
+				Since:        since,
+				Until:        until,
+				Limit:        limit,
 			})
 			if err != nil {
 				return integrations.ToolResult{}, err
@@ -290,18 +293,24 @@ func readWorkflowRunsTool(app *App, client *Client) integrations.Tool {
 			runs := make([]map[string]any, 0, len(read.Runs))
 			for _, one := range read.Runs {
 				runs = append(runs, map[string]any{
-					"id": one.ID, "name": one.Name, "branch": one.Branch,
-					"headSha": one.HeadSHA, "event": one.Event, "status": one.Status,
-					"conclusion": one.Conclusion, "createdAt": one.CreatedAt,
-					"permalink": one.HTMLURL,
+					"id":         one.ID,
+					"name":       one.Name,
+					"branch":     one.Branch,
+					"headSha":    one.HeadSHA,
+					"event":      one.Event,
+					"status":     one.Status,
+					"conclusion": one.Conclusion,
+					"createdAt":  one.CreatedAt,
+					"permalink":  one.HTMLURL,
 				})
 			}
 			return integrations.ToolResult{
-				Content:    runs,
-				Truncated:  read.Truncated,
-				Summary:    fmt.Sprintf("%d workflow runs in the window", len(runs)),
-				Sources:    []string{strconv.FormatInt(repository, 10)},
-				WindowFrom: since, WindowUntil: until,
+				Content:     runs,
+				Truncated:   read.Truncated,
+				Summary:     fmt.Sprintf("%d workflow runs in the window", len(runs)),
+				Sources:     []string{strconv.FormatInt(repository, 10)},
+				WindowFrom:  since,
+				WindowUntil: until,
 			}, nil
 		},
 	}
@@ -375,8 +384,10 @@ func readJobLogTool(app *App, client *Client) integrations.Tool {
 			}
 			return integrations.ToolResult{
 				Content: map[string]any{
-					"jobs": summaries, "job": chosen.Name,
-					"failedStep": chosen.FailedStep, "logTail": log,
+					"jobs":       summaries,
+					"job":        chosen.Name,
+					"failedStep": chosen.FailedStep,
+					"logTail":    log,
 				},
 				Truncated: truncated,
 				Summary: fmt.Sprintf("job %q (%s): log tail of %d bytes",
@@ -529,9 +540,12 @@ func listReleasesTool(app *App, client *Client) integrations.Tool {
 			releases := make([]map[string]any, 0, len(read.Releases))
 			for _, one := range read.Releases {
 				releases = append(releases, map[string]any{
-					"name": one.Name, "tag": one.Tag, "publishedAt": one.PublishedAt,
-					"author": one.Author, "prerelease": one.Prerelease,
-					"permalink": one.HTMLURL,
+					"name":        one.Name,
+					"tag":         one.Tag,
+					"publishedAt": one.PublishedAt,
+					"author":      one.Author,
+					"prerelease":  one.Prerelease,
+					"permalink":   one.HTMLURL,
 				})
 			}
 			return integrations.ToolResult{
