@@ -1,0 +1,74 @@
+---
+title: "Tempo"
+description: "Find relevant traces and inspect bounded spans during an Investigation."
+---
+
+Connect Tempo to compare request timing and span errors with metrics, logs and deployments.
+Trace evidence can identify where time was spent; it does not by itself prove causation.
+
+## Connect Tempo
+
+Use a deployment-approved endpoint reachable from self-hosted OpenCluster, including an
+approved Grafana Cloud source. Prefer HTTPS and a read-only token. TLS is verified and
+redirects are refused. Private endpoints need direct access; requests do not use a Relay.
+
+Create a `tempo` Integration through `POST /api/v1/integrations` using the
+[authenticated API](/api-reference/overview#authentication):
+
+```json
+{
+  "type": "tempo",
+  "name": "Production traces",
+  "configuration": {
+    "url": "https://traces.example.com",
+    "auth": "bearer",
+    "tenantId": "production"
+  }
+}
+```
+
+| Configuration | Meaning |
+| --- | --- |
+| `url` | Required base URL, including any proxy prefix but no API path, credentials, query or fragment. |
+| `auth` | Required: `bearer` or `basic`. |
+| `token` | One encrypted read-only token. Optional for Bearer on trusted unauthenticated sources; required for Basic. |
+| `username` | Required for Basic (use the source's documented user); omit for Bearer. |
+| `tenantId` | Optional single tenant sent as `X-Scope-OrgID`. Never selected by the Agent. |
+
+Creation verifies actual search access. Trace retrieval can require additional upstream
+permission. Admins and Editors can revise configuration; omitted tokens are retained and
+used with revised destinations/authentication/tenants. Trust configuration administrators,
+approve changes and verify again after edits. There is no enforced destination allowlist;
+multi-tenant OpenCluster Cloud requires a separate egress policy.
+
+## Investigate a request
+
+Ask: **“Find checkout traces with errors during the Incident and inspect a relevant trace.”**
+A focused TraceQL search could be `{ resource.service.name = "checkout" && status = error }`.
+
+| Tool | Inputs and results |
+| --- | --- |
+| `tempo_search_traces` | Required `query`; optional `start`, `end`, `limit` (default 20, maximum 50). Returns trace IDs, root service/operation, timing and available error counts/hints. |
+| `tempo_get_trace` | Required hexadecimal `traceId` (at most 32 characters); optional `start`/`end`. Returns up to 200 chronological spans with service, parent IDs, timestamps, duration and error status. |
+
+Times are RFC3339. Both Tools clamp to the Investigation window and at most its latest
+24 hours, rounding inward to whole seconds. Sources identify the Integration and trace;
+span IDs preserve the relationships reported by Tempo. Missing error information is
+unknown, not evidence of health. Search results are nondeterministic subsets, not rankings.
+
+## Limits and incomplete data
+
+- Search limits, incomplete search jobs, upstream partial status, missing retained parents
+  and local span limits are reported as incomplete. Empty search and scoped `not_found`
+  results do not establish global absence.
+- Retrieval time bounds are **backend search hints**. They may omit parts of a trace or
+  return spans outside the window; even a source `COMPLETE` status is not a guarantee of
+  global completeness or historical isolation. Keep source retention and query policies.
+- HTTP calls respect cancellation and a 10-second timeout. Decoded responses are limited
+  to 2 MiB and normalized results to 256 KiB. Oversized results fail explicitly. Arbitrary
+  attributes/events and the raw trace document are not sent to the Agent.
+- Only supported search and V2 trace JSON APIs are used. Experimental LLM formats are
+  not used, and optional span pruning is disabled. Invalid IDs, timings, responses and
+  permission failures are reported as failures. Known credential reflections are withheld.
+
+See the [Tempo API](https://grafana.com/docs/tempo/latest/api_docs/) for source-specific details.
