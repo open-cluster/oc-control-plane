@@ -58,6 +58,7 @@ OpenCluster currently supports:
 - **Slack** — operational context and threaded conversations
 - **Prometheus Alertmanager** — alert and Incident intake
 - **Prometheus** — metric discovery and bounded PromQL queries against approved self-hosted sources
+- **Loki** — bounded LogQL log excerpts from approved self-hosted or Grafana Cloud sources
 
 Integrations expose only the capabilities that were successfully verified for that connection.
 

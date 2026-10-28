@@ -272,7 +272,7 @@ func TestIntegrationTypeCatalog(t *testing.T) {
 	for index, entry := range catalog.Types {
 		byKey[entry.Key] = index
 	}
-	wantKeys := []string{"alertmanager", "generic_webhook", "github", "kubernetes", "prometheus", "slack"}
+	wantKeys := []string{"alertmanager", "generic_webhook", "github", "kubernetes", "loki", "prometheus", "slack"}
 	if len(catalog.Types) != len(wantKeys) {
 		t.Fatalf("catalog has %d types, want %d: %s", len(catalog.Types), len(wantKeys), body)
 	}
