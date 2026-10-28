@@ -19,6 +19,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations/loki"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/prometheus"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/tempo"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 	"github.com/open-cluster/oc-control-plane/internal/investigation/agent/anthropic"
@@ -128,6 +129,7 @@ func Run(
 		genericwebhook.Definition(),
 		prometheus.Definition(),
 		loki.Definition(),
+		tempo.Definition(),
 	)
 	if err != nil {
 		return fmt.Errorf("assembling the integration catalog: %w", err)

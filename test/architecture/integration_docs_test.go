@@ -14,6 +14,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations/loki"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/prometheus"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/tempo"
 )
 
 func TestEveryIntegrationHasItsDocumentedProductRolePage(t *testing.T) {
@@ -27,6 +28,7 @@ func TestEveryIntegrationHasItsDocumentedProductRolePage(t *testing.T) {
 		genericwebhook.Definition(),
 		prometheus.Definition(),
 		loki.Definition(),
+		tempo.Definition(),
 	)
 	if err != nil {
 		t.Fatal(err)
