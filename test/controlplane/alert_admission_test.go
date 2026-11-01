@@ -199,7 +199,7 @@ func TestAlertAdmissionCorrelatesAcceptedAndRefusedRequests(t *testing.T) {
 		}
 		var matched bool
 		for _, entry := range plane.logs.logLines(t) {
-			if entry["msg"] != "request served" || entry["request_id"] != requestID {
+			if entry["msg"] != "Request served" || entry["request_id"] != requestID {
 				continue
 			}
 			matched = true

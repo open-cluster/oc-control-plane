@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/seal"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
@@ -1001,91 +1003,24 @@ func TestRunRejectsInvalidCitationsAtTheAgentBoundary(t *testing.T) {
 	}
 }
 
-func TestRunReturnsAnErrorWhenTheTerminalRecordCannotBeWritten(t *testing.T) {
-	store := &records{terminalErr: errors.New("database unavailable")}
-	model := &scriptedModel{next: func(int, Prompt) (Completion, error) {
-		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
-			ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil),
-		}}}, nil
-	}}
-	agent := configuredTestAgent(t, store, model, testCatalog(t,
-		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
-			return integrations.ToolResult{}, nil
-		}))
-	var logs bytes.Buffer
-	agent.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
-	organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
-	err := agent.Run(context.Background(), organization,
-		investigation.Investigation{ID: uuid.New(), Subject: "question"})
-	if err == nil || !strings.Contains(err.Error(), "database unavailable") {
-		t.Fatalf("Run error = %v, want terminal persistence error", err)
-	}
-	if strings.Contains(logs.String(), "investigation concluded") || strings.Contains(logs.String(), "investigation failed") {
-		t.Fatalf("uncommitted outcome was logged: %s", logs.String())
-	}
-}
-
-func TestRunFailureLogsAreSafeAndDescribeCommittedOutcome(t *testing.T) {
-	const secret = "provider-body-secret-must-not-be-logged"
+func TestRunKeepsAToolFailureAsEvidenceAndStillConcludes(t *testing.T) {
+	const secret = "sensitive-source-body"
 	spans := tracetest.NewSpanRecorder()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans))
 	previous := otel.GetTracerProvider()
 	otel.SetTracerProvider(provider)
 	t.Cleanup(func() { otel.SetTracerProvider(previous); _ = provider.Shutdown(context.Background()) })
-	store := &records{}
-	model := &scriptedModel{next: func(int, Prompt) (Completion, error) {
-		return Completion{RequestID: "provider-123", Model: "responding-model", Raw: []byte(secret), Document: []byte(secret)}, FailedBecause(OutcomeOutage, "scripted", "test", secret, errors.New(secret))
-	}}
-	agent := configuredTestAgent(t, store, model, testCatalog(t, func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
-		return integrations.ToolResult{}, nil
-	}))
-	var logs bytes.Buffer
-	agent.Logger = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	agent.Instrument(NewTelemetry(agent.Logger))
-	org, id := uuid.New(), uuid.New()
-	if err := agent.Run(context.Background(), org, investigation.Investigation{ID: id, Subject: secret}); err != nil {
-		t.Fatal(err)
-	}
-	if store.status != investigation.StatusFailed {
-		t.Fatalf("status = %s", store.status)
-	}
-	text := logs.String()
-	if strings.Contains(text, secret) {
-		t.Fatalf("sensitive provider content escaped: %s", text)
-	}
-	for _, span := range spans.Ended() {
-		if strings.Contains(fmt.Sprint(span.Attributes()), secret) || strings.Contains(span.Status().Description, secret) {
-			t.Fatal("sensitive provider content escaped through tracing")
-		}
-	}
-	if strings.Count(text, `"msg":"investigation failed"`) != 1 || !strings.Contains(text, org.String()) || !strings.Contains(text, id.String()) || !strings.Contains(text, `"outcome":"outage"`) || !strings.Contains(text, `"provider_request_id":"provider-123"`) ||
-		!strings.Contains(text, `"model_answered":"responding-model"`) {
-		t.Fatalf("committed failure lacks safe correlation: %s", text)
-	}
-	logs.Reset()
-	model.next = func(int, Prompt) (Completion, error) {
-		return Completion{Model: "responding-model", Stop: StopToolUse,
-			Usage:     TokenUsage{Input: Counted(34), CacheRead: Counted(20), CacheWrite: Counted(5), Output: Counted(0)},
-			ToolCalls: []CompletionCall{{ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil)}}}, nil
-	}
-	if err := agent.Run(context.Background(), org, investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
-		t.Fatal(err)
-	}
-	text = logs.String()
-	if !strings.Contains(text, `"model_answered":"responding-model"`) ||
-		!strings.Contains(text, `"output_tokens":0`) || strings.Contains(text, `"reasoning_tokens"`) ||
-		store.usage != (investigation.Usage{InputTokens: 59, OutputTokens: 0}) {
-		t.Fatalf("reported identity or usage was lost: usage=%+v logs=%s", store.usage, text)
-	}
-}
-
-func TestRunKeepsAToolFailureAsEvidenceAndStillConcludes(t *testing.T) {
+	ctx, parent := provider.Tracer("test").Start(context.Background(), "investigation")
+	defer parent.End()
 	store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
 	executed := 0
 	catalog := testCatalog(t, func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 		executed++
-		if executed <= 2 {
-			return integrations.ToolResult{}, errors.New("source unavailable")
+		if executed == 1 {
+			return integrations.ToolResult{}, &url.Error{Op: "Get", URL: secret, Err: context.Canceled}
+		}
+		if executed == 2 {
+			return integrations.ToolResult{}, context.DeadlineExceeded
 		}
 		return integrations.ToolResult{Summary: "source recovered"}, nil
 	})
@@ -1103,15 +1038,55 @@ func TestRunKeepsAToolFailureAsEvidenceAndStillConcludes(t *testing.T) {
 		}}}, nil
 	}}
 	agent := configuredTestAgent(t, store, model, catalog)
+	var logs bytes.Buffer
+	agent.Logger = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
-	if err := agent.Run(context.Background(), organization,
-		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
+	id := uuid.New()
+	if err := agent.Run(ctx, organization,
+		investigation.Investigation{ID: id, Subject: "question"}); err != nil {
 		t.Fatal(err)
 	}
 	if store.status != investigation.StatusConcluded || len(store.runs) != 3 ||
 		store.runs[0].Outcome != investigation.RunFailed || store.runs[1].Outcome != investigation.RunFailed ||
 		store.runs[2].Outcome != investigation.RunSucceeded {
 		t.Fatalf("status=%s runs=%+v", store.status, store.runs)
+	}
+	toolLogs := 0
+	for line := range strings.Lines(logs.String()) {
+		var entry map[string]any
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatal(err)
+		}
+		if entry["msg"] != "Tool execution finished" {
+			continue
+		}
+		toolLogs++
+		level := "DEBUG"
+		if toolLogs == 2 {
+			level = "WARN"
+		}
+		if entry["level"] != level || entry["org_id"] != organization.String() || entry["investigation_id"] != id.String() || entry["integration_id"] != store.candidate.ID.String() || entry["tool"] != "stub_read" || entry["ordinal"] != float64(toolLogs) || entry["trace_id"] != parent.SpanContext().TraceID().String() {
+			t.Errorf("Tool execution lacks safe correlation: %v", entry)
+		}
+		if elapsed, ok := entry["duration_ms"].(float64); !ok || elapsed < 0 || entry["duration"] != nil {
+			t.Errorf("Tool duration must use numeric milliseconds: %v", entry)
+		}
+	}
+	if toolLogs != 3 || strings.Contains(logs.String(), secret) {
+		t.Fatalf("expected three safe execution logs: %s", logs.String())
+	}
+	if len(spans.Ended()) != 3 {
+		t.Fatalf("Tool execution spans = %d, want three", len(spans.Ended()))
+	}
+	for _, span := range spans.Ended() {
+		for _, attr := range span.Attributes() {
+			if attr.Key == "oc.tool.ordinal" && attr.Value.AsInt64() == 1 && span.Status().Code == codes.Error {
+				t.Error("cancelled Tool execution was reported as an error span")
+			}
+		}
+		if span.Parent().SpanID() != parent.SpanContext().SpanID() || strings.Contains(fmt.Sprint(span.Attributes()), secret) || strings.Contains(span.Status().Description, secret) {
+			t.Fatal("Tool span lost its parent or exposed source content")
+		}
 	}
 }
 

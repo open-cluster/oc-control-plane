@@ -47,7 +47,7 @@ func serve(ctx context.Context, process assembled) error {
 	if err != nil {
 		return fmt.Errorf("listening on %s: %w", cfg.HTTPListenAddress, err)
 	}
-	logger.Info("listening", slog.String("address", listener.Addr().String()))
+	logger.Info("HTTP listener started", slog.String("address", listener.Addr().String()))
 
 	failed := make(chan error, 2)
 	go func() {
@@ -84,7 +84,7 @@ func serve(ctx context.Context, process assembled) error {
 	case <-ctx.Done():
 	}
 
-	logger.Info("draining", slog.Duration("timeout", defaultShutdownTimeout))
+	logger.Info("Listeners draining", slog.Int64("timeout_ms", defaultShutdownTimeout.Milliseconds()))
 	drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultShutdownTimeout)
 	defer cancel()
 
@@ -99,7 +99,7 @@ func serve(ctx context.Context, process assembled) error {
 		return fmt.Errorf("draining: %w", err)
 	}
 	<-failed
-	logger.Info("stopped")
+	logger.Info("HTTP listener drained")
 	return nil
 }
 

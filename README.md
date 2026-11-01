@@ -103,6 +103,8 @@ Findings require citations to successful reads; failed or skipped reads can expl
 limitations but cannot establish a Finding. Startup activity describes the initial phase,
 and recorded activity remains available when a client reconnects.
 Tool completion activity is published only after the Tool Run's provenance is recorded.
+Operational JSON logs correlate Investigations and Tool executions with trace identifiers;
+routine requests and successful health probes log at DEBUG, with durations in milliseconds.
 
 ### Relay
 

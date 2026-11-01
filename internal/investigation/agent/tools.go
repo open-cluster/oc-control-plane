@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"reflect"
 	"sort"
 	"strconv"
@@ -17,6 +18,11 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/seal"
+	"github.com/open-cluster/oc-control-plane/internal/telemetry"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func decodeToolCalls(calls []CompletionCall) []toolCall {
@@ -159,8 +165,30 @@ func (r *Agent) execute(
 	}
 
 	// The tool Run implementation execution ----->
+	runCtx, span := otel.Tracer(meterName).Start(runCtx, "investigation.tool", trace.WithAttributes(
+		attribute.String("oc.tool.name", tool.Name),
+		attribute.String("oc.integration.id", run.IntegrationID.String()),
+		attribute.Int("oc.tool.ordinal", ordinal)))
+	defer span.End()
 	result, err := tool.Run(runCtx, request)
 	run.FinishedAt = time.Now().UTC()
+	level, outcome := slog.LevelDebug, "succeeded"
+	if err != nil {
+		outcome = "failed"
+		if !errors.Is(err, context.Canceled) && runCtx.Err() != context.Canceled {
+			span.SetStatus(codes.Error, "tool execution failed")
+			var networkError net.Error
+			if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &networkError) || runCtx.Err() == context.DeadlineExceeded {
+				level = slog.LevelWarn
+			}
+		}
+	}
+	span.SetAttributes(attribute.String("oc.tool.outcome", outcome))
+	observability.LoggerFor(runCtx, r.Logger, "").Log(runCtx, level, "Tool execution finished",
+		slog.String("integration_id", run.IntegrationID.String()),
+		slog.String("tool", tool.Name), slog.Int("ordinal", ordinal),
+		slog.String("outcome", outcome),
+		slog.Float64("duration_ms", float64(run.FinishedAt.Sub(run.StartedAt))/float64(time.Millisecond)))
 	if err != nil {
 		run.Outcome = investigation.RunFailed
 		run.Error = err.Error()
@@ -196,7 +224,7 @@ func (r *Agent) announce(
 	ctx context.Context, events *investigation.EventStream, payload investigation.EventPayload,
 ) {
 	if err := events.Emit(ctx, payload); err != nil {
-		r.Logger.WarnContext(ctx, "an investigation event could not be written",
+		observability.LoggerFor(ctx, r.Logger, "").WarnContext(ctx, "Investigation event could not be written",
 			slog.String("event", payload.EventType().String()),
 			slog.String("error", "event could not be recorded"))
 	}

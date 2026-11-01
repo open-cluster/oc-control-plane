@@ -42,8 +42,8 @@ func (h Handlers) ready(writer http.ResponseWriter, request *http.Request) {
 	defer cancel()
 
 	if err := h.Ready(ctx); err != nil {
-		observability.LoggerFrom(request.Context(), h.Logger).Warn("readiness check failed",
-			slog.String("error", err.Error()))
+		observability.LoggerFrom(request.Context(), h.Logger).Warn("Readiness check failed",
+			slog.String("error", "database unavailable"))
 		writeStatus(writer, http.StatusServiceUnavailable, "unready")
 		return
 	}

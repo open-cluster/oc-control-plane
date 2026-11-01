@@ -141,10 +141,16 @@ existing Secret, run `kubectl rollout restart deployment/<release>-opencluster`,
 Investigation before considering the change complete.
 
 Set `OC_LOG_LEVEL` to `debug`, `info`, `warn`, or `error`; the default is `info`.
+Logs are flat JSON on stderr, with `time`, `level`, and `msg`. Request and Tool
+execution durations use numeric `duration_ms`. Routine requests, including successful
+health probes, are DEBUG; readiness failures produce a safe, correlated WARN.
+Tool execution logs include the Integration, Investigation, ordinal, and outcome,
+without query arguments or observations. Opaque adapter errors remain DEBUG because
+they can include malformed queries; recognized network errors and timeouts use WARN.
 Use `OC_OTLP_ENDPOINT` when exporting traces to a collector.
 
 Investigation execution exports one `investigation.run` span with child
-`reasoning.complete` model-call spans. Existing Investigation metric names remain stable;
+`reasoning.complete` model-call and `investigation.tool` execution spans. Existing Investigation metric names remain stable;
 the historical duration outcome `needs_input` remains a metric dimension for requests
 requiring narrower input, while the public lifecycle status is `concluded`. Tool metrics
 group by the catalog Tool name across Integrations, without resource identifiers.

@@ -153,7 +153,6 @@ func (r *Agent) Run(
 		measured.logger = local.Logger
 		local.telemetry = &measured
 	}
-	local.Logger = observability.LoggerFor(ctx, local.Logger, "")
 	r = &local
 
 	events := investigation.NewEventStream(
@@ -169,10 +168,10 @@ func (r *Agent) Run(
 		}
 		trace.SpanFromContext(ctx).SetAttributes(attribute.String("oc.investigation.status", "failed"))
 		trace.SpanFromContext(ctx).SetStatus(codes.Error, "investigation execution failed")
-		r.Logger.ErrorContext(ctx, "investigation failed",
+		observability.LoggerFor(ctx, r.Logger, "").ErrorContext(ctx, "Investigation failed",
 			slog.String("error", "investigation execution failed"),
 			slog.String("failure_class", failureOutcome),
-			slog.Duration("duration", time.Since(startedAt)))
+			slog.Float64("duration_ms", float64(time.Since(startedAt))/float64(time.Millisecond)))
 		return nil
 	}
 
