@@ -16,6 +16,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/seal"
+	"github.com/santhosh-tekuri/jsonschema/v6"
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -869,11 +870,15 @@ func TestRunRejectsInvalidCitationsAtTheAgentBoundary(t *testing.T) {
 		ordinal int
 		failed  bool
 	}{
-		{"missing", 3, false}, {"failed", 1, true}, {"suppressed", 2, false}, {"successful", 1, false}, {"unavailable prior", 1, false},
+		{"missing", 3, false}, {"failed", 1, true}, {"suppressed", 2, false}, {"successful", 1, false}, {"unavailable prior", 1, false}, {"current as prior", 1, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
 			prior := investigation.EvidenceRef{InvestigationID: uuid.New(), ToolRunOrdinal: 1}
+			id := uuid.New()
+			if test.name == "current as prior" {
+				prior.InvestigationID = id
+			}
 			if test.name == "unavailable prior" {
 				store.missingEvidence = prior
 				store.messages = []investigation.AssignedMessage{{Sequence: 1, Text: "question"}}
@@ -887,7 +892,7 @@ func TestRunRejectsInvalidCitationsAtTheAgentBoundary(t *testing.T) {
 					}}, nil
 				}
 				document := validConclusion(t, []int{test.ordinal})
-				if test.name == "unavailable prior" {
+				if test.name == "unavailable prior" || test.name == "current as prior" {
 					var claimed map[string]any
 					if err := json.Unmarshal(document, &claimed); err != nil {
 						t.Fatal(err)
@@ -895,6 +900,30 @@ func TestRunRejectsInvalidCitationsAtTheAgentBoundary(t *testing.T) {
 					finding := claimed["findings"].([]any)[0].(map[string]any)
 					finding["run_refs"], finding["evidence_refs"] = []int{}, []investigation.EvidenceRef{prior}
 					document, _ = json.Marshal(claimed)
+					if call == 2 {
+						if err := json.Unmarshal(document, &claimed); err != nil {
+							t.Fatal(err)
+						}
+						for _, tool := range prompt.Tools {
+							if tool.Name != ConcludeToolName {
+								continue
+							}
+							compiler := jsonschema.NewCompiler()
+							if err := compiler.AddResource("conclude.json", tool.InputSchema); err != nil {
+								t.Fatal(err)
+							}
+							schema, err := compiler.Compile("conclude.json")
+							if err != nil || (schema.Validate(claimed) == nil) != (test.name == "unavailable prior") {
+								t.Fatalf("provider schema does not match supplied prior evidence: %v", err)
+							}
+						}
+					}
+					if call == 3 {
+						feedback := prompt.Turns[len(prompt.Turns)-1].ToolResults[0]
+						if feedback.CallID != "done" || !feedback.IsError || !strings.Contains(feedback.Content, "run_refs") {
+							t.Fatal("citation rejection did not explain how to cite current reads")
+						}
+					}
 				}
 				if call == 3 {
 					var corrected map[string]any
@@ -919,7 +948,7 @@ func TestRunRejectsInvalidCitationsAtTheAgentBoundary(t *testing.T) {
 					return integrations.ToolResult{Summary: "A recorded observation"}, nil
 				}))
 			organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
-			opened := investigation.Investigation{ID: uuid.New(), Subject: "question"}
+			opened := investigation.Investigation{ID: id, Subject: "question"}
 			if test.name == "unavailable prior" {
 				opened.ConversationID = uuid.New()
 			}
@@ -1021,9 +1050,15 @@ func TestRunFailureLogsAreSafeAndDescribeCommittedOutcome(t *testing.T) {
 func TestRunRecordsRefusedAndDuplicateCallsWithoutRepeatingARead(t *testing.T) {
 	store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
 	executed := 0
-	catalog := testCatalog(t, func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
+	catalog := testCatalog(t, func(_ context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
 		executed++
-		return integrations.ToolResult{Summary: "value", Content: "value"}, nil
+		content := "value"
+		if request.Arguments["key"] == "b" {
+			content = strings.Repeat("v", 17<<10)
+		}
+		at := time.Unix(1700000000, 0).UTC()
+		return integrations.ToolResult{Summary: "value", Content: content,
+			Truncated: request.Arguments["key"] == "a", WindowFrom: at, WindowUntil: at}, nil
 	})
 	model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
 		if call == 1 {
@@ -1041,6 +1076,21 @@ func TestRunRecordsRefusedAndDuplicateCallsWithoutRepeatingARead(t *testing.T) {
 				!prompt.Turns[0].ToolResults[0].IsError || prompt.Turns[0].ToolResults[4].CallID != "invalid-json" ||
 				!prompt.Turns[0].ToolResults[4].IsError {
 				t.Fatal("invalid Tool input lost its correlated rejection feedback")
+			}
+			for index, id := range []string{"invalid-input", "read", "duplicate", "unknown", "invalid-json", "without-purpose"} {
+				if prompt.Turns[0].ToolResults[index].CallID != id {
+					t.Fatal("Tool feedback lost call ordering or identity")
+				}
+			}
+			limited, clipped := prompt.Turns[0].ToolResults[1], prompt.Turns[0].ToolResults[5]
+			if limited.IsError || !strings.Contains(limited.Content, "may be incomplete") ||
+				strings.Contains(limited.Content, "the source held more") ||
+				!strings.Contains(limited.Content, "WINDOW: effective bounds") || strings.Contains(limited.Content, "[cut at") {
+				t.Fatalf("source limits or instant evaluation bounds overstated: %s", limited.Content)
+			}
+			if clipped.IsError || !strings.Contains(clipped.Content, "[cut at 16384 bytes]") ||
+				strings.Contains(clipped.Content, "may be incomplete") || store.runs[5].Truncated {
+				t.Fatal("model clipping was confused with source incompleteness")
 			}
 			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
 				ID: "refresh", Name: "stub_read", Arguments: json.RawMessage(`{"input":{"key":"a"}}`),

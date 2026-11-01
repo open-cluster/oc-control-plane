@@ -27,6 +27,8 @@ systems to determine impact, investigate likely causes, and recommend what to do
 Every material Finding is backed by the Tool Runs that support it, so operators can inspect
 how a conclusion was reached instead of treating the AI response as a black box.
 Uncertainty, missing telemetry, and unresolved assumptions remain explicit.
+Tool Runs preserve subsecond execution timing separately from source-query bounds;
+source limits and content clipped for the model remain distinct limitations.
 
 > OpenCluster is pre-release software. APIs and storage may change before the first stable release.
 

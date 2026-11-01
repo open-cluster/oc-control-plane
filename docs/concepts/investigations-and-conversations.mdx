@@ -109,6 +109,19 @@ Citations show what OpenCluster read, not that the source was complete or correc
 source timestamps, bounded windows, contradictions, and truncation before accepting a
 Finding.
 
+Keep these time concepts separate when inspecting a Tool Run:
+
+| Time | Meaning |
+| --- | --- |
+| Investigation window | The accepted time bounds for the Investigation. |
+| Requested arguments | The query and times requested by the investigator. |
+| Effective bounds | The times the source adapter actually applied, when available. An instant Prometheus query has one evaluation time. |
+| `startedAt` and `finishedAt` | The Tool execution interval, preserving stored subsecond precision. `durationMs` is derived from this interval and can include fractional milliseconds. |
+
+Source limits indicate possible incompleteness; a full page does not prove more records
+exist. Content can also be clipped to the model's input budget, independently of source
+limits. Scope claims to the returned observations and visible content.
+
 A Finding must cite successful reads. Failed or skipped reads can explain limitations,
 but cannot establish an observation or cause. A skipped duplicate refers to the original
 read rather than creating another observation. Prior citations must still resolve to

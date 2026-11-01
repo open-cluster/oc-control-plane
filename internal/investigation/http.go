@@ -384,6 +384,7 @@ type runView struct {
 	Error         string         `json:"error,omitempty"`
 	StartedAt     string         `json:"startedAt"`
 	FinishedAt    string         `json:"finishedAt"`
+	DurationMs    float64        `json:"durationMs"`
 }
 
 type detailView struct {
@@ -444,8 +445,9 @@ func detailViewOf(found Investigation, runs []ToolRun) detailView {
 			Summary:     run.Summary,
 			Sources:     run.Sources,
 			Error:       run.Error,
-			StartedAt:   stamp(run.StartedAt),
-			FinishedAt:  stamp(run.FinishedAt),
+			StartedAt:   run.StartedAt.UTC().Format(time.RFC3339Nano),
+			FinishedAt:  run.FinishedAt.UTC().Format(time.RFC3339Nano),
+			DurationMs:  float64(run.FinishedAt.Sub(run.StartedAt)) / float64(time.Millisecond),
 		}
 		if run.IntegrationID != uuid.Nil {
 			rendered.IntegrationID = run.IntegrationID.String()

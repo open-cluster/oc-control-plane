@@ -120,7 +120,7 @@ func taskInstruction(orientation orientation) string {
 
 const ConcludeToolName = "conclude"
 
-func exchangeTools(orientation orientation) []integrations.ToolDefinition {
+func exchangeTools(orientation orientation, conclude integrations.ToolDefinition) []integrations.ToolDefinition {
 	seen := map[string]bool{}
 	var definitions []integrations.ToolDefinition
 	for _, source := range orientation.Sources {
@@ -135,7 +135,7 @@ func exchangeTools(orientation orientation) []integrations.ToolDefinition {
 	if orientation.Brief != nil && orientation.Brief.HistoryBefore > 1 {
 		definitions = append(definitions, historyDefinition(orientation.Brief.HistoryBefore))
 	}
-	return append(definitions, ConcludeDefinition())
+	return append(definitions, conclude)
 }
 
 func envelopeDefinition(definition integrations.ToolDefinition, sources []offeredSource) integrations.ToolDefinition {
@@ -173,6 +173,10 @@ func envelopeDefinition(definition integrations.ToolDefinition, sources []offere
 }
 
 func ConcludeDefinition() integrations.ToolDefinition {
+	return concludeDefinition(true)
+}
+
+func concludeDefinition(prior bool) integrations.ToolDefinition {
 	return integrations.ToolDefinition{
 		Name: ConcludeToolName,
 		Description: "End the investigation with its structured conclusion. Call this " +
@@ -185,18 +189,18 @@ func ConcludeDefinition() integrations.ToolDefinition {
 			"the findings, which are not bounded by it. Oversized output must be corrected. " +
 			"Propose at most " + strconv.Itoa(investigation.MaxConclusionActions) + " actions; each title, rationale and verification is limited to " +
 			strconv.Itoa(investigation.MaxActionTextLength) + " UTF-8 bytes.",
-		InputSchema: concludeSchema(),
+		InputSchema: concludeSchema(prior),
 	}
 }
 
-func concludeSchema() map[string]any {
+func concludeSchema(prior bool) map[string]any {
 	actions := array(actionSchema())
 	actions["maxItems"] = investigation.MaxConclusionActions
 	return object(properties{
 		"status":      enumField(investigation.ConclusionStatuses...),
 		"summary":     map[string]any{"type": "string", "maxLength": investigation.MaxSummaryLength},
 		"impact":      impactSchema(),
-		"findings":    array(agentFindingSchema()),
+		"findings":    array(agentFindingSchema(prior)),
 		"hypotheses":  array(hypothesisSchema()),
 		"actions":     actions,
 		"limitations": array(limitationSchema()),
@@ -209,16 +213,20 @@ func impactSchema() map[string]any {
 	})
 }
 
-func agentFindingSchema() map[string]any {
+func agentFindingSchema(prior bool) map[string]any {
+	refs := array(object(properties{
+		"investigationId": map[string]any{"type": "string", "format": "uuid"},
+		"toolRunOrdinal":  map[string]any{"type": "integer", "minimum": 1},
+	}))
+	if !prior {
+		refs["maxItems"] = 0
+	}
 	return object(properties{
-		"statement": stringField,
-		"kind":      enumField(investigation.FindingKinds...),
-		"mechanism": stringField,
-		"run_refs":  array(integerField),
-		"evidence_refs": array(object(properties{
-			"investigationId": map[string]any{"type": "string", "format": "uuid"},
-			"toolRunOrdinal":  map[string]any{"type": "integer", "minimum": 1},
-		})),
+		"statement":     stringField,
+		"kind":          enumField(investigation.FindingKinds...),
+		"mechanism":     stringField,
+		"run_refs":      array(integerField),
+		"evidence_refs": refs,
 	})
 }
 
@@ -356,14 +364,14 @@ func renderResult(result toolFeedback) ToolResultTurn {
 		}
 	}
 	if run.WindowApplied {
-		out.WriteString("WINDOW: this read covered " + stamp(run.WindowFrom) + " to " +
+		out.WriteString("WINDOW: effective bounds " + stamp(run.WindowFrom) + " to " +
 			stamp(run.WindowUntil) + "\n")
 	}
 	if run.Summary != "" {
 		out.WriteString("SUMMARY: " + run.Summary + "\n")
 	}
 	if run.Truncated {
-		out.WriteString("TRUNCATED: the source held more than this read returned.\n")
+		out.WriteString("SOURCE: this result may be incomplete; additional records are not proven.\n")
 	}
 	out.WriteString("CONTENT: " + boundedJSON(run.Content) + "\n")
 	return ToolResultTurn{

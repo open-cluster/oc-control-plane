@@ -1552,7 +1552,7 @@ components:
     ToolRun:
       type: object
       additionalProperties: false
-      required: [ordinal, tool, windowFrom, windowUntil, outcome, startedAt, finishedAt]
+      required: [ordinal, tool, windowFrom, windowUntil, outcome, startedAt, finishedAt, durationMs]
       properties:
         ordinal: { type: integer, minimum: 1 }
         integrationId: { $ref: "#/components/schemas/UUID" }
@@ -1568,6 +1568,10 @@ components:
         error: { type: string, maxLength: 4096 }
         startedAt: { $ref: "#/components/schemas/Timestamp" }
         finishedAt: { $ref: "#/components/schemas/Timestamp" }
+        durationMs:
+          type: number
+          minimum: 0
+          description: Execution duration in milliseconds derived from startedAt and finishedAt, including fractional milliseconds. Execution timestamps retain stored subsecond precision.
     InvestigationDetail:
       allOf:
         - { $ref: "#/components/schemas/Investigation" }

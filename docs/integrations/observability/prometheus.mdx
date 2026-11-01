@@ -87,7 +87,9 @@ workload and deployment evidence.
 | `prometheus_discover_metrics` | Required `hint`; optional `selector` containing label matchers in braces. | Relevant metric names, the evaluated selector/window, annotations and incomplete-result status. |
 | `prometheus_query` | Required `query` and `mode` (`instant` or `range`); optional RFC 3339 `start`/`end` and integer range `step` in seconds. | Expression, effective evaluation times/step, labeled samples, annotations and incomplete-result status. |
 
-Instant queries evaluate at the requested end time or the Investigation's end.
+Instant queries evaluate at the requested end time or the Investigation's end. Their
+effective start and end are equal, including for expressions with a `[60m]` selector;
+the selector specifies lookback, not a range of evaluation timestamps.
 Range timestamps are clamped to the Investigation window. Disjoint intervals are refused.
 Discovery and range queries cover at most the latest 24 hours of that window.
 
@@ -97,7 +99,7 @@ Discovery and range queries cover at most the latest 24 hours of that window.
   240 timestamps per series. The effective step is reported.
 - At most 50 series and 240 samples per returned series are retained. If a backend ignores
   limits, extra samples are sampled across the returned span, preserving its endpoints.
-  Omitted data, coarsened requested steps, and provider annotations mark a result incomplete.
+  Omitted data, coarsened requested steps, and provider warnings mark a result possibly incomplete.
 - Provider calls have a 10-second HTTP deadline; PromQL evaluation requests a 5-second
   server timeout. Cancellation and the Investigation's own deadlines still apply.
 - Responses are limited to 2 MiB after decompression; normalized results must fit 256 KiB.
@@ -105,8 +107,15 @@ Discovery and range queries cover at most the latest 24 hours of that window.
 - Vector, matrix and scalar results are supported. Sample values remain strings, including
   `NaN`, `+Inf` and `-Inf`; these are not zero. Native histogram samples require a
   float-valued PromQL expression, and unsupported or malformed results fail explicitly.
-- Warnings and information annotations are retained in bounded form. An empty successful
+- Warnings and information annotations are retained in bounded form. Information annotations
+  alone do not establish omitted data. An empty successful
   result means no matching observations were returned, not that the service was healthy.
+
+Counter increases from `increase()` are extrapolated estimates and can be fractional.
+A raw duration sum/count ratio is a cumulative mean, not incident-window latency. For a
+windowed mean, divide matching rates over the same interval and label scope, aggregating
+sums and counts before division. Classic histogram quantiles use bucket rates grouped by
+`le` and the relevant service or route; they are estimates, not averages or exact maxima.
 
 **Evaluation bounds are not strict historical data isolation.** PromQL offsets, range
 selectors, subqueries and lookback can consult data earlier than the HTTP evaluation times.

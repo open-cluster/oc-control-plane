@@ -64,7 +64,14 @@ func queryTool() integrations.Tool {
 		Name:           "prometheus_query",
 		RequiredGrants: []string{queryGrant},
 		Arguments:      declared,
-		Description:    "Evaluate read-only PromQL as an instant or range query against the selected Prometheus Integration. Use metrics to compare errors, latency and resource usage with other evidence. Returns labeled string-valued samples, effective evaluation times, annotations and incomplete-result indicators; NaN/Inf are not zero. At most 50 series and 240 samples per series. Evaluation timestamps are bounded, but PromQL offsets, range selectors, subqueries and lookback can read earlier data; this is not strict historical isolation. No matching data does not prove health or causation.",
+		Description: "Evaluate read-only PromQL as an instant or range query against the selected Prometheus Integration. " +
+			"Returns labeled string-valued samples, effective evaluation times/step, annotations and possible incompleteness; NaN/Inf are not zero. " +
+			"Inspect actual labels before filtering. increase() estimates counter changes and may be fractional, not exact event counts. " +
+			"A raw duration sum/count ratio is cumulative, not incident-window latency. For a windowed mean, divide matching rates over the same interval and label scope; aggregate sums and counts before division. " +
+			"Classic histogram quantiles use bucket rates grouped by le and the relevant service/route scope; quantiles are estimates, not averages or exact maxima. " +
+			"At most 50 series and 240 samples per series. Instant bounds both name the evaluation time, even with a [60m] selector. " +
+			"Offsets, range selectors, subqueries and lookback can read earlier data; evaluation bounds are not strict historical isolation. " +
+			"Informational annotations alone do not establish omitted data. No matching data does not prove health or causation.",
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
 			arguments, err := integrations.ReadArguments(declared, request.Arguments)
 			if err != nil {
@@ -117,7 +124,7 @@ func queryTool() integrations.Tool {
 			if err != nil {
 				return integrations.ToolResult{}, err
 			}
-			limited = limited || trimmed || len(warnings) > 0 || len(infos) > 0
+			limited = limited || trimmed || len(warnings) > 0
 			content := queryContent{
 				Query:       query,
 				Mode:        mode,
@@ -273,7 +280,7 @@ func discoverMetricsTool() integrations.Tool {
 			if err != nil {
 				return integrations.ToolResult{}, queryError(err)
 			}
-			limited = limited || len(names) > maxSeries || len(warnings) > 0 || len(infos) > 0
+			limited = limited || len(names) > maxSeries || len(warnings) > 0
 			if len(names) > maxSeries {
 				names = names[:maxSeries]
 			}

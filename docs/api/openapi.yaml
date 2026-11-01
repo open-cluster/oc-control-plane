@@ -3265,6 +3265,7 @@ components:
         - outcome
         - startedAt
         - finishedAt
+        - durationMs
       properties:
         ordinal:
           type: integer
@@ -3307,6 +3308,10 @@ components:
           $ref: '#/components/schemas/Timestamp'
         finishedAt:
           $ref: '#/components/schemas/Timestamp'
+        durationMs:
+          type: number
+          minimum: 0
+          description: Execution duration in milliseconds derived from startedAt and finishedAt, including fractional milliseconds. Execution timestamps retain stored subsecond precision.
     InvestigationDetail:
       allOf:
         - $ref: '#/components/schemas/Investigation'

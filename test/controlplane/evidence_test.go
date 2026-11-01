@@ -40,7 +40,8 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 		if index < 2 {
 			if _, err = database.Exec(ctx, `INSERT INTO investigation_tool_run
 				(investigation_id,org_id,ordinal,tool,arguments,window_from,window_until,outcome,summary,started_at,finished_at)
-				VALUES ($1,$2,1,'read','{"namespace":"shop"}'::jsonb,now()-interval '1 hour',now(),1,$3,now(),now())`, id, surfaceOrg, id.String()); err != nil {
+				VALUES ($1,$2,1,'read','{"namespace":"shop"}'::jsonb,now()-interval '1 hour',now(),1,$3,
+				'2026-10-28T10:00:00.123456Z','2026-10-28T10:00:00.123789Z')`, id, surfaceOrg, id.String()); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -49,9 +50,11 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 		status, body := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/investigations/"+ref.InvestigationID.String(), nil)
 		var source struct {
 			Runs []struct {
-				Ordinal   int
-				Summary   string
-				Arguments map[string]any
+				Ordinal               int
+				Summary               string
+				Arguments             map[string]any
+				StartedAt, FinishedAt string
+				DurationMs            float64
 			}
 		}
 		decodeInto(t, body, &source)
@@ -59,6 +62,10 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 			source.Runs[0].Summary != ref.InvestigationID.String() ||
 			source.Runs[0].Arguments["namespace"] != "shop" {
 			t.Fatalf("citation resolved to the wrong run: %d %s", status, body)
+		}
+		if source.Runs[0].StartedAt != "2026-10-28T10:00:00.123456Z" ||
+			source.Runs[0].FinishedAt != "2026-10-28T10:00:00.123789Z" || source.Runs[0].DurationMs != 0.333 {
+			t.Fatalf("Tool execution precision or fractional duration was lost: %s", body)
 		}
 		var contract struct {
 			Runs []map[string]json.RawMessage
