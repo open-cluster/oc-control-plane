@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,6 +38,7 @@ type HTTPStore interface {
 		NewInvestigation, int) (Investigation, error)
 	Investigation(context.Context, uuid.UUID, uuid.UUID) (Investigation, error)
 	InvestigationToolRuns(context.Context, uuid.UUID, uuid.UUID) ([]ToolRun, error)
+	InvestigationToolRunObservation(context.Context, uuid.UUID, uuid.UUID, int) (ToolRun, error)
 	QueryInvestigations(context.Context, authz.Principal, uuid.UUID, Query) (List, error)
 	CancelInvestigation(context.Context, authz.Principal, uuid.UUID,
 		uuid.UUID) (Investigation, error)
@@ -64,6 +66,12 @@ func (h Handlers) Routes() []authz.Route {
 			Pattern:    base + "/investigations/{investigation}",
 			Permission: authz.InvestigationRead,
 			Handler:    http.HandlerFunc(h.read),
+		},
+		{
+			Method:     http.MethodGet,
+			Pattern:    base + "/investigations/{investigation}/runs/{ordinal}/observation",
+			Permission: authz.InvestigationObservationRead,
+			Handler:    http.HandlerFunc(h.readObservation),
 		},
 		{
 			Method:     http.MethodPost,
@@ -262,6 +270,29 @@ func (h Handlers) cancel(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusOK, investigationViewOf(ended))
 }
 
+func (h Handlers) readObservation(writer http.ResponseWriter, request *http.Request) {
+	organization, id, ok := h.addressed(writer, request)
+	if !ok {
+		return
+	}
+	ordinal, err := strconv.ParseInt(request.PathValue("ordinal"), 10, 32)
+	if err != nil || ordinal <= 0 || id == uuid.Nil {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: "give an Investigation identity and positive Tool Run ordinal"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
+	defer cancel()
+	run, err := h.Store.InvestigationToolRunObservation(ctx, organization, id, int(ordinal))
+	if err != nil {
+		h.fail(writer, request, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, observationView{
+		runView: runViewOf(run), InvestigationID: id.String(), ObservationText: run.ObservationText,
+		IntegrationName: run.IntegrationName, IntegrationType: run.IntegrationType,
+	})
+}
+
 func (h Handlers) caller(request *http.Request) authz.Principal {
 	return authz.MustPrincipal(request.Context())
 }
@@ -385,6 +416,16 @@ type runView struct {
 	StartedAt     string         `json:"startedAt"`
 	FinishedAt    string         `json:"finishedAt"`
 	DurationMs    float64        `json:"durationMs"`
+	WindowApplied *bool          `json:"windowApplied"`
+	ModelClipped  bool           `json:"modelClipped"`
+}
+
+type observationView struct {
+	runView
+	InvestigationID string  `json:"investigationId"`
+	ObservationText *string `json:"observationText"`
+	IntegrationName string  `json:"integrationName,omitempty"`
+	IntegrationType string  `json:"integrationType,omitempty"`
 }
 
 type detailView struct {
@@ -433,28 +474,34 @@ func detailViewOf(found Investigation, runs []ToolRun) detailView {
 		Runs:              make([]runView, 0, len(runs)),
 	}
 	for _, run := range runs {
-		rendered := runView{
-			Ordinal:     run.Ordinal,
-			Tool:        run.Tool,
-			Purpose:     run.Purpose,
-			Arguments:   run.Arguments,
-			WindowFrom:  run.WindowFrom.UTC().Format(time.RFC3339Nano),
-			WindowUntil: run.WindowUntil.UTC().Format(time.RFC3339Nano),
-			Outcome:     outcomeWord(run.Outcome),
-			Truncated:   run.Truncated,
-			Summary:     run.Summary,
-			Sources:     run.Sources,
-			Error:       run.Error,
-			StartedAt:   run.StartedAt.UTC().Format(time.RFC3339Nano),
-			FinishedAt:  run.FinishedAt.UTC().Format(time.RFC3339Nano),
-			DurationMs:  float64(run.FinishedAt.Sub(run.StartedAt)) / float64(time.Millisecond),
-		}
-		if run.IntegrationID != uuid.Nil {
-			rendered.IntegrationID = run.IntegrationID.String()
-		}
-		view.Runs = append(view.Runs, rendered)
+		view.Runs = append(view.Runs, runViewOf(run))
 	}
 	return view
+}
+
+func runViewOf(run ToolRun) runView {
+	rendered := runView{
+		Ordinal:       run.Ordinal,
+		Tool:          run.Tool,
+		Purpose:       run.Purpose,
+		Arguments:     run.Arguments,
+		WindowFrom:    run.WindowFrom.UTC().Format(time.RFC3339Nano),
+		WindowUntil:   run.WindowUntil.UTC().Format(time.RFC3339Nano),
+		Outcome:       outcomeWord(run.Outcome),
+		Truncated:     run.Truncated,
+		Summary:       run.Summary,
+		Sources:       run.Sources,
+		Error:         run.Error,
+		StartedAt:     run.StartedAt.UTC().Format(time.RFC3339Nano),
+		FinishedAt:    run.FinishedAt.UTC().Format(time.RFC3339Nano),
+		DurationMs:    float64(run.FinishedAt.Sub(run.StartedAt)) / float64(time.Millisecond),
+		WindowApplied: run.WindowApplied,
+		ModelClipped:  run.ModelClipped,
+	}
+	if run.IntegrationID != uuid.Nil {
+		rendered.IntegrationID = run.IntegrationID.String()
+	}
+	return rendered
 }
 
 func outcomeWord(outcome RunOutcome) string {

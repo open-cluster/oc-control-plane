@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -351,33 +350,8 @@ func renderResult(result toolFeedback) ToolResultTurn {
 		return ToolResultTurn{CallID: result.CallID, Content: historyResponsePrefix + string(encoded)}
 	}
 
-	// string building ----->
-	out := &strings.Builder{}
-	out.WriteString("[run " + strconv.Itoa(run.Ordinal) + "] " +
-		run.Tool + " " + compactArguments(run.Arguments) + "\n")
-	if run.Outcome == investigation.RunFailed {
-		out.WriteString("FAILED: " + run.Error + "\n")
-		return ToolResultTurn{
-			CallID:  result.CallID,
-			Content: out.String(),
-			IsError: true,
-		}
-	}
-	if run.WindowApplied {
-		out.WriteString("WINDOW: effective bounds " + stamp(run.WindowFrom) + " to " +
-			stamp(run.WindowUntil) + "\n")
-	}
-	if run.Summary != "" {
-		out.WriteString("SUMMARY: " + run.Summary + "\n")
-	}
-	if run.Truncated {
-		out.WriteString("SOURCE: this result may be incomplete; additional records are not proven.\n")
-	}
-	out.WriteString("CONTENT: " + boundedJSON(run.Content) + "\n")
-	return ToolResultTurn{
-		CallID:  result.CallID,
-		Content: out.String(),
-	}
+	return ToolResultTurn{CallID: result.CallID, Content: *run.ObservationText,
+		IsError: run.Outcome == investigation.RunFailed}
 }
 
 func concludeInstruction(reason string) string {
@@ -410,78 +384,6 @@ func (r *Agent) conversationBrief(
 	}
 	brief.Turn = opened.Turn
 	return &brief
-}
-
-const maxRunContentBytes = 16 << 10
-
-func compactArguments(arguments map[string]any) string {
-	if len(arguments) == 0 {
-		return "{}"
-	}
-	encoded, err := json.Marshal(arguments)
-	if err != nil {
-		return fmt.Sprintf("%v", arguments)
-	}
-	return string(encoded)
-}
-
-func boundedJSON(content any) string {
-	if content == nil {
-		return "null"
-	}
-	encoded, err := json.Marshal(content)
-	if err != nil {
-		return `"the content could not be rendered"`
-	}
-	if len(encoded) <= maxRunContentBytes {
-		return string(encoded)
-	}
-	if elements := listElements(content); elements != nil {
-		if rendered, kept := boundedList(elements); kept > 0 {
-			return rendered
-		}
-	}
-	return strings.ToValidUTF8(string(encoded[:maxRunContentBytes]), "") +
-		"… [cut at " + strconv.Itoa(maxRunContentBytes) + " bytes]"
-}
-
-func listElements(content any) []any {
-	value := reflect.ValueOf(content)
-	if value.Kind() != reflect.Slice {
-		return nil
-	}
-	elements := make([]any, value.Len())
-	for index := range elements {
-		elements[index] = value.Index(index).Interface()
-	}
-	return elements
-}
-
-func boundedList(elements []any) (string, int) {
-	var rendered strings.Builder
-	rendered.WriteString("[")
-	kept := 0
-	for _, element := range elements {
-		encoded, err := json.Marshal(element)
-		if err != nil {
-			break
-		}
-		if rendered.Len()+len(encoded)+1 > maxRunContentBytes {
-			break
-		}
-		if kept > 0 {
-			rendered.WriteString(",")
-		}
-		rendered.Write(encoded)
-		kept++
-	}
-	rendered.WriteString("]")
-	if kept < len(elements) {
-		rendered.WriteString(" … [" + strconv.Itoa(kept) + " of " +
-			strconv.Itoa(len(elements)) + " items; the rest cut at " +
-			strconv.Itoa(maxRunContentBytes) + " bytes]")
-	}
-	return rendered.String(), kept
 }
 
 func stamp(at time.Time) string { return at.UTC().Format(time.RFC3339) }

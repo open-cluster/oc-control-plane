@@ -3,6 +3,7 @@ package storage_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -320,8 +321,10 @@ func TestEveryWorkerWriteRequiresItsOwnClaim(t *testing.T) {
 		t.Fatalf("claims are not unique: %v %v", took, err)
 	}
 	now := time.Now().UTC()
+	observation, applied := "bounded prepared input", true
 	run := investigation.ToolRun{Ordinal: 1, Tool: "read", Purpose: "inspect", Outcome: investigation.RunSucceeded,
-		WindowFrom: now.Add(-time.Hour), WindowUntil: now, StartedAt: now, FinishedAt: now}
+		WindowFrom: now.Add(-time.Hour), WindowUntil: now, StartedAt: now, FinishedAt: now,
+		ObservationText: &observation, WindowApplied: &applied, ModelClipped: true}
 	writes := map[string]func(uuid.UUID) error{
 		"conclusion": func(token uuid.UUID) error {
 			return database.ConcludeInvestigation(ctx, org, first.ID, token, conclusionSaying("answer"), "", investigation.Usage{})
@@ -352,6 +355,21 @@ func TestEveryWorkerWriteRequiresItsOwnClaim(t *testing.T) {
 			t.Fatalf("valid %s: %v", name, err)
 		}
 	}
+	retained, err := database.InvestigationToolRunObservation(ctx, org, first.ID, 1)
+	if err != nil || retained.ObservationText == nil || *retained.ObservationText != observation ||
+		!retained.ModelClipped || retained.Truncated || retained.WindowApplied == nil || !*retained.WindowApplied {
+		t.Fatalf("bounded observation metadata did not round trip: %v", err)
+	}
+	runs, err := database.InvestigationToolRuns(ctx, org, first.ID)
+	if err != nil || len(runs) != 1 || runs[0].ObservationText != nil {
+		t.Fatal("ordinary run reads loaded retained observation text")
+	}
+	tooLarge := strings.Repeat("x", investigation.MaxObservationBytes+1)
+	run.ObservationText = &tooLarge
+	if err := database.RecordToolRun(ctx, org, first.ID, first.ClaimToken, run); err == nil || !strings.Contains(err.Error(), "storage bound") {
+		t.Fatal("oversized observations were not rejected before storage")
+	}
+	run.ObservationText = &observation
 	for name, write := range writes {
 		if err := write(first.ClaimToken); err == nil {
 			t.Errorf("terminal claim accepted %s", name)

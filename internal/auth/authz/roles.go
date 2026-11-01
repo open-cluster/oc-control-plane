@@ -8,30 +8,31 @@ import (
 type Permission string
 
 const (
-	IntegrationRead         Permission = "integration.read"
-	IntegrationCreate       Permission = "integration.create"
-	IntegrationUpdate       Permission = "integration.update"
-	IntegrationDelete       Permission = "integration.delete"
-	IntegrationVerify       Permission = "integration.verify"
-	IntegrationSecretRotate Permission = "integration.webhook-secret.rotate"
-	RelayRead               Permission = "relay.read"
-	RelayConflictClear      Permission = "relay.conflict.clear"
-	RelayBootstrapIssue     Permission = "relay.bootstrap-token.issue"
-	IncidentRead            Permission = "incident.read"
-	IncidentMerge           Permission = "incident.merge"
-	PostmortemRead          Permission = "postmortem.read"
-	PostmortemWrite         Permission = "postmortem.write"
-	InvestigationRead       Permission = "investigation.read"
-	InvestigationOpen       Permission = "investigation.open"
-	InvestigationCancel     Permission = "investigation.cancel"
-	SlackMessageRecover     Permission = "slack-message.recover"
-	ConversationRead        Permission = "conversation.read"
-	ConversationWrite       Permission = "conversation.write"
-	IdentityRead            Permission = "identity.read"
-	IdentityConfigure       Permission = "identity.configure"
-	MemberRead              Permission = "member.read"
-	MemberManage            Permission = "member.manage"
-	AuditRead               Permission = "audit.read"
+	IntegrationRead              Permission = "integration.read"
+	IntegrationCreate            Permission = "integration.create"
+	IntegrationUpdate            Permission = "integration.update"
+	IntegrationDelete            Permission = "integration.delete"
+	IntegrationVerify            Permission = "integration.verify"
+	IntegrationSecretRotate      Permission = "integration.webhook-secret.rotate"
+	RelayRead                    Permission = "relay.read"
+	RelayConflictClear           Permission = "relay.conflict.clear"
+	RelayBootstrapIssue          Permission = "relay.bootstrap-token.issue"
+	IncidentRead                 Permission = "incident.read"
+	IncidentMerge                Permission = "incident.merge"
+	PostmortemRead               Permission = "postmortem.read"
+	PostmortemWrite              Permission = "postmortem.write"
+	InvestigationRead            Permission = "investigation.read"
+	InvestigationObservationRead Permission = "investigation.observation.read"
+	InvestigationOpen            Permission = "investigation.open"
+	InvestigationCancel          Permission = "investigation.cancel"
+	SlackMessageRecover          Permission = "slack-message.recover"
+	ConversationRead             Permission = "conversation.read"
+	ConversationWrite            Permission = "conversation.write"
+	IdentityRead                 Permission = "identity.read"
+	IdentityConfigure            Permission = "identity.configure"
+	MemberRead                   Permission = "member.read"
+	MemberManage                 Permission = "member.manage"
+	AuditRead                    Permission = "audit.read"
 )
 
 var allPermissions = []Permission{
@@ -49,6 +50,7 @@ var allPermissions = []Permission{
 	PostmortemRead,
 	PostmortemWrite,
 	InvestigationRead,
+	InvestigationObservationRead,
 	InvestigationOpen,
 	InvestigationCancel,
 	SlackMessageRecover,
@@ -102,6 +104,7 @@ var granted = map[Role]map[Permission]bool{
 		IntegrationUpdate,
 		IncidentMerge,
 		InvestigationOpen,
+		InvestigationObservationRead,
 		InvestigationCancel,
 		ConversationWrite,
 		PostmortemWrite,

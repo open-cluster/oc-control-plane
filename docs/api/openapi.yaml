@@ -853,6 +853,34 @@ paths:
       summary: Get investigation
       tags:
         - Investigations
+  /api/v1/investigations/{investigation}/runs/{ordinal}/observation:
+    parameters:
+      - $ref: '#/components/parameters/InvestigationID'
+      - $ref: '#/components/parameters/ToolRunOrdinal'
+    get:
+      security:
+        - SessionCookie: []
+      x-opencluster-access: privileged
+      x-opencluster-cookie-csrf: not-required
+      x-opencluster-idempotency: not-applicable
+      responses:
+        '200':
+          $ref: '#/components/responses/ToolRunObservation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+      operationId: getToolRunObservation
+      summary: Inspect one retained Tool observation
+      description: Editor and Admin only. Returns the bounded text prepared for the model and current Integration display information. Legacy unavailable text is null, distinct from an empty string. Preparation does not prove remote provider delivery. Ordinary Investigation detail, lists, and events omit this text.
+      tags:
+        - Investigations
   /api/v1/investigations/{investigation}/cancel:
     parameters:
       - $ref: '#/components/parameters/InvestigationID'
@@ -1491,6 +1519,14 @@ components:
       required: true
       schema:
         $ref: '#/components/schemas/UUID'
+    ToolRunOrdinal:
+      name: ordinal
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 2147483647
     ConversationID:
       name: conversation
       in: path
@@ -1687,6 +1723,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/InvestigationDetail'
+    ToolRunObservation:
+      description: One protected prepared observation, with its Tool Run metadata and current Integration name/type.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ToolRunObservation'
     ConversationList:
       description: Conversations.
       content:
@@ -3266,6 +3308,8 @@ components:
         - startedAt
         - finishedAt
         - durationMs
+        - windowApplied
+        - modelClipped
       properties:
         ordinal:
           type: integer
@@ -3293,6 +3337,14 @@ components:
             - failed
         truncated:
           type: boolean
+        modelClipped:
+          type: boolean
+          description: Content or arguments were omitted to fit the model/prepared-observation budget; separate from source incompleteness.
+        windowApplied:
+          oneOf:
+            - type: boolean
+            - type: 'null'
+          description: True for adapter-supplied effective bounds, false for known fallback bounds, null for legacy unknown bounds.
         summary:
           type: string
           maxLength: 32768
@@ -3312,6 +3364,91 @@ components:
           type: number
           minimum: 0
           description: Execution duration in milliseconds derived from startedAt and finishedAt, including fractional milliseconds. Execution timestamps retain stored subsecond precision.
+    ToolRunObservation:
+      type: object
+      additionalProperties: false
+      required:
+        - ordinal
+        - tool
+        - windowFrom
+        - windowUntil
+        - outcome
+        - startedAt
+        - finishedAt
+        - durationMs
+        - windowApplied
+        - modelClipped
+      allOf:
+        - required:
+            - investigationId
+            - observationText
+      properties:
+        ordinal:
+          type: integer
+          minimum: 1
+        integrationId:
+          $ref: '#/components/schemas/UUID'
+        tool:
+          type: string
+          minLength: 1
+          maxLength: 128
+        purpose:
+          type: string
+          maxLength: 2048
+        arguments:
+          type: object
+          additionalProperties: true
+        windowFrom:
+          $ref: '#/components/schemas/Timestamp'
+        windowUntil:
+          $ref: '#/components/schemas/Timestamp'
+        outcome:
+          type: string
+          enum:
+            - succeeded
+            - failed
+        truncated:
+          type: boolean
+        modelClipped:
+          type: boolean
+          description: Content or arguments were omitted to fit the model/prepared-observation budget; separate from source incompleteness.
+        windowApplied:
+          oneOf:
+            - type: boolean
+            - type: 'null'
+          description: True for adapter-supplied effective bounds, false for known fallback bounds, null for legacy unknown bounds.
+        summary:
+          type: string
+          maxLength: 32768
+        sources:
+          type: array
+          items:
+            type: string
+            maxLength: 2048
+        error:
+          type: string
+          maxLength: 4096
+        startedAt:
+          $ref: '#/components/schemas/Timestamp'
+        finishedAt:
+          $ref: '#/components/schemas/Timestamp'
+        durationMs:
+          type: number
+          minimum: 0
+          description: Execution duration in milliseconds derived from startedAt and finishedAt, including fractional milliseconds. Execution timestamps retain stored subsecond precision.
+        investigationId:
+          $ref: '#/components/schemas/UUID'
+        integrationName:
+          type: string
+          description: Current Integration display name; not a historical snapshot.
+        integrationType:
+          type: string
+        observationText:
+          oneOf:
+            - type: string
+            - type: 'null'
+          maxLength: 65536
+          description: Exact bounded prepared Tool-result text, at most 65536 UTF-8 bytes including headers and arguments. Null means unavailable; an empty string means retained empty text.
     InvestigationDetail:
       allOf:
         - $ref: '#/components/schemas/Investigation'

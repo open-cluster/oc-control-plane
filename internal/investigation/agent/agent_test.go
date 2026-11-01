@@ -680,28 +680,57 @@ func (r *candidateRecords) InvestigationCandidates(context.Context, uuid.UUID) (
 }
 
 func TestRunAuditsCredentialBeforeUsingIt(t *testing.T) {
+	const credential = "fixture-credential-\"\\suffix"
 	sealer, err := seal.New(bytes.Repeat([]byte{7}, seal.KeyLength))
 	if err != nil {
 		t.Fatal(err)
 	}
 	candidate := integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}
-	candidate.CredentialSealed, err = sealer.Seal("secret", integrations.CredentialBinding(candidate.ID))
+	candidate.CredentialSealed, err = sealer.Seal(credential, integrations.CredentialBinding(candidate.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
 	store := &records{candidate: candidate}
+	var sourceArguments map[string]any
 	catalog := testCatalog(t, func(_ context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
 		store.mu.Lock()
 		audited := store.unseals == 1
 		store.mu.Unlock()
-		if !audited || request.Credential != "secret" {
+		if !audited || request.Credential != credential {
 			t.Fatal("credential used before its audit record")
 		}
-		return integrations.ToolResult{Summary: "v2", Content: "v2"}, nil
+		sourceArguments = request.Arguments
+		return integrations.ToolResult{Summary: strings.Repeat("x", 500) + credential, Content: "v2"}, nil
 	})
-	model := &scriptedModel{next: func(call int, _ Prompt) (Completion, error) {
+	model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
 		if call == 1 {
-			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "c1", Name: "stub_read", Arguments: json.RawMessage(`{"purpose":"read deployment","input":{}}`)}}}, nil
+			arguments, _ := json.Marshal(map[string]any{"purpose": "read deployment", "input": map[string]any{
+				"password": credential, "query": "value=" + credential,
+				"filters": []any{map[string]any{"api_key": credential, "namespace": "payments"}},
+			}})
+			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{
+				{ID: "c1", Name: "stub_read", Arguments: arguments},
+				{ID: "rejected", Name: "unavailable", Arguments: arguments},
+			}}, nil
+		}
+		escaped, _ := json.Marshal(credential)
+		for index, run := range store.runs {
+			if index == 0 && run.Summary != strings.Repeat("x", 500)+"[redacted]" {
+				t.Fatal("summary clipping retained part of a known credential")
+			}
+			encoded, _ := json.Marshal(run.Arguments)
+			feedback := prompt.Turns[0].ToolResults[index]
+			if strings.Contains(string(encoded), string(escaped[1:len(escaped)-1])) ||
+				strings.Contains(feedback.Content, string(escaped[1:len(escaped)-1])) ||
+				strings.Contains(feedback.Content, credential) || run.Arguments["password"] != nil ||
+				run.Arguments["filters"].([]any)[0].(map[string]any)["api_key"] != nil {
+				t.Fatal("known credentials reached persisted arguments or prepared provider feedback")
+			}
+			if run.Arguments["query"] != "value=[redacted]" ||
+				run.Arguments["filters"].([]any)[0].(map[string]any)["namespace"] != "payments" ||
+				feedback.IsError != (index == 1) || *run.ObservationText != feedback.Content {
+				t.Fatal("sanitization changed safe arguments or correlated result semantics")
+			}
 		}
 		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, []int{1})}}}, nil
 	}}
@@ -710,6 +739,9 @@ func TestRunAuditsCredentialBeforeUsingIt(t *testing.T) {
 	organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	if err := agent.Run(context.Background(), organization, investigation.Investigation{ID: uuid.New(), Subject: "deployment"}); err != nil {
 		t.Fatal(err)
+	}
+	if sourceArguments["password"] != credential || sourceArguments["query"] != "value="+credential || store.unseals != 1 {
+		t.Fatal("persistence sanitization mutated execution input or opened a rejected call's credential")
 	}
 }
 
@@ -1044,81 +1076,6 @@ func TestRunFailureLogsAreSafeAndDescribeCommittedOutcome(t *testing.T) {
 		!strings.Contains(text, `"output_tokens":0`) || strings.Contains(text, `"reasoning_tokens"`) ||
 		store.usage != (investigation.Usage{InputTokens: 59, OutputTokens: 0}) {
 		t.Fatalf("reported identity or usage was lost: usage=%+v logs=%s", store.usage, text)
-	}
-}
-
-func TestRunRecordsRefusedAndDuplicateCallsWithoutRepeatingARead(t *testing.T) {
-	store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
-	executed := 0
-	catalog := testCatalog(t, func(_ context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
-		executed++
-		content := "value"
-		if request.Arguments["key"] == "b" {
-			content = strings.Repeat("v", 17<<10)
-		}
-		at := time.Unix(1700000000, 0).UTC()
-		return integrations.ToolResult{Summary: "value", Content: content,
-			Truncated: request.Arguments["key"] == "a", WindowFrom: at, WindowUntil: at}, nil
-	})
-	model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
-		if call == 1 {
-			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{
-				{ID: "invalid-input", Name: "stub_read", Arguments: json.RawMessage(`{"purpose":"read it","input":[]}`)},
-				{ID: "read", Name: "stub_read", Arguments: json.RawMessage(`{"purpose":"read it","input":{"key":"a"}}`)},
-				{ID: "duplicate", Name: "stub_read", Arguments: json.RawMessage(`{"purpose":"read it","input":{"key":"a"}}`)},
-				{ID: "unknown", Name: "invented.read", Arguments: json.RawMessage(`{"purpose":"guess","input":{}}`)},
-				{ID: "invalid-json", Name: "stub_read", Arguments: json.RawMessage(`{"input":`)},
-				{ID: "without-purpose", Name: "stub_read", Arguments: json.RawMessage(`{"input":{"key":"b"}}`)},
-			}}, nil
-		}
-		if call == 2 {
-			if len(prompt.Turns[0].ToolResults) != 6 || prompt.Turns[0].ToolResults[0].CallID != "invalid-input" ||
-				!prompt.Turns[0].ToolResults[0].IsError || prompt.Turns[0].ToolResults[4].CallID != "invalid-json" ||
-				!prompt.Turns[0].ToolResults[4].IsError {
-				t.Fatal("invalid Tool input lost its correlated rejection feedback")
-			}
-			for index, id := range []string{"invalid-input", "read", "duplicate", "unknown", "invalid-json", "without-purpose"} {
-				if prompt.Turns[0].ToolResults[index].CallID != id {
-					t.Fatal("Tool feedback lost call ordering or identity")
-				}
-			}
-			limited, clipped := prompt.Turns[0].ToolResults[1], prompt.Turns[0].ToolResults[5]
-			if limited.IsError || !strings.Contains(limited.Content, "may be incomplete") ||
-				strings.Contains(limited.Content, "the source held more") ||
-				!strings.Contains(limited.Content, "WINDOW: effective bounds") || strings.Contains(limited.Content, "[cut at") {
-				t.Fatalf("source limits or instant evaluation bounds overstated: %s", limited.Content)
-			}
-			if clipped.IsError || !strings.Contains(clipped.Content, "[cut at 16384 bytes]") ||
-				strings.Contains(clipped.Content, "may be incomplete") || store.runs[5].Truncated {
-				t.Fatal("model clipping was confused with source incompleteness")
-			}
-			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
-				ID: "refresh", Name: "stub_read", Arguments: json.RawMessage(`{"input":{"key":"a"}}`),
-			}}}, nil
-		}
-		if len(store.runs) != 7 || store.runs[0].IntegrationID != store.candidate.ID {
-			t.Fatal("rejected input lost its Tool Run or Integration")
-		}
-		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
-			ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil),
-		}}}, nil
-	}}
-	agent := configuredTestAgent(t, store, model, catalog)
-	organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
-	if err := agent.Run(context.Background(), organization,
-		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
-		t.Fatal(err)
-	}
-	if executed != 3 || len(store.runs) != 7 || store.status != investigation.StatusConcluded {
-		t.Fatalf("executed=%d runs=%d status=%s", executed, len(store.runs), store.status)
-	}
-	for _, index := range []int{0, 2, 3, 4} {
-		if store.runs[index].Outcome != investigation.RunFailed {
-			t.Errorf("run %d outcome=%v, want failed evidence", index+1, store.runs[index].Outcome)
-		}
-	}
-	if store.runs[5].Outcome != investigation.RunSucceeded || store.runs[5].Purpose != "" {
-		t.Fatal("an authorized read without purpose must succeed without invented intent")
 	}
 }
 

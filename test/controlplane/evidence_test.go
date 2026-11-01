@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -73,6 +74,40 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 		decodeInto(t, body, &contract)
 		if _, present := contract.Runs[0]["hypothesisId"]; present {
 			t.Fatalf("Investigation detail still exposes hypothesisId: %s", body)
+		}
+		observationPath := plane.base(surfaceOrg) + "/investigations/" + ref.InvestigationID.String() + "/runs/1/observation"
+		code, retained := plane.call(t, http.MethodGet, observationPath, nil)
+		var observation struct {
+			ObservationText *string
+			WindowApplied   *bool
+		}
+		decodeInto(t, retained, &observation)
+		if code != http.StatusOK || observation.ObservationText != nil || observation.WindowApplied != nil {
+			t.Fatalf("legacy absence was represented as observed data or applied bounds: %d %s", code, retained)
+		}
+		if _, err := database.Exec(ctx, `UPDATE investigation_tool_run SET observation_text='' WHERE org_id=$1 AND investigation_id=$2 AND ordinal=1`, surfaceOrg, ref.InvestigationID); err != nil {
+			t.Fatal(err)
+		}
+		code, retained = plane.call(t, http.MethodGet, observationPath, nil)
+		decodeInto(t, retained, &observation)
+		if code != http.StatusOK || observation.ObservationText == nil || *observation.ObservationText != "" {
+			t.Fatal("a retained empty observation was confused with legacy absence")
+		}
+		maximum := strings.Repeat("界", 21845) + "a"
+		if _, err := database.Exec(ctx, `UPDATE investigation_tool_run SET observation_text=$3 WHERE org_id=$1 AND investigation_id=$2 AND ordinal=1`, surfaceOrg, ref.InvestigationID, maximum); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.Exec(ctx, `UPDATE investigation_tool_run SET observation_text=$3 WHERE org_id=$1 AND investigation_id=$2 AND ordinal=1`, surfaceOrg, ref.InvestigationID, maximum+"界"); err == nil {
+			t.Fatal("database accepted an observation beyond the UTF-8 byte ceiling")
+		}
+		code, retained = plane.call(t, http.MethodGet, observationPath, nil)
+		decodeInto(t, retained, &observation)
+		if code != http.StatusOK || observation.ObservationText == nil || *observation.ObservationText != maximum {
+			t.Fatal("maximum bounded text did not round trip")
+		}
+		code, ordinary := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/investigations/"+ref.InvestigationID.String(), nil)
+		if code != http.StatusOK || len(ordinary) > 4096 || strings.Contains(ordinary, "observationText") {
+			t.Fatal("retained text increased ordinary detail payload size")
 		}
 		restore := plane.switchOrganization(t, neighbourOrg)
 		status, body = plane.call(t, http.MethodGet, plane.base(neighbourOrg)+"/investigations/"+ref.InvestigationID.String(), nil)

@@ -122,6 +122,35 @@ Source limits indicate possible incompleteness; a full page does not prove more 
 exist. Content can also be clipped to the model's input budget, independently of source
 limits. Scope claims to the returned observations and visible content.
 
+## Inspect a cited observation
+
+An Editor or Admin can retrieve one Tool Run's retained observation with
+`GET /api/v1/investigations/{investigation}/runs/{ordinal}/observation`.
+Use the Investigation ID and one-based ordinal from the citation. A Viewer can still
+read summaries and Tool Run metadata, but this observation request returns `403`.
+
+The response includes the requested arguments, outcome, source identifiers, execution
+timing, and current Integration name and type. A renamed Integration changes this display
+information; it does not rewrite the retained observation or its stable identifier.
+
+| Field | Interpretation |
+| --- | --- |
+| `observationText` | Exact bounded text prepared for the next model Tool result. `null` means unavailable, including older runs; an empty string means retained empty text. |
+| `truncated` | The source result may be incomplete. |
+| `modelClipped` | Content or arguments were omitted to fit the model or complete-observation budget, independently of source limits. |
+| `windowApplied` | `true` means the adapter supplied effective bounds; `false` means known fallback bounds; `null` means older bounds are unknown. |
+
+Preparation does not acknowledge remote provider delivery: cancellation or a provider
+failure can prevent submission. Ordinary Investigation detail, lists, and activity events
+omit observation bodies. Old observations are not reconstructed by rerunning queries.
+
+The model-content budget remains 16 KiB. A complete retained observation, including its
+headers and arguments, is limited to 64 KiB; oversized observations return explicit
+omission feedback. Thirty observations can add up to 1.875 MiB before database and backup
+overhead. Observations remain with their owning Investigation under existing deployment
+retention practices, with no independent observation expiry. They can contain sensitive
+operational information despite known-credential sanitization; protect access and backups.
+
 A Finding must cite successful reads. Failed or skipped reads can explain limitations,
 but cannot establish an observation or cause. A skipped duplicate refers to the original
 read rather than creating another observation. Prior citations must still resolve to

@@ -518,7 +518,8 @@ func (r *Agent) Run(
 			if sourceFound {
 				run.IntegrationID = source.Integration.ID
 			}
-			run.Purpose = boundText(call.Purpose, eventTextBound)
+			run.Purpose = call.Purpose
+			prepareObservation(&run, state.credentials)
 			if recordErr := r.recordToolRun(ctx, state, run); recordErr != nil {
 				terminalErr := failRun(failureReason(recordErr), state.usage)
 				r.RuntimeTelemetry.Ended(time.Since(startedAt),

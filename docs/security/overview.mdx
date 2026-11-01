@@ -74,7 +74,10 @@ Read-only Tools reduce change risk but do not make source data harmless or compl
 
 OpenCluster stores normalized Alert Events, Incidents, Messages, Investigation events,
 Tool Runs, cited Findings, audit records, and draft Postmortems in PostgreSQL. Tool
-results are bounded and summarized for review. Conversations retain continuity through
+Runs retain bounded observations prepared for the model, capped at 64 KiB each. Editors
+and Admins can retrieve one observation on demand; Viewers retain summary and metadata
+access. Ordinary detail requests and activity events omit observation bodies.
+Conversations retain continuity through
 Messages and prior cited Findings. OpenCluster does not persist or expose model
 chain-of-thought.
 
@@ -85,6 +88,10 @@ the Integration's verified permissions and the current Organization.
 
 Retention and backup policy are deployment responsibilities in OSS. Protect backups as
 production data and verify retention changes against legal and operational requirements.
+Observations follow their Investigation's existing retention practices and have no
+independent expiry. Known credential-shaped argument fields and opened credential
+reflections are removed before new observation persistence. This does not detect every
+secret: retained source excerpts can still contain sensitive operational data.
 
 ## Secrets and Relay
 

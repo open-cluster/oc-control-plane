@@ -117,6 +117,13 @@ func TestLiveProgressEventMatchesSerializedSchema(t *testing.T) {
 			if len(detail.Runs) < ordinal || detail.Runs[ordinal-1].Ordinal != ordinal {
 				t.Fatal("live completion has no committed Tool Run detail")
 			}
+			status, body = plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/investigations/"+turn+
+				"/runs/"+fmt.Sprint(ordinal)+"/observation", nil)
+			var retained struct{ ObservationText *string }
+			decodeInto(t, body, &retained)
+			if status != http.StatusOK || retained.ObservationText == nil {
+				t.Fatal("live completion has no committed prepared observation")
+			}
 		}
 		if event["type"] == "progress" {
 			if !sawCompletion {
@@ -206,6 +213,10 @@ func decodeSerializedEvent(t *testing.T, schema *jsonschema.Schema, data string)
 }
 
 func eventSchema(t *testing.T) *jsonschema.Schema {
+	return serializedSchema(t, "InvestigationEvent")
+}
+
+func serializedSchema(t *testing.T, name string) *jsonschema.Schema {
 	t.Helper()
 	contents, err := os.ReadFile("../../api/openapi.yaml")
 	if err != nil {
@@ -221,7 +232,7 @@ func eventSchema(t *testing.T) *jsonschema.Schema {
 	if err := compiler.AddResource("openapi.json", document); err != nil {
 		t.Fatal(err)
 	}
-	schema, err := compiler.Compile("openapi.json#/components/schemas/InvestigationEvent")
+	schema, err := compiler.Compile("openapi.json#/components/schemas/" + name)
 	if err != nil {
 		t.Fatal(err)
 	}
