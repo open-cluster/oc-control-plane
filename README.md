@@ -179,6 +179,9 @@ make test-short
 make verify
 ```
 
+The full container-backed root-module suite runs packages sequentially to preserve
+shared test-container lifetimes; race detection remains enabled.
+
 See [CONTRIBUTING.md](./CONTRIBUTING.md) before submitting changes.
 
 ## Documentation
