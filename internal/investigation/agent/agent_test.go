@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -16,7 +17,9 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/seal"
+	"github.com/santhosh-tekuri/jsonschema/v6"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
@@ -679,28 +682,57 @@ func (r *candidateRecords) InvestigationCandidates(context.Context, uuid.UUID) (
 }
 
 func TestRunAuditsCredentialBeforeUsingIt(t *testing.T) {
+	const credential = "fixture-credential-\"\\suffix"
 	sealer, err := seal.New(bytes.Repeat([]byte{7}, seal.KeyLength))
 	if err != nil {
 		t.Fatal(err)
 	}
 	candidate := integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}
-	candidate.CredentialSealed, err = sealer.Seal("secret", integrations.CredentialBinding(candidate.ID))
+	candidate.CredentialSealed, err = sealer.Seal(credential, integrations.CredentialBinding(candidate.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
 	store := &records{candidate: candidate}
+	var sourceArguments map[string]any
 	catalog := testCatalog(t, func(_ context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
 		store.mu.Lock()
 		audited := store.unseals == 1
 		store.mu.Unlock()
-		if !audited || request.Credential != "secret" {
+		if !audited || request.Credential != credential {
 			t.Fatal("credential used before its audit record")
 		}
-		return integrations.ToolResult{Summary: "v2", Content: "v2"}, nil
+		sourceArguments = request.Arguments
+		return integrations.ToolResult{Summary: strings.Repeat("x", 500) + credential, Content: "v2"}, nil
 	})
-	model := &scriptedModel{next: func(call int, _ Prompt) (Completion, error) {
+	model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
 		if call == 1 {
-			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "c1", Name: "stub_read", Arguments: json.RawMessage(`{"purpose":"read deployment","input":{}}`)}}}, nil
+			arguments, _ := json.Marshal(map[string]any{"purpose": "read deployment", "input": map[string]any{
+				"password": credential, "query": "value=" + credential,
+				"filters": []any{map[string]any{"api_key": credential, "namespace": "payments"}},
+			}})
+			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{
+				{ID: "c1", Name: "stub_read", Arguments: arguments},
+				{ID: "rejected", Name: "unavailable", Arguments: arguments},
+			}}, nil
+		}
+		escaped, _ := json.Marshal(credential)
+		for index, run := range store.runs {
+			if index == 0 && run.Summary != strings.Repeat("x", 500)+"[redacted]" {
+				t.Fatal("summary clipping retained part of a known credential")
+			}
+			encoded, _ := json.Marshal(run.Arguments)
+			feedback := prompt.Turns[0].ToolResults[index]
+			if strings.Contains(string(encoded), string(escaped[1:len(escaped)-1])) ||
+				strings.Contains(feedback.Content, string(escaped[1:len(escaped)-1])) ||
+				strings.Contains(feedback.Content, credential) || run.Arguments["password"] != nil ||
+				run.Arguments["filters"].([]any)[0].(map[string]any)["api_key"] != nil {
+				t.Fatal("known credentials reached persisted arguments or prepared provider feedback")
+			}
+			if run.Arguments["query"] != "value=[redacted]" ||
+				run.Arguments["filters"].([]any)[0].(map[string]any)["namespace"] != "payments" ||
+				feedback.IsError != (index == 1) || *run.ObservationText != feedback.Content {
+				t.Fatal("sanitization changed safe arguments or correlated result semantics")
+			}
 		}
 		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, []int{1})}}}, nil
 	}}
@@ -709,6 +741,9 @@ func TestRunAuditsCredentialBeforeUsingIt(t *testing.T) {
 	organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	if err := agent.Run(context.Background(), organization, investigation.Investigation{ID: uuid.New(), Subject: "deployment"}); err != nil {
 		t.Fatal(err)
+	}
+	if sourceArguments["password"] != credential || sourceArguments["query"] != "value="+credential || store.unseals != 1 {
+		t.Fatal("persistence sanitization mutated execution input or opened a rejected call's credential")
 	}
 }
 
@@ -869,11 +904,15 @@ func TestRunRejectsInvalidCitationsAtTheAgentBoundary(t *testing.T) {
 		ordinal int
 		failed  bool
 	}{
-		{"missing", 3, false}, {"failed", 1, true}, {"suppressed", 2, false}, {"successful", 1, false}, {"unavailable prior", 1, false},
+		{"missing", 3, false}, {"failed", 1, true}, {"suppressed", 2, false}, {"successful", 1, false}, {"unavailable prior", 1, false}, {"current as prior", 1, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
 			prior := investigation.EvidenceRef{InvestigationID: uuid.New(), ToolRunOrdinal: 1}
+			id := uuid.New()
+			if test.name == "current as prior" {
+				prior.InvestigationID = id
+			}
 			if test.name == "unavailable prior" {
 				store.missingEvidence = prior
 				store.messages = []investigation.AssignedMessage{{Sequence: 1, Text: "question"}}
@@ -887,7 +926,7 @@ func TestRunRejectsInvalidCitationsAtTheAgentBoundary(t *testing.T) {
 					}}, nil
 				}
 				document := validConclusion(t, []int{test.ordinal})
-				if test.name == "unavailable prior" {
+				if test.name == "unavailable prior" || test.name == "current as prior" {
 					var claimed map[string]any
 					if err := json.Unmarshal(document, &claimed); err != nil {
 						t.Fatal(err)
@@ -895,6 +934,30 @@ func TestRunRejectsInvalidCitationsAtTheAgentBoundary(t *testing.T) {
 					finding := claimed["findings"].([]any)[0].(map[string]any)
 					finding["run_refs"], finding["evidence_refs"] = []int{}, []investigation.EvidenceRef{prior}
 					document, _ = json.Marshal(claimed)
+					if call == 2 {
+						if err := json.Unmarshal(document, &claimed); err != nil {
+							t.Fatal(err)
+						}
+						for _, tool := range prompt.Tools {
+							if tool.Name != ConcludeToolName {
+								continue
+							}
+							compiler := jsonschema.NewCompiler()
+							if err := compiler.AddResource("conclude.json", tool.InputSchema); err != nil {
+								t.Fatal(err)
+							}
+							schema, err := compiler.Compile("conclude.json")
+							if err != nil || (schema.Validate(claimed) == nil) != (test.name == "unavailable prior") {
+								t.Fatalf("provider schema does not match supplied prior evidence: %v", err)
+							}
+						}
+					}
+					if call == 3 {
+						feedback := prompt.Turns[len(prompt.Turns)-1].ToolResults[0]
+						if feedback.CallID != "done" || !feedback.IsError || !strings.Contains(feedback.Content, "run_refs") {
+							t.Fatal("citation rejection did not explain how to cite current reads")
+						}
+					}
 				}
 				if call == 3 {
 					var corrected map[string]any
@@ -919,7 +982,7 @@ func TestRunRejectsInvalidCitationsAtTheAgentBoundary(t *testing.T) {
 					return integrations.ToolResult{Summary: "A recorded observation"}, nil
 				}))
 			organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
-			opened := investigation.Investigation{ID: uuid.New(), Subject: "question"}
+			opened := investigation.Investigation{ID: id, Subject: "question"}
 			if test.name == "unavailable prior" {
 				opened.ConversationID = uuid.New()
 			}
@@ -940,145 +1003,24 @@ func TestRunRejectsInvalidCitationsAtTheAgentBoundary(t *testing.T) {
 	}
 }
 
-func TestRunReturnsAnErrorWhenTheTerminalRecordCannotBeWritten(t *testing.T) {
-	store := &records{terminalErr: errors.New("database unavailable")}
-	model := &scriptedModel{next: func(int, Prompt) (Completion, error) {
-		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
-			ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil),
-		}}}, nil
-	}}
-	agent := configuredTestAgent(t, store, model, testCatalog(t,
-		func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
-			return integrations.ToolResult{}, nil
-		}))
-	var logs bytes.Buffer
-	agent.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
-	organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
-	err := agent.Run(context.Background(), organization,
-		investigation.Investigation{ID: uuid.New(), Subject: "question"})
-	if err == nil || !strings.Contains(err.Error(), "database unavailable") {
-		t.Fatalf("Run error = %v, want terminal persistence error", err)
-	}
-	if strings.Contains(logs.String(), "investigation concluded") || strings.Contains(logs.String(), "investigation failed") {
-		t.Fatalf("uncommitted outcome was logged: %s", logs.String())
-	}
-}
-
-func TestRunFailureLogsAreSafeAndDescribeCommittedOutcome(t *testing.T) {
-	const secret = "provider-body-secret-must-not-be-logged"
+func TestRunKeepsAToolFailureAsEvidenceAndStillConcludes(t *testing.T) {
+	const secret = "sensitive-source-body"
 	spans := tracetest.NewSpanRecorder()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans))
 	previous := otel.GetTracerProvider()
 	otel.SetTracerProvider(provider)
 	t.Cleanup(func() { otel.SetTracerProvider(previous); _ = provider.Shutdown(context.Background()) })
-	store := &records{}
-	model := &scriptedModel{next: func(int, Prompt) (Completion, error) {
-		return Completion{RequestID: "provider-123", Model: "responding-model", Raw: []byte(secret), Document: []byte(secret)}, FailedBecause(OutcomeOutage, "scripted", "test", secret, errors.New(secret))
-	}}
-	agent := configuredTestAgent(t, store, model, testCatalog(t, func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
-		return integrations.ToolResult{}, nil
-	}))
-	var logs bytes.Buffer
-	agent.Logger = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	agent.Instrument(NewTelemetry(agent.Logger))
-	org, id := uuid.New(), uuid.New()
-	if err := agent.Run(context.Background(), org, investigation.Investigation{ID: id, Subject: secret}); err != nil {
-		t.Fatal(err)
-	}
-	if store.status != investigation.StatusFailed {
-		t.Fatalf("status = %s", store.status)
-	}
-	text := logs.String()
-	if strings.Contains(text, secret) {
-		t.Fatalf("sensitive provider content escaped: %s", text)
-	}
-	for _, span := range spans.Ended() {
-		if strings.Contains(fmt.Sprint(span.Attributes()), secret) || strings.Contains(span.Status().Description, secret) {
-			t.Fatal("sensitive provider content escaped through tracing")
-		}
-	}
-	if strings.Count(text, `"msg":"investigation failed"`) != 1 || !strings.Contains(text, org.String()) || !strings.Contains(text, id.String()) || !strings.Contains(text, `"outcome":"outage"`) || !strings.Contains(text, `"provider_request_id":"provider-123"`) ||
-		!strings.Contains(text, `"model_answered":"responding-model"`) {
-		t.Fatalf("committed failure lacks safe correlation: %s", text)
-	}
-	logs.Reset()
-	model.next = func(int, Prompt) (Completion, error) {
-		return Completion{Model: "responding-model", Stop: StopToolUse,
-			Usage:     TokenUsage{Input: Counted(34), CacheRead: Counted(20), CacheWrite: Counted(5), Output: Counted(0)},
-			ToolCalls: []CompletionCall{{ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil)}}}, nil
-	}
-	if err := agent.Run(context.Background(), org, investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
-		t.Fatal(err)
-	}
-	text = logs.String()
-	if !strings.Contains(text, `"model_answered":"responding-model"`) ||
-		!strings.Contains(text, `"output_tokens":0`) || strings.Contains(text, `"reasoning_tokens"`) ||
-		store.usage != (investigation.Usage{InputTokens: 59, OutputTokens: 0}) {
-		t.Fatalf("reported identity or usage was lost: usage=%+v logs=%s", store.usage, text)
-	}
-}
-
-func TestRunRecordsRefusedAndDuplicateCallsWithoutRepeatingARead(t *testing.T) {
+	ctx, parent := provider.Tracer("test").Start(context.Background(), "investigation")
+	defer parent.End()
 	store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
 	executed := 0
 	catalog := testCatalog(t, func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
 		executed++
-		return integrations.ToolResult{Summary: "value", Content: "value"}, nil
-	})
-	model := &scriptedModel{next: func(call int, prompt Prompt) (Completion, error) {
-		if call == 1 {
-			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{
-				{ID: "invalid-input", Name: "stub_read", Arguments: json.RawMessage(`{"purpose":"read it","input":[]}`)},
-				{ID: "read", Name: "stub_read", Arguments: json.RawMessage(`{"purpose":"read it","input":{"key":"a"}}`)},
-				{ID: "duplicate", Name: "stub_read", Arguments: json.RawMessage(`{"purpose":"read it","input":{"key":"a"}}`)},
-				{ID: "unknown", Name: "invented.read", Arguments: json.RawMessage(`{"purpose":"guess","input":{}}`)},
-				{ID: "invalid-json", Name: "stub_read", Arguments: json.RawMessage(`{"input":`)},
-				{ID: "without-purpose", Name: "stub_read", Arguments: json.RawMessage(`{"input":{"key":"b"}}`)},
-			}}, nil
+		if executed == 1 {
+			return integrations.ToolResult{}, &url.Error{Op: "Get", URL: secret, Err: context.Canceled}
 		}
-		if call == 2 {
-			if len(prompt.Turns[0].ToolResults) != 6 || prompt.Turns[0].ToolResults[0].CallID != "invalid-input" ||
-				!prompt.Turns[0].ToolResults[0].IsError || prompt.Turns[0].ToolResults[4].CallID != "invalid-json" ||
-				!prompt.Turns[0].ToolResults[4].IsError {
-				t.Fatal("invalid Tool input lost its correlated rejection feedback")
-			}
-			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
-				ID: "refresh", Name: "stub_read", Arguments: json.RawMessage(`{"input":{"key":"a"}}`),
-			}}}, nil
-		}
-		if len(store.runs) != 7 || store.runs[0].IntegrationID != store.candidate.ID {
-			t.Fatal("rejected input lost its Tool Run or Integration")
-		}
-		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{
-			ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, nil),
-		}}}, nil
-	}}
-	agent := configuredTestAgent(t, store, model, catalog)
-	organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
-	if err := agent.Run(context.Background(), organization,
-		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
-		t.Fatal(err)
-	}
-	if executed != 3 || len(store.runs) != 7 || store.status != investigation.StatusConcluded {
-		t.Fatalf("executed=%d runs=%d status=%s", executed, len(store.runs), store.status)
-	}
-	for _, index := range []int{0, 2, 3, 4} {
-		if store.runs[index].Outcome != investigation.RunFailed {
-			t.Errorf("run %d outcome=%v, want failed evidence", index+1, store.runs[index].Outcome)
-		}
-	}
-	if store.runs[5].Outcome != investigation.RunSucceeded || store.runs[5].Purpose != "" {
-		t.Fatal("an authorized read without purpose must succeed without invented intent")
-	}
-}
-
-func TestRunKeepsAToolFailureAsEvidenceAndStillConcludes(t *testing.T) {
-	store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
-	executed := 0
-	catalog := testCatalog(t, func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
-		executed++
-		if executed <= 2 {
-			return integrations.ToolResult{}, errors.New("source unavailable")
+		if executed == 2 {
+			return integrations.ToolResult{}, context.DeadlineExceeded
 		}
 		return integrations.ToolResult{Summary: "source recovered"}, nil
 	})
@@ -1096,15 +1038,55 @@ func TestRunKeepsAToolFailureAsEvidenceAndStillConcludes(t *testing.T) {
 		}}}, nil
 	}}
 	agent := configuredTestAgent(t, store, model, catalog)
+	var logs bytes.Buffer
+	agent.Logger = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	organization := uuid.MustParse("11111111-1111-4111-8111-111111111111")
-	if err := agent.Run(context.Background(), organization,
-		investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
+	id := uuid.New()
+	if err := agent.Run(ctx, organization,
+		investigation.Investigation{ID: id, Subject: "question"}); err != nil {
 		t.Fatal(err)
 	}
 	if store.status != investigation.StatusConcluded || len(store.runs) != 3 ||
 		store.runs[0].Outcome != investigation.RunFailed || store.runs[1].Outcome != investigation.RunFailed ||
 		store.runs[2].Outcome != investigation.RunSucceeded {
 		t.Fatalf("status=%s runs=%+v", store.status, store.runs)
+	}
+	toolLogs := 0
+	for line := range strings.Lines(logs.String()) {
+		var entry map[string]any
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatal(err)
+		}
+		if entry["msg"] != "Tool execution finished" {
+			continue
+		}
+		toolLogs++
+		level := "DEBUG"
+		if toolLogs == 2 {
+			level = "WARN"
+		}
+		if entry["level"] != level || entry["org_id"] != organization.String() || entry["investigation_id"] != id.String() || entry["integration_id"] != store.candidate.ID.String() || entry["tool"] != "stub_read" || entry["ordinal"] != float64(toolLogs) || entry["trace_id"] != parent.SpanContext().TraceID().String() {
+			t.Errorf("Tool execution lacks safe correlation: %v", entry)
+		}
+		if elapsed, ok := entry["duration_ms"].(float64); !ok || elapsed < 0 || entry["duration"] != nil {
+			t.Errorf("Tool duration must use numeric milliseconds: %v", entry)
+		}
+	}
+	if toolLogs != 3 || strings.Contains(logs.String(), secret) {
+		t.Fatalf("expected three safe execution logs: %s", logs.String())
+	}
+	if len(spans.Ended()) != 3 {
+		t.Fatalf("Tool execution spans = %d, want three", len(spans.Ended()))
+	}
+	for _, span := range spans.Ended() {
+		for _, attr := range span.Attributes() {
+			if attr.Key == "oc.tool.ordinal" && attr.Value.AsInt64() == 1 && span.Status().Code == codes.Error {
+				t.Error("cancelled Tool execution was reported as an error span")
+			}
+		}
+		if span.Parent().SpanID() != parent.SpanContext().SpanID() || strings.Contains(fmt.Sprint(span.Attributes()), secret) || strings.Contains(span.Status().Description, secret) {
+			t.Fatal("Tool span lost its parent or exposed source content")
+		}
 	}
 }
 

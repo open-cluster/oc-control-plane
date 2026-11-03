@@ -172,7 +172,7 @@ func decodeConclusion(document []byte, runs []investigation.ToolRun, allowed []i
 		seenEvidence := make(map[investigation.EvidenceRef]bool, len(finding.EvidenceRefs))
 		for _, ref := range finding.EvidenceRefs {
 			if ref.InvestigationID == uuid.Nil || ref.ToolRunOrdinal <= 0 || !slices.Contains(allowed, ref) {
-				return investigation.Conclusion{}, fmt.Errorf("a finding cites unavailable prior evidence")
+				return investigation.Conclusion{}, errUnavailablePriorEvidence
 			}
 			if seenEvidence[ref] {
 				return investigation.Conclusion{}, fmt.Errorf("a finding repeats prior evidence")

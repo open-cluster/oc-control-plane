@@ -8,7 +8,7 @@ module github.com/open-cluster/oc-control-plane/test/e2e
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	github.com/google/uuid v1.6.0

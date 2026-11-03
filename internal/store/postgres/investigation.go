@@ -19,6 +19,10 @@ import (
 
 var _ investigation.HTTPStore = (*Database)(nil)
 
+const toolRunColumns = `r.integration_id, r.ordinal, r.tool, r.purpose, r.arguments,
+    r.window_from, r.window_until, r.outcome, r.truncated, r.summary, r.sources, r.error,
+    r.started_at, r.finished_at, r.window_applied, r.model_clipped`
+
 const investigationColumns = `investigation_id, incident_id,
 	       conversation_id, turn, subject, window_from, window_until, status, conclusion,
 	       stopped_by, error, spend_input_tokens,
@@ -99,12 +103,10 @@ func (p *Database) InvestigationToolRuns(
 	}
 
 	runRows, err := pool.Query(ctx, `
-		SELECT integration_id, ordinal, tool, purpose, arguments,
-		       window_from, window_until, outcome, truncated, summary, sources, error,
-		       started_at, finished_at
-		  FROM investigation_tool_run
-		 WHERE investigation_id = $1 AND org_id = $2
-		 ORDER BY ordinal`, id, organization)
+		SELECT `+toolRunColumns+`
+		  FROM investigation_tool_run r
+		 WHERE r.investigation_id = $1 AND r.org_id = $2
+		 ORDER BY r.ordinal`, id, organization)
 	if err != nil {
 		return nil, fmt.Errorf("reading an investigation's runs: %w", err)
 	}
@@ -112,31 +114,9 @@ func (p *Database) InvestigationToolRuns(
 
 	runs := make([]investigation.ToolRun, 0, 8)
 	for runRows.Next() {
-		var (
-			run           investigation.ToolRun
-			integrationID *uuid.UUID
-			arguments     []byte
-			runSources    []byte
-		)
-		if err := runRows.Scan(&integrationID, &run.Ordinal,
-			&run.Tool, &run.Purpose, &arguments,
-			&run.WindowFrom, &run.WindowUntil, &run.Outcome,
-			&run.Truncated, &run.Summary, &runSources, &run.Error,
-			&run.StartedAt, &run.FinishedAt); err != nil {
-			return nil, fmt.Errorf("scanning a tool run: %w", err)
-		}
-		if integrationID != nil {
-			run.IntegrationID = *integrationID
-		}
-		if len(arguments) > 0 {
-			if err := json.Unmarshal(arguments, &run.Arguments); err != nil {
-				return nil, fmt.Errorf("decoding a run's arguments: %w", err)
-			}
-		}
-		if len(runSources) > 0 {
-			if err := json.Unmarshal(runSources, &run.Sources); err != nil {
-				return nil, fmt.Errorf("decoding a run's sources: %w", err)
-			}
+		run, err := scanToolRun(runRows, false)
+		if err != nil {
+			return nil, err
 		}
 		runs = append(runs, run)
 	}
@@ -144,6 +124,51 @@ func (p *Database) InvestigationToolRuns(
 		return nil, fmt.Errorf("reading an investigation's runs: %w", err)
 	}
 	return runs, nil
+}
+
+func (p *Database) InvestigationToolRunObservation(ctx context.Context, organization, id uuid.UUID, ordinal int) (investigation.ToolRun, error) {
+	pool, err := p.poolForOrganization(organization)
+	if err != nil {
+		return investigation.ToolRun{}, err
+	}
+	row := pool.QueryRow(ctx, `SELECT `+toolRunColumns+`, r.observation_text,
+        coalesce(i.name, ''), coalesce(i.provider, '')
+        FROM investigation_tool_run r
+        LEFT JOIN integration i ON i.org_id = r.org_id AND i.integration_id = r.integration_id
+        WHERE r.org_id = $1 AND r.investigation_id = $2 AND r.ordinal = $3`, organization, id, ordinal)
+	run, err := scanToolRun(row, true)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return investigation.ToolRun{}, investigation.ErrUnknown
+	}
+	if err != nil {
+		return investigation.ToolRun{}, fmt.Errorf("reading a Tool Run observation: %w", err)
+	}
+	return run, nil
+}
+
+func scanToolRun(row pgx.Row, observation bool) (investigation.ToolRun, error) {
+	var run investigation.ToolRun
+	var integrationID *uuid.UUID
+	var arguments, sources []byte
+	fields := []any{&integrationID, &run.Ordinal, &run.Tool, &run.Purpose, &arguments,
+		&run.WindowFrom, &run.WindowUntil, &run.Outcome, &run.Truncated, &run.Summary,
+		&sources, &run.Error, &run.StartedAt, &run.FinishedAt, &run.WindowApplied, &run.ModelClipped}
+	if observation {
+		fields = append(fields, &run.ObservationText, &run.IntegrationName, &run.IntegrationType)
+	}
+	if err := row.Scan(fields...); err != nil {
+		return run, fmt.Errorf("scanning a tool run: %w", err)
+	}
+	if integrationID != nil {
+		run.IntegrationID = *integrationID
+	}
+	if err := json.Unmarshal(arguments, &run.Arguments); err != nil {
+		return run, fmt.Errorf("decoding a run's arguments: %w", err)
+	}
+	if err := json.Unmarshal(sources, &run.Sources); err != nil {
+		return run, fmt.Errorf("decoding a run's sources: %w", err)
+	}
+	return run, nil
 }
 
 func (p *Database) QueryInvestigations(
@@ -212,6 +237,9 @@ func (p *Database) RecordToolRun(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID, token uuid.UUID,
 	run investigation.ToolRun,
 ) error {
+	if run.ObservationText != nil && len(*run.ObservationText) > investigation.MaxObservationBytes {
+		return errors.New("tool run observation exceeds its storage bound")
+	}
 	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return err
@@ -238,14 +266,14 @@ func (p *Database) RecordToolRun(
 		                                    purpose, arguments,
 		                                    window_from, window_until,
 		                                    outcome, truncated, summary, sources, error,
-		                                    started_at, finished_at)
-		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+		                                    started_at, finished_at, observation_text, model_clipped, window_applied)
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $18, $19, $20
 		FROM investigation WHERE investigation_id = $1 AND org_id = $2 AND status = 1
 		AND lease_token = $17 AND lease_expires_at > clock_timestamp()`,
 		id, organization, nullableUUID(run.IntegrationID), run.Ordinal,
 		run.Tool, run.Purpose, arguments, run.WindowFrom, run.WindowUntil,
 		int16(run.Outcome), run.Truncated, run.Summary, sources, run.Error,
-		run.StartedAt, run.FinishedAt, token)
+		run.StartedAt, run.FinishedAt, token, run.ObservationText, run.ModelClipped, run.WindowApplied)
 	if err != nil {
 		return fmt.Errorf("recording a tool run: %w", err)
 	}

@@ -120,6 +120,55 @@ func TestQueriesNormalizeTheSDKResultsAndEvaluationWindow(t *testing.T) {
 	}
 }
 
+func TestInformationalAnnotationsPreserveCompleteResults(t *testing.T) {
+	const query = `increase(http_requests_total{job="checkout"}[60m])`
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/query" {
+			if err := r.ParseForm(); err != nil {
+				t.Error(err)
+			}
+			if r.Form.Get("query") != query || r.Form.Get("time") != "1793188800" {
+				t.Errorf("instant query changed its expression or evaluation time: %v", r.Form)
+			}
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1793188800,"58.28091168091167"]}]},"infos":["possible query issue"]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"success","data":["http_requests_total"],"infos":["possible query issue"]}`))
+	}))
+	defer source.Close()
+	for _, example := range []struct {
+		name string
+		args map[string]any
+	}{
+		{"prometheus_query", map[string]any{"query": query, "mode": "instant"}},
+		{"prometheus_discover_metrics", map[string]any{"hint": "http"}},
+	} {
+		t.Run(example.name, func(t *testing.T) {
+			input := request(source.URL, example.args)
+			result, err := tool(t, example.name).Run(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, _ := json.Marshal(result.Content)
+			var content struct {
+				Infos      []string `json:"infos"`
+				Incomplete bool     `json:"incomplete"`
+			}
+			if err := json.Unmarshal(encoded, &content); err != nil {
+				t.Fatal(err)
+			}
+			if result.Truncated || content.Incomplete || !slices.Equal(content.Infos, []string{"possible query issue"}) {
+				t.Fatalf("informational annotation implies omitted data: %s", encoded)
+			}
+			if example.name == "prometheus_query" && (!result.WindowFrom.Equal(input.WindowUntil) ||
+				!result.WindowUntil.Equal(input.WindowUntil) || !strings.Contains(string(encoded), "58.28091168091167")) {
+				t.Fatalf("instant evaluation or fractional counter estimate changed: %s", encoded)
+			}
+		})
+	}
+}
+
 func TestLimitsAreReportedAsIncomplete(t *testing.T) {
 	for _, example := range []struct {
 		name            string

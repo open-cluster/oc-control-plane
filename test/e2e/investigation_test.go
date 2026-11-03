@@ -15,6 +15,8 @@ import (
 	"github.com/google/uuid"
 )
 
+const workloadToolName = "kubernetes_workload_runtime"
+
 func startInvestigationModel(t *testing.T) *httptest.Server {
 	t.Helper()
 	var calls atomic.Int32
@@ -23,7 +25,7 @@ func startInvestigationModel(t *testing.T) *httptest.Server {
 			writer.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		name := capabilityID
+		name := workloadToolName
 		arguments := fmt.Sprintf(`{"purpose":"Read the affected workload's current state","input":{"namespace":%q,"workloadKind":"Deployment","workloadName":%q,"maxPods":10}}`,
 			fixtureNamespace, fixtureWorkload)
 		if calls.Add(1) > 1 {
@@ -75,7 +77,7 @@ func (h *harness) assertInvestigation(t *testing.T) {
 			return false, err
 		}
 		for _, tool := range verified.ToolAvailability {
-			if verified.Status == "verified" && tool.Tool == capabilityID && tool.Available {
+			if verified.Status == "verified" && tool.Tool == workloadToolName && tool.Available {
 				return true, nil
 			}
 		}
@@ -136,7 +138,7 @@ func (h *harness) assertInvestigation(t *testing.T) {
 		SELECT count(*) FROM investigation_tool_run
 		WHERE org_id = $1 AND investigation_id = $2 AND integration_id = $3
 		  AND ordinal = 1 AND tool = $4 AND outcome = 1`,
-		organization, opened.ID, h.integration, capabilityID).Scan(&successfulRuns)
+		organization, opened.ID, h.integration, workloadToolName).Scan(&successfulRuns)
 	if err != nil || successfulRuns != 1 {
 		t.Fatalf("Investigation must record one successful Relay read: runs=%d err=%v", successfulRuns, err)
 	}

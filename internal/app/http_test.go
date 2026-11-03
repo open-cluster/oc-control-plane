@@ -15,7 +15,7 @@ import (
 
 func TestWebhookSurfaceCorrelatesUnmatchedRequests(t *testing.T) {
 	var logs bytes.Buffer
-	handler := webhookSurface(assembled{logger: slog.New(slog.NewJSONHandler(&logs, nil))})
+	handler := webhookSurface(assembled{logger: slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))})
 	request := httptest.NewRequest(http.MethodPost, "/webhooks/unknown", nil)
 	request.Header.Set(correlation.Header, "attacker-supplied")
 	response := httptest.NewRecorder()
@@ -79,9 +79,12 @@ func assertRequestLog(t *testing.T, logs, requestID string, status int) {
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			t.Fatalf("decode request log: %v", err)
 		}
-		if entry["msg"] == "request served" && entry["request_id"] == requestID {
+		if entry["msg"] == "Request served" && entry["request_id"] == requestID {
 			if entry["status"] != float64(status) {
 				t.Fatalf("logged status = %v", entry["status"])
+			}
+			if elapsed, ok := entry["duration_ms"].(float64); !ok || elapsed < 0 || entry["duration"] != nil || entry["level"] != "DEBUG" {
+				t.Fatalf("request log must use DEBUG and numeric milliseconds: %v", entry)
 			}
 			return
 		}

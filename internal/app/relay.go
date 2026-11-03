@@ -41,7 +41,7 @@ func startRelayEndpoint(process assembled, failed chan<- error) (*relayEndpoint,
 		relay.NewRegistrationService(process.database, cfg.RelaySPKIPins, process.logger))
 	relayv1.RegisterRelaySessionServiceServer(endpoint.server, endpoint.sessions)
 
-	process.logger.Info("listening for relays", slog.String("address", listener.Addr().String()))
+	process.logger.Info("Relay listener started", slog.String("address", listener.Addr().String()))
 	go func() {
 		if serveErr := endpoint.server.Serve(listener); serveErr != nil &&
 			!errors.Is(serveErr, grpc.ErrServerStopped) {
@@ -70,8 +70,8 @@ func (e *relayEndpoint) drain(budget time.Duration, logger *slog.Logger) {
 	select {
 	case <-stopped:
 	case <-time.After(budget):
-		logger.Warn("relay sessions did not end within the drain budget; stopping now",
-			slog.Duration("budget", budget))
+		logger.Warn("Relay sessions exceeded the drain budget",
+			slog.Int64("budget_ms", budget.Milliseconds()))
 		e.server.Stop()
 		<-stopped
 	}

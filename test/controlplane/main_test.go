@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
@@ -256,6 +257,7 @@ func startControlPlaneRunning(
 		"@" + gate.address() + "/" + upstream.Database + "?sslmode=disable"
 
 	cfg := config.Config{
+		LogLevel:          slog.LevelDebug,
 		HTTPListenAddress: freeAddress(t),
 		DatabaseDSN:       gatedDSN,
 		SessionLifetime:   12 * time.Hour,
@@ -578,6 +580,18 @@ func TestControlPlane_ReadinessFailsThenRecoversWithoutRestart(t *testing.T) {
 	if status, body := plane.get(t, "/readyz"); status != http.StatusServiceUnavailable {
 		t.Errorf("readiness with the database down = %d %s, want 503", status, body)
 	}
+	warnings := 0
+	for _, entry := range plane.logs.logLines(t) {
+		if entry["level"] == "WARN" {
+			warnings++
+			if entry["msg"] != "Readiness check failed" || entry["error"] != "database unavailable" || entry["request_id"] == nil {
+				t.Errorf("readiness warning must be safe and correlated: %v", entry)
+			}
+		}
+	}
+	if warnings != 1 {
+		t.Errorf("readiness failure warnings = %d, want one", warnings)
+	}
 
 	plane.database.openGate()
 
@@ -611,8 +625,8 @@ func TestControlPlane_ShutdownDrainsAndExitsCleanly(t *testing.T) {
 		t.Fatal("the control plane did not exit within the drain budget")
 	}
 
-	if !strings.Contains(plane.logs.String(), `"msg":"stopped"`) {
-		t.Errorf("a clean shutdown must be reported\nlogs:\n%s", plane.logs.String())
+	if !strings.Contains(plane.logs.String(), `"msg":"HTTP listener drained"`) || strings.Contains(plane.logs.String(), `"msg":"stopped"`) {
+		t.Errorf("the drained listener must be reported without claiming process shutdown\nlogs:\n%s", plane.logs.String())
 	}
 }
 
@@ -684,10 +698,13 @@ func TestControlPlane_RequestsAreCorrelated(t *testing.T) {
 
 	var found bool
 	for _, entry := range plane.logs.logLines(t) {
-		if entry["request_id"] == requestID && entry["msg"] == "request served" {
+		if entry["request_id"] == requestID && entry["msg"] == "Request served" {
 			found = true
 			if entry["status"] != float64(http.StatusOK) {
 				t.Errorf("logged status = %v", entry["status"])
+			}
+			if elapsed, ok := entry["duration_ms"].(float64); !ok || elapsed < 0 || entry["level"] != "DEBUG" || entry["duration"] != nil {
+				t.Errorf("successful probe log must use DEBUG and numeric milliseconds: %v", entry)
 			}
 			traceID, present := entry["trace_id"].(string)
 			if !present || traceID == "" {
@@ -726,7 +743,7 @@ func TestControlPlane_UnmatchedWebhookRequestsAreCorrelated(t *testing.T) {
 	}
 	var correlated bool
 	for _, entry := range plane.logs.logLines(t) {
-		if entry["msg"] == "request served" && entry["request_id"] == requestID {
+		if entry["msg"] == "Request served" && entry["request_id"] == requestID {
 			correlated = true
 			if entry["status"] != float64(http.StatusNotFound) {
 				t.Errorf("logged unmatched webhook status = %v", entry["status"])
@@ -781,7 +798,7 @@ func TestControlPlane_MetricsScrapeIsNotTraced(t *testing.T) {
 	plane.get(t, "/metrics")
 
 	for _, entry := range plane.logs.logLines(t) {
-		if entry["msg"] == "request served" && entry["path"] == "/metrics" {
+		if entry["msg"] == "Request served" && entry["path"] == "/metrics" {
 			t.Error("the metrics scrape must not go through the request-logging middleware")
 		}
 	}

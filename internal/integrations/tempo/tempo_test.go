@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -334,7 +335,11 @@ func TestSearchUsesSecondsAndReturnsTraceEvidence(t *testing.T) {
 		if r.URL.Path != "/api/search" || asked.Get("q") != "{ status=error }" || asked.Get("start") != "1700000000" || asked.Get("end") != "1700000060" || asked.Get("limit") != "20" {
 			t.Errorf("search = %s", r.URL)
 		}
-		_, _ = w.Write([]byte(`{"traces":[{"traceID":"1","rootServiceName":"checkout","rootTraceName":"GET /pay","startTimeUnixNano":"1700000000000000000","durationMs":100,"serviceStats":{"checkout":{"spanCount":3,"errorCount":1}},"spanSets":[{"spans":[{"attributes":[{"key":"status","value":{"stringValue":"error"}}]}]}]}],"metrics":{"completedJobs":1,"totalJobs":1}}`))
+		_, _ = w.Write([]byte(`{"traces":[
+			{"traceID":"1","rootServiceName":"checkout","rootTraceName":"GET /pay","startTimeUnixNano":"1700000000000000000","durationMs":100,"serviceStats":{"checkout":{"spanCount":3,"errorCount":1},"payment":{"spanCount":2},"unknown":null},"spanSets":[{"spans":[{"attributes":[{"key":"status","value":{"stringValue":"error"}}]}]}]},
+			{"traceID":"2","rootServiceName":"checkout","rootTraceName":"GET /pay","startTimeUnixNano":"1700000001000000000","durationMs":50},
+			{"traceID":"3","rootServiceName":"webapp","rootTraceName":"GET /","startTimeUnixNano":"1700000002000000000","durationMs":250,"serviceStats":{"webapp":{"spanCount":2},"checkout":{"spanCount":1}}}
+		],"metrics":{"completedJobs":1,"totalJobs":1}}`))
 	}))
 	defer source.Close()
 	result, err := tool(t, "tempo_search_traces").Run(t.Context(), request(source.URL, map[string]any{"query": "{ status=error }"}))
@@ -343,7 +348,10 @@ func TestSearchUsesSecondsAndReturnsTraceEvidence(t *testing.T) {
 	}
 	encoded, _ := json.Marshal(result.Content)
 	var content struct {
-		Traces []struct {
+		SampleSize                    int
+		ServiceAppearances            map[string]int
+		TracesWithMissingServiceStats int
+		Traces                        []struct {
 			TraceID, RootService, Operation string
 			Start                           time.Time
 			DurationMs                      *uint32
@@ -355,7 +363,14 @@ func TestSearchUsesSecondsAndReturnsTraceEvidence(t *testing.T) {
 	if err := json.Unmarshal(encoded, &content); err != nil {
 		t.Fatal(err)
 	}
-	if content.Outcome != "data" || len(content.Traces) != 1 || content.Traces[0].TraceID != "00000000000000000000000000000001" ||
+	if content.SampleSize != 3 || content.TracesWithMissingServiceStats != 2 ||
+		!maps.Equal(content.ServiceAppearances, map[string]int{"checkout": 3, "payment": 1, "webapp": 1}) {
+		t.Fatalf("returned-sample service appearances lost or overstated: %s", encoded)
+	}
+	if strings.Index(string(encoded), `"serviceAppearances"`) > strings.Index(string(encoded), `"traces"`) {
+		t.Fatal("sample summary follows potentially clipped trace detail")
+	}
+	if content.Outcome != "data" || len(content.Traces) != 3 || content.Traces[0].TraceID != "00000000000000000000000000000001" ||
 		content.Traces[0].RootService != "checkout" || content.Traces[0].Operation != "GET /pay" ||
 		content.Traces[0].DurationMs == nil || *content.Traces[0].DurationMs != 100 || content.Traces[0].Start.Unix() != 1700000000 ||
 		content.Traces[0].ServiceStats["checkout"].ErrorCount != 1 || len(content.Traces[0].ErrorHints) != 1 || result.Truncated || len(result.Sources) == 0 {

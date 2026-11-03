@@ -49,10 +49,16 @@ func (m *liveProgressEventModel) Complete(ctx context.Context, _ modelagent.Prom
 		<-ctx.Done()
 		return modelagent.Completion{}, ctx.Err()
 	}
-	return modelagent.Completion{Stop: modelagent.StopToolUse, ToolCalls: []modelagent.CompletionCall{{
-		ID: fmt.Sprintf("unavailable-%d", m.calls), Name: "unavailable.read",
+	calls := []modelagent.CompletionCall{{
+		ID: fmt.Sprintf("read-%d", m.calls), Name: "slack_list_channels",
 		Arguments: json.RawMessage(`{"purpose":"Read evidence","input":{}}`),
-	}}}, nil
+	}}
+	if m.calls == 2 {
+		duplicate := calls[0]
+		duplicate.ID = "duplicate"
+		calls = append(calls, duplicate)
+	}
+	return modelagent.Completion{Stop: modelagent.StopToolUse, ToolCalls: calls}, nil
 }
 
 func TestLiveProgressEventMatchesSerializedSchema(t *testing.T) {
@@ -61,6 +67,7 @@ func TestLiveProgressEventMatchesSerializedSchema(t *testing.T) {
 		thirdStarted: make(chan struct{}),
 	}
 	vendor := newVendorFake(t, "xoxb-good-token-1234")
+	vendor.channels = `{"ok":true,"channels":[{"id":"C0INCIDENT","name":"incidents"}]}`
 	address := freeAddress(t)
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = address
@@ -85,6 +92,7 @@ func TestLiveProgressEventMatchesSerializedSchema(t *testing.T) {
 	schema := eventSchema(t)
 	scanner := bufio.NewScanner(response.Body)
 	sawProgress := false
+	sawCompletion := false
 	var seen []string
 	for scanner.Scan() {
 		data, present := strings.CutPrefix(scanner.Text(), "data: ")
@@ -94,6 +102,7 @@ func TestLiveProgressEventMatchesSerializedSchema(t *testing.T) {
 		event := decodeSerializedEvent(t, schema, data)
 		seen = append(seen, event["type"].(string))
 		if event["type"] == "tool_completed" {
+			sawCompletion = true
 			status, body := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/investigations/"+turn, nil)
 			if status != http.StatusOK {
 				t.Fatalf("Tool Run detail = %d: %s", status, body)
@@ -108,8 +117,18 @@ func TestLiveProgressEventMatchesSerializedSchema(t *testing.T) {
 			if len(detail.Runs) < ordinal || detail.Runs[ordinal-1].Ordinal != ordinal {
 				t.Fatal("live completion has no committed Tool Run detail")
 			}
+			status, body = plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/investigations/"+turn+
+				"/runs/"+fmt.Sprint(ordinal)+"/observation", nil)
+			var retained struct{ ObservationText *string }
+			decodeInto(t, body, &retained)
+			if status != http.StatusOK || retained.ObservationText == nil {
+				t.Fatal("live completion has no committed prepared observation")
+			}
 		}
 		if event["type"] == "progress" {
+			if !sawCompletion {
+				t.Fatal("duplicate progress preceded the completed read")
+			}
 			sawProgress = true
 			break
 		}
@@ -194,6 +213,10 @@ func decodeSerializedEvent(t *testing.T, schema *jsonschema.Schema, data string)
 }
 
 func eventSchema(t *testing.T) *jsonschema.Schema {
+	return serializedSchema(t, "InvestigationEvent")
+}
+
+func serializedSchema(t *testing.T, name string) *jsonschema.Schema {
 	t.Helper()
 	contents, err := os.ReadFile("../../api/openapi.yaml")
 	if err != nil {
@@ -209,7 +232,7 @@ func eventSchema(t *testing.T) *jsonschema.Schema {
 	if err := compiler.AddResource("openapi.json", document); err != nil {
 		t.Fatal(err)
 	}
-	schema, err := compiler.Compile("openapi.json#/components/schemas/InvestigationEvent")
+	schema, err := compiler.Compile("openapi.json#/components/schemas/" + name)
 	if err != nil {
 		t.Fatal(err)
 	}

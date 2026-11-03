@@ -48,7 +48,7 @@ A focused TraceQL search could be `{ resource.service.name = "checkout" && statu
 
 | Tool | Inputs and results |
 | --- | --- |
-| `tempo_search_traces` | Required `query`; optional `start`, `end`, `limit` (default 20, maximum 50). Returns trace IDs, root service/operation, timing and available error counts/hints. |
+| `tempo_search_traces` | Required `query`; optional `start`, `end`, `limit` (default 20, maximum 50). Returns trace IDs, root service/operation, timing, available error counts/hints, and service appearances within the returned sample. |
 | `tempo_get_trace` | Required hexadecimal `traceId` (at most 32 characters); optional `start`/`end`. Returns up to 200 chronological spans with service, parent IDs, timestamps, duration and error status. |
 
 Times are RFC3339. Both Tools clamp to the Investigation window and at most its latest
@@ -56,10 +56,18 @@ Times are RFC3339. Both Tools clamp to the Investigation window and at most its 
 span IDs preserve the relationships reported by Tempo. Missing error information is
 unknown, not evidence of health. Search results are nondeterministic subsets, not rankings.
 
+The search summary states the exact returned sample size and counts each observed service
+at most once per trace, using its root service and available service statistics. Traces
+with missing service statistics are identified; absent statistics do not mean zero
+observations. Service presence alone does not identify which service consumed latency.
+Inspect span durations and parent relationships for a bottleneck. Missing or short child
+spans leave unexplained time; they do not verify a database wait, lock, or pool exhaustion.
+
 ## Limits and incomplete data
 
 - Search limits, incomplete search jobs, upstream partial status, missing retained parents
-  and local span limits are reported as incomplete. Empty search and scoped `not_found`
+  and local span limits are reported as possibly incomplete. Reaching the search limit
+  does not prove additional traces exist. Empty search and scoped `not_found`
   results do not establish global absence.
 - Retrieval time bounds are **backend search hints**. They may omit parts of a trace or
   return spans outside the window; even a source `COMPLETE` status is not a guarantee of

@@ -81,12 +81,12 @@ func Run(
 	}
 	defer func() {
 		if shutdownErr := telemetry.Shutdown(context.WithoutCancel(ctx)); shutdownErr != nil {
-			telemetry.Logger.Warn("telemetry shutdown", slog.String("error", shutdownErr.Error()))
+			telemetry.Logger.Warn("Telemetry shutdown failed", slog.String("error", "telemetry could not be flushed"))
 		}
 	}()
 
 	logger := telemetry.Logger
-	logger.Info("control plane starting",
+	logger.Info("OpenCluster starting",
 		slog.String("version", version),
 		slog.String("service", defaultServiceName))
 

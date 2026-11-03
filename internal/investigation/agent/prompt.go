@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -120,7 +119,7 @@ func taskInstruction(orientation orientation) string {
 
 const ConcludeToolName = "conclude"
 
-func exchangeTools(orientation orientation) []integrations.ToolDefinition {
+func exchangeTools(orientation orientation, conclude integrations.ToolDefinition) []integrations.ToolDefinition {
 	seen := map[string]bool{}
 	var definitions []integrations.ToolDefinition
 	for _, source := range orientation.Sources {
@@ -135,7 +134,7 @@ func exchangeTools(orientation orientation) []integrations.ToolDefinition {
 	if orientation.Brief != nil && orientation.Brief.HistoryBefore > 1 {
 		definitions = append(definitions, historyDefinition(orientation.Brief.HistoryBefore))
 	}
-	return append(definitions, ConcludeDefinition())
+	return append(definitions, conclude)
 }
 
 func envelopeDefinition(definition integrations.ToolDefinition, sources []offeredSource) integrations.ToolDefinition {
@@ -173,6 +172,10 @@ func envelopeDefinition(definition integrations.ToolDefinition, sources []offere
 }
 
 func ConcludeDefinition() integrations.ToolDefinition {
+	return concludeDefinition(true)
+}
+
+func concludeDefinition(prior bool) integrations.ToolDefinition {
 	return integrations.ToolDefinition{
 		Name: ConcludeToolName,
 		Description: "End the investigation with its structured conclusion. Call this " +
@@ -185,18 +188,18 @@ func ConcludeDefinition() integrations.ToolDefinition {
 			"the findings, which are not bounded by it. Oversized output must be corrected. " +
 			"Propose at most " + strconv.Itoa(investigation.MaxConclusionActions) + " actions; each title, rationale and verification is limited to " +
 			strconv.Itoa(investigation.MaxActionTextLength) + " UTF-8 bytes.",
-		InputSchema: concludeSchema(),
+		InputSchema: concludeSchema(prior),
 	}
 }
 
-func concludeSchema() map[string]any {
+func concludeSchema(prior bool) map[string]any {
 	actions := array(actionSchema())
 	actions["maxItems"] = investigation.MaxConclusionActions
 	return object(properties{
 		"status":      enumField(investigation.ConclusionStatuses...),
 		"summary":     map[string]any{"type": "string", "maxLength": investigation.MaxSummaryLength},
 		"impact":      impactSchema(),
-		"findings":    array(agentFindingSchema()),
+		"findings":    array(agentFindingSchema(prior)),
 		"hypotheses":  array(hypothesisSchema()),
 		"actions":     actions,
 		"limitations": array(limitationSchema()),
@@ -209,16 +212,20 @@ func impactSchema() map[string]any {
 	})
 }
 
-func agentFindingSchema() map[string]any {
+func agentFindingSchema(prior bool) map[string]any {
+	refs := array(object(properties{
+		"investigationId": map[string]any{"type": "string", "format": "uuid"},
+		"toolRunOrdinal":  map[string]any{"type": "integer", "minimum": 1},
+	}))
+	if !prior {
+		refs["maxItems"] = 0
+	}
 	return object(properties{
-		"statement": stringField,
-		"kind":      enumField(investigation.FindingKinds...),
-		"mechanism": stringField,
-		"run_refs":  array(integerField),
-		"evidence_refs": array(object(properties{
-			"investigationId": map[string]any{"type": "string", "format": "uuid"},
-			"toolRunOrdinal":  map[string]any{"type": "integer", "minimum": 1},
-		})),
+		"statement":     stringField,
+		"kind":          enumField(investigation.FindingKinds...),
+		"mechanism":     stringField,
+		"run_refs":      array(integerField),
+		"evidence_refs": refs,
 	})
 }
 
@@ -343,33 +350,8 @@ func renderResult(result toolFeedback) ToolResultTurn {
 		return ToolResultTurn{CallID: result.CallID, Content: historyResponsePrefix + string(encoded)}
 	}
 
-	// string building ----->
-	out := &strings.Builder{}
-	out.WriteString("[run " + strconv.Itoa(run.Ordinal) + "] " +
-		run.Tool + " " + compactArguments(run.Arguments) + "\n")
-	if run.Outcome == investigation.RunFailed {
-		out.WriteString("FAILED: " + run.Error + "\n")
-		return ToolResultTurn{
-			CallID:  result.CallID,
-			Content: out.String(),
-			IsError: true,
-		}
-	}
-	if run.WindowApplied {
-		out.WriteString("WINDOW: this read covered " + stamp(run.WindowFrom) + " to " +
-			stamp(run.WindowUntil) + "\n")
-	}
-	if run.Summary != "" {
-		out.WriteString("SUMMARY: " + run.Summary + "\n")
-	}
-	if run.Truncated {
-		out.WriteString("TRUNCATED: the source held more than this read returned.\n")
-	}
-	out.WriteString("CONTENT: " + boundedJSON(run.Content) + "\n")
-	return ToolResultTurn{
-		CallID:  result.CallID,
-		Content: out.String(),
-	}
+	return ToolResultTurn{CallID: result.CallID, Content: *run.ObservationText,
+		IsError: run.Outcome == investigation.RunFailed}
 }
 
 func concludeInstruction(reason string) string {
@@ -402,78 +384,6 @@ func (r *Agent) conversationBrief(
 	}
 	brief.Turn = opened.Turn
 	return &brief
-}
-
-const maxRunContentBytes = 16 << 10
-
-func compactArguments(arguments map[string]any) string {
-	if len(arguments) == 0 {
-		return "{}"
-	}
-	encoded, err := json.Marshal(arguments)
-	if err != nil {
-		return fmt.Sprintf("%v", arguments)
-	}
-	return string(encoded)
-}
-
-func boundedJSON(content any) string {
-	if content == nil {
-		return "null"
-	}
-	encoded, err := json.Marshal(content)
-	if err != nil {
-		return `"the content could not be rendered"`
-	}
-	if len(encoded) <= maxRunContentBytes {
-		return string(encoded)
-	}
-	if elements := listElements(content); elements != nil {
-		if rendered, kept := boundedList(elements); kept > 0 {
-			return rendered
-		}
-	}
-	return strings.ToValidUTF8(string(encoded[:maxRunContentBytes]), "") +
-		"… [cut at " + strconv.Itoa(maxRunContentBytes) + " bytes]"
-}
-
-func listElements(content any) []any {
-	value := reflect.ValueOf(content)
-	if value.Kind() != reflect.Slice {
-		return nil
-	}
-	elements := make([]any, value.Len())
-	for index := range elements {
-		elements[index] = value.Index(index).Interface()
-	}
-	return elements
-}
-
-func boundedList(elements []any) (string, int) {
-	var rendered strings.Builder
-	rendered.WriteString("[")
-	kept := 0
-	for _, element := range elements {
-		encoded, err := json.Marshal(element)
-		if err != nil {
-			break
-		}
-		if rendered.Len()+len(encoded)+1 > maxRunContentBytes {
-			break
-		}
-		if kept > 0 {
-			rendered.WriteString(",")
-		}
-		rendered.Write(encoded)
-		kept++
-	}
-	rendered.WriteString("]")
-	if kept < len(elements) {
-		rendered.WriteString(" … [" + strconv.Itoa(kept) + " of " +
-			strconv.Itoa(len(elements)) + " items; the rest cut at " +
-			strconv.Itoa(maxRunContentBytes) + " bytes]")
-	}
-	return rendered.String(), kept
 }
 
 func stamp(at time.Time) string { return at.UTC().Format(time.RFC3339) }

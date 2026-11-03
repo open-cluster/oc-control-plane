@@ -153,7 +153,6 @@ func (r *Agent) Run(
 		measured.logger = local.Logger
 		local.telemetry = &measured
 	}
-	local.Logger = observability.LoggerFor(ctx, local.Logger, "")
 	r = &local
 
 	events := investigation.NewEventStream(
@@ -169,10 +168,10 @@ func (r *Agent) Run(
 		}
 		trace.SpanFromContext(ctx).SetAttributes(attribute.String("oc.investigation.status", "failed"))
 		trace.SpanFromContext(ctx).SetStatus(codes.Error, "investigation execution failed")
-		r.Logger.ErrorContext(ctx, "investigation failed",
+		observability.LoggerFor(ctx, r.Logger, "").ErrorContext(ctx, "Investigation failed",
 			slog.String("error", "investigation execution failed"),
 			slog.String("failure_class", failureOutcome),
-			slog.Duration("duration", time.Since(startedAt)))
+			slog.Float64("duration_ms", float64(time.Since(startedAt))/float64(time.Millisecond)))
 		return nil
 	}
 
@@ -288,7 +287,13 @@ func (r *Agent) Run(
 		move := modelMove{}
 		moveCtx, done := context.WithTimeout(ctx, decideTimeout)
 		for attempt := range 2 {
-			prompt := modelPrompt(r, promptOrientation, state.transcript, forcedToConclude, reason)
+			allowed := append([]investigation.EvidenceRef(nil), priorEvidence...)
+			if brief := promptOrientation.Brief; brief != nil {
+				for _, finding := range dedupeFindings(brief.Findings) {
+					allowed = append(allowed, finding.References()...)
+				}
+			}
+			prompt := modelPrompt(r, promptOrientation, state.transcript, len(allowed) > 0, forcedToConclude, reason)
 			completion, completeErr := r.telemetry.complete(
 				moveCtx, r.completer, r.modelConfig, prompt)
 			state.usage = state.usage.Add(usageOf(completion.Usage))
@@ -368,12 +373,6 @@ func (r *Agent) Run(
 			case len(conclusions) != 1:
 				invalid = fmt.Errorf("call conclude exactly once with the evidence-bounded conclusion")
 			default:
-				allowed := append([]investigation.EvidenceRef(nil), priorEvidence...)
-				if brief := promptOrientation.Brief; brief != nil {
-					for _, finding := range dedupeFindings(brief.Findings) {
-						allowed = append(allowed, finding.References()...)
-					}
-				}
 				conclusion, decodeErr := decodeConclusion(
 					conclusions[0].Arguments, state.runs, allowed)
 				invalid = decodeErr
@@ -388,7 +387,7 @@ func (r *Agent) Run(
 							err = Failed(OutcomeRejected, r.modelConfig.Provider, completion.Model,
 								"the prior evidence could not be verified")
 						} else if missing {
-							invalid = fmt.Errorf("a finding cites unavailable prior evidence")
+							invalid = errUnavailablePriorEvidence
 						}
 					}
 				}
@@ -518,7 +517,8 @@ func (r *Agent) Run(
 			if sourceFound {
 				run.IntegrationID = source.Integration.ID
 			}
-			run.Purpose = boundText(call.Purpose, eventTextBound)
+			run.Purpose = call.Purpose
+			prepareObservation(&run, state.credentials)
 			if recordErr := r.recordToolRun(ctx, state, run); recordErr != nil {
 				terminalErr := failRun(failureReason(recordErr), state.usage)
 				r.RuntimeTelemetry.Ended(time.Since(startedAt),
@@ -534,7 +534,8 @@ func (r *Agent) Run(
 	}
 }
 
-func modelPrompt(r *Agent, oriented orientation, transcript []Turn, forced bool, reason string) Prompt {
+func modelPrompt(r *Agent, oriented orientation, transcript []Turn, prior, forced bool, reason string) Prompt {
+	conclude := concludeDefinition(prior)
 	prompt := Prompt{
 		Model: r.modelConfig.Model,
 		System: []Block{
@@ -553,13 +554,13 @@ func modelPrompt(r *Agent, oriented orientation, transcript []Turn, forced bool,
 				Cache: true,
 			},
 		},
-		Tools:           exchangeTools(oriented),
+		Tools:           exchangeTools(oriented, conclude),
 		Turns:           transcript,
 		MaxOutputTokens: r.modelConfig.MaxOutputTokens,
 		Effort:          r.modelConfig.Effort,
 	}
 	if forced {
-		prompt.Tools = []integrations.ToolDefinition{ConcludeDefinition()}
+		prompt.Tools = []integrations.ToolDefinition{conclude}
 		prompt.ForceTool = ConcludeToolName
 		instruction := concludeInstruction(reason)
 		if len(prompt.Turns) == 0 {

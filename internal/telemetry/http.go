@@ -21,11 +21,15 @@ func HTTPRequestLogger(logger *slog.Logger, next http.Handler) http.Handler {
 
 		next.ServeHTTP(recorder, request.WithContext(ctx))
 
-		requestLogger.Info("request served",
+		level := slog.LevelDebug
+		if recorder.status >= http.StatusInternalServerError && request.URL.Path != "/readyz" {
+			level = slog.LevelWarn
+		}
+		requestLogger.Log(request.Context(), level, "Request served",
 			slog.String("method", request.Method),
 			slog.String("path", request.URL.Path),
 			slog.Int("status", recorder.status),
-			slog.Duration("duration", time.Since(started)))
+			slog.Float64("duration_ms", float64(time.Since(started))/float64(time.Millisecond)))
 	})
 }
 

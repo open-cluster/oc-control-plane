@@ -18,6 +18,8 @@ var (
 	ErrContextWindow = errors.New("the model provider rejected the request context")
 )
 
+var errUnavailablePriorEvidence = errors.New("a finding cites unavailable prior evidence; cite current reads with run_refs, and use evidence_refs only for supplied prior Investigation/ordinal pairs; otherwise leave evidence_refs empty")
+
 type Outcome int16
 
 const (

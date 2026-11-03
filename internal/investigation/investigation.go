@@ -168,6 +168,7 @@ const (
 	MaxConclusionActions = 8
 	MaxActionTextLength  = 512
 	MaxSummaryLength     = 4096
+	MaxObservationBytes  = 64 << 10
 )
 
 type Usage struct {
@@ -202,22 +203,26 @@ type Investigation struct {
 }
 
 type ToolRun struct {
-	IntegrationID uuid.UUID
-	Ordinal       int
-	Tool          string
-	Purpose       string
-	Arguments     map[string]any
-	WindowFrom    time.Time
-	WindowUntil   time.Time
-	WindowApplied bool
-	Outcome       RunOutcome
-	Truncated     bool
-	Summary       string
-	Sources       []string
-	StartedAt     time.Time
-	FinishedAt    time.Time
-	Error         string
-	Content       any
+	IntegrationID   uuid.UUID
+	Ordinal         int
+	Tool            string
+	Purpose         string
+	Arguments       map[string]any
+	WindowFrom      time.Time
+	WindowUntil     time.Time
+	WindowApplied   *bool
+	Outcome         RunOutcome
+	Truncated       bool
+	Summary         string
+	Sources         []string
+	StartedAt       time.Time
+	FinishedAt      time.Time
+	Error           string
+	Content         any
+	ObservationText *string `json:"-"`
+	ModelClipped    bool
+	IntegrationName string
+	IntegrationType string
 }
 
 type NewInvestigation struct {

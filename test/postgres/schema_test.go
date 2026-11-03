@@ -72,6 +72,7 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 	if !reflect.DeepEqual(applied, []string{
 		"0002_simplify_conversation_investigation_contracts",
 		"0003_cleanup_conversation_schema",
+		"0004_tool_run_observation",
 	}) {
 		t.Fatalf("applied migrations = %v", applied)
 	}
@@ -302,6 +303,7 @@ func TestCleanupMigrationValidatesAndConvertsPostmortemReviewers(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(applied, []string{
 		"0002_simplify_conversation_investigation_contracts",
 		"0003_cleanup_conversation_schema",
+		"0004_tool_run_observation",
 	}) {
 		t.Fatalf("repaired reviewer migration applied %v: %v", applied, err)
 	}
@@ -385,6 +387,7 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 		"0001_current_schema",
 		"0002_simplify_conversation_investigation_contracts",
 		"0003_cleanup_conversation_schema",
+		"0004_tool_run_observation",
 	}) {
 		t.Fatalf("fresh migration applied %v, want every schema migration", applied)
 	}
@@ -415,6 +418,13 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 	}
 
 	for _, assertion := range []string{
+		`SELECT data_type='text' AND is_nullable='YES' AND column_default IS NULL
+			FROM information_schema.columns WHERE table_name='investigation_tool_run' AND column_name='observation_text'`,
+		`SELECT data_type='boolean' AND is_nullable='NO' AND column_default='false'
+			FROM information_schema.columns WHERE table_name='investigation_tool_run' AND column_name='model_clipped'`,
+		`SELECT data_type='boolean' AND is_nullable='YES' AND column_default IS NULL
+			FROM information_schema.columns WHERE table_name='investigation_tool_run' AND column_name='window_applied'`,
+		`SELECT NOT EXISTS (SELECT 1 FROM pg_indexes WHERE tablename='investigation_tool_run' AND indexdef LIKE '%observation_text%')`,
 		`SELECT array_agg(column_name::text ORDER BY ordinal_position) =
 			ARRAY['conversation_id','org_id','incident_id','source','subject',
 			      'created_by','created_at','last_activity_at']

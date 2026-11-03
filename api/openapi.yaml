@@ -574,6 +574,23 @@ paths:
       responses:
         "200": { $ref: "#/components/responses/InvestigationDetail" }
         default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/investigations/{investigation}/runs/{ordinal}/observation:
+    parameters:
+      - { $ref: "#/components/parameters/InvestigationID" }
+      - { $ref: "#/components/parameters/ToolRunOrdinal" }
+    get:
+      <<: *privileged-read
+      operationId: getToolRunObservation
+      summary: Inspect one retained Tool observation
+      description: Editor and Admin only. Returns the bounded text prepared for the model and current Integration display information. Legacy unavailable text is null, distinct from an empty string. Preparation does not prove remote provider delivery. Ordinary Investigation detail, lists, and events omit this text.
+      tags: [Investigations]
+      responses:
+        "200": { $ref: "#/components/responses/ToolRunObservation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/investigations/{investigation}/cancel:
     parameters: *investigation-path
     post:
@@ -955,6 +972,7 @@ components:
     RelayRegistrationID: { name: registration, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     IncidentID: { name: incident, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     InvestigationID: { name: investigation, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+    ToolRunOrdinal: { name: ordinal, in: path, required: true, schema: { type: integer, minimum: 1, maximum: 2147483647 } }
     ConversationID: { name: conversation, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     MessageSequence: { name: sequence, in: path, required: true, schema: { type: integer, minimum: 1 } }
   responses:
@@ -1014,6 +1032,7 @@ components:
     InvestigationList: { description: Investigations., content: { application/json: { schema: { $ref: "#/components/schemas/InvestigationList" } } } }
     Investigation: { description: Investigation., content: { application/json: { schema: { $ref: "#/components/schemas/Investigation" } } } }
     InvestigationDetail: { description: Investigation with durable Tool Runs., content: { application/json: { schema: { $ref: "#/components/schemas/InvestigationDetail" } } } }
+    ToolRunObservation: { description: "One protected prepared observation, with its Tool Run metadata and current Integration name/type.", content: { application/json: { schema: { $ref: "#/components/schemas/ToolRunObservation" } } } }
     ConversationList: { description: Conversations., content: { application/json: { schema: { $ref: "#/components/schemas/ConversationList" } } } }
     ConversationOpened: { description: "Conversation opened, with an optional first Message and turn.", content: { application/json: { schema: { $ref: "#/components/schemas/ConversationOpened" } } } }
     ConversationDetail: { description: Conversation with Messages and turns., content: { application/json: { schema: { $ref: "#/components/schemas/ConversationDetail" } } } }
@@ -1552,8 +1571,8 @@ components:
     ToolRun:
       type: object
       additionalProperties: false
-      required: [ordinal, tool, windowFrom, windowUntil, outcome, startedAt, finishedAt]
-      properties:
+      required: &tool-run-required [ordinal, tool, windowFrom, windowUntil, outcome, startedAt, finishedAt, durationMs, windowApplied, modelClipped]
+      properties: &tool-run-properties
         ordinal: { type: integer, minimum: 1 }
         integrationId: { $ref: "#/components/schemas/UUID" }
         tool: { type: string, minLength: 1, maxLength: 128 }
@@ -1563,11 +1582,32 @@ components:
         windowUntil: { $ref: "#/components/schemas/Timestamp" }
         outcome: { type: string, enum: [succeeded, failed] }
         truncated: { type: boolean }
+        modelClipped: { type: boolean, description: Content or arguments were omitted to fit the model/prepared-observation budget; separate from source incompleteness. }
+        windowApplied: { oneOf: [{ type: boolean }, { type: "null" }], description: "True for adapter-supplied effective bounds, false for known fallback bounds, null for legacy unknown bounds." }
         summary: { type: string, maxLength: 32768 }
         sources: { type: array, items: { type: string, maxLength: 2048 } }
         error: { type: string, maxLength: 4096 }
         startedAt: { $ref: "#/components/schemas/Timestamp" }
         finishedAt: { $ref: "#/components/schemas/Timestamp" }
+        durationMs:
+          type: number
+          minimum: 0
+          description: Execution duration in milliseconds derived from startedAt and finishedAt, including fractional milliseconds. Execution timestamps retain stored subsecond precision.
+    ToolRunObservation:
+      type: object
+      additionalProperties: false
+      required: *tool-run-required
+      allOf:
+        - required: [investigationId, observationText]
+      properties:
+        <<: *tool-run-properties
+        investigationId: { $ref: "#/components/schemas/UUID" }
+        integrationName: { type: string, description: Current Integration display name; not a historical snapshot. }
+        integrationType: { type: string }
+        observationText:
+          oneOf: [{ type: string }, { type: "null" }]
+          maxLength: 65536
+          description: Exact bounded prepared Tool-result text, at most 65536 UTF-8 bytes including headers and arguments. Null means unavailable; an empty string means retained empty text.
     InvestigationDetail:
       allOf:
         - { $ref: "#/components/schemas/Investigation" }

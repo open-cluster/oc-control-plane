@@ -93,7 +93,7 @@ func (t *Telemetry) complete(
 		slog.String("provider", config.Provider),
 		slog.String("model", config.Model),
 		slog.String("stop", completion.Stop.String()),
-		slog.Duration("duration", elapsed),
+		slog.Float64("duration_ms", float64(elapsed)/float64(time.Millisecond)),
 	}
 	for kind, count := range map[string]Count{
 		"input": completion.Usage.Input, "output": completion.Usage.Output,
@@ -123,13 +123,13 @@ func (t *Telemetry) complete(
 		span.SetAttributes(attribute.String("oc.reasoning.outcome", outcome))
 		entry = append(entry, slog.String("outcome", outcome), slog.String("error", "model call failed"))
 		if errors.Is(err, context.Canceled) {
-			logger.DebugContext(ctx, "model call cancelled", entry...)
+			logger.DebugContext(ctx, "Model call cancelled", entry...)
 		} else {
-			logger.WarnContext(ctx, "model call failed", entry...)
+			logger.WarnContext(ctx, "Model call failed", entry...)
 		}
 		return completion, err
 	}
-	logger.DebugContext(ctx, "model call completed", entry...)
+	logger.DebugContext(ctx, "Model call completed", entry...)
 	return completion, err
 }
 
@@ -166,7 +166,7 @@ func (r *Agent) logConclusion(ctx context.Context, state *runState, conclusion i
 		attribute.String("oc.investigation.conclusion_status", string(conclusion.Status)))
 	entry := []any{
 		slog.String("conclusion_status", string(conclusion.Status)),
-		slog.Duration("duration", time.Since(state.startedAt)),
+		slog.Float64("duration_ms", float64(time.Since(state.startedAt))/float64(time.Millisecond)),
 		slog.Int("turns", state.turns), slog.Int("tool_runs", state.executed),
 		slog.Int64("input_tokens", state.usage.InputTokens), slog.Int64("output_tokens", state.usage.OutputTokens),
 	}
@@ -174,5 +174,5 @@ func (r *Agent) logConclusion(ctx context.Context, state *runState, conclusion i
 		entry = append(entry, slog.String("stopped_by", stoppedBy))
 		span.SetAttributes(attribute.String("oc.investigation.stopped_by", stoppedBy))
 	}
-	r.Logger.InfoContext(ctx, "investigation concluded", entry...)
+	observability.LoggerFor(ctx, r.Logger, "").InfoContext(ctx, "Investigation concluded", entry...)
 }

@@ -27,6 +27,10 @@ systems to determine impact, investigate likely causes, and recommend what to do
 Every material Finding is backed by the Tool Runs that support it, so operators can inspect
 how a conclusion was reached instead of treating the AI response as a black box.
 Uncertainty, missing telemetry, and unresolved assumptions remain explicit.
+Tool Runs preserve subsecond execution timing separately from source-query bounds;
+source limits and content clipped for the model remain distinct limitations.
+Editors and Admins can inspect retained bounded observations on demand; ordinary
+Investigation detail remains lightweight.
 
 > OpenCluster is pre-release software. APIs and storage may change before the first stable release.
 
@@ -99,6 +103,8 @@ Findings require citations to successful reads; failed or skipped reads can expl
 limitations but cannot establish a Finding. Startup activity describes the initial phase,
 and recorded activity remains available when a client reconnects.
 Tool completion activity is published only after the Tool Run's provenance is recorded.
+Operational JSON logs correlate Investigations and Tool executions with trace identifiers;
+routine requests and successful health probes log at DEBUG, with durations in milliseconds.
 
 ### Relay
 
@@ -172,6 +178,9 @@ make tools
 make test-short
 make verify
 ```
+
+The full container-backed root-module suite runs packages sequentially to preserve
+shared test-container lifetimes; race detection remains enabled.
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) before submitting changes.
 
