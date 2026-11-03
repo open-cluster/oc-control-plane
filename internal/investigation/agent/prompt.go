@@ -247,7 +247,8 @@ func actionSchema() map[string]any {
 func limitationSchema() map[string]any {
 	return object(properties{
 		"type":      enumField(investigation.LimitationTypes...),
-		"statement": stringField, "run_refs": array(integerField),
+		"statement": stringField,
+		"run_refs":  array(integerField),
 	})
 }
 
@@ -347,11 +348,17 @@ func renderResult(result toolFeedback) ToolResultTurn {
 			}
 		}
 		encoded, _ := json.Marshal(page)
-		return ToolResultTurn{CallID: result.CallID, Content: historyResponsePrefix + string(encoded)}
+		return ToolResultTurn{
+			CallID:  result.CallID,
+			Content: historyResponsePrefix + string(encoded),
+		}
 	}
 
-	return ToolResultTurn{CallID: result.CallID, Content: *run.ObservationText,
-		IsError: run.Outcome == investigation.RunFailed}
+	return ToolResultTurn{
+		CallID:  result.CallID,
+		Content: *run.ObservationText,
+		IsError: run.Outcome == investigation.RunFailed,
+	}
 }
 
 func concludeInstruction(reason string) string {

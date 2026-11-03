@@ -184,7 +184,8 @@ func (r *Agent) execute(
 		}
 	}
 	span.SetAttributes(attribute.String("oc.tool.outcome", outcome))
-	observability.LoggerFor(runCtx, r.Logger, "").Log(runCtx, level, "Tool execution finished",
+	observability.LoggerFor(runCtx, r.Logger, "").Log(
+		runCtx, level, "Tool execution finished",
 		slog.String("integration_id", run.IntegrationID.String()),
 		slog.String("tool", tool.Name), slog.Int("ordinal", ordinal),
 		slog.String("outcome", outcome),
@@ -389,7 +390,7 @@ func boundedList(elements []any, replace *strings.Replacer) (string, int) {
 	rendered.WriteString("]")
 	if kept < len(elements) {
 		rendered.WriteString(" … [" + strconv.Itoa(kept) + " of " +
-			strconv.Itoa(len(elements)) + " items; the rest cut at " +
+			strconv.Itoa(len(elements)) + " items. the rest cut at " +
 			strconv.Itoa(maxRunContentBytes) + " bytes]")
 	}
 	return rendered.String(), kept

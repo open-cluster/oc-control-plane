@@ -110,7 +110,9 @@ func (c *client) get(ctx context.Context, path string, parameters url.Values, in
 			return errors.New("tempo source is unavailable")
 		}
 	}
-	defer func() { _ = response.Body.Close() }()
+	defer func() {
+		_ = response.Body.Close()
+	}()
 	switch response.StatusCode {
 	case http.StatusOK:
 	case http.StatusUnauthorized, http.StatusForbidden:
