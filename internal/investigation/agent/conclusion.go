@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -13,6 +14,12 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
+
+var newConclusionStatuses = []string{
+	string(investigation.SupportedExplanation),
+	string(investigation.Inconclusive),
+	string(investigation.AnswerOnly),
+}
 
 type properties map[string]any
 
@@ -35,28 +42,14 @@ func array(items map[string]any) map[string]any {
 
 func object(fields properties) map[string]any {
 	required := make([]any, 0, len(fields))
-	for name := range fields {
+	for _, name := range slices.Sorted(maps.Keys(fields)) {
 		required = append(required, name)
 	}
-	sortStrings(required)
 	return map[string]any{
 		"type":                 "object",
 		"properties":           map[string]any(fields),
 		"required":             required,
 		"additionalProperties": false,
-	}
-}
-
-func sortStrings(values []any) {
-	for outer := 1; outer < len(values); outer++ {
-		for inner := outer; inner > 0; inner-- {
-			left, leftOK := values[inner-1].(string)
-			right, rightOK := values[inner].(string)
-			if !leftOK || !rightOK || left <= right {
-				break
-			}
-			values[inner-1], values[inner] = values[inner], values[inner-1]
-		}
 	}
 }
 
@@ -81,9 +74,9 @@ func decodeConclusion(document []byte, runs []investigation.ToolRun, allowed []i
 	var jsonObject struct {
 		Status  string `json:"status"`
 		Summary string `json:"summary"`
-		Impact  struct {
-			Summary string `json:"summary"`
-			RunRefs []int  `json:"run_refs"`
+		Impact  *struct {
+			Summary *string `json:"summary"`
+			RunRefs []int   `json:"run_refs"`
 		} `json:"impact"`
 		Findings []struct {
 			Statement    string                      `json:"statement"`
@@ -127,20 +120,24 @@ func decodeConclusion(document []byte, runs []investigation.ToolRun, allowed []i
 	if utf8.RuneCountInString(jsonObject.Summary) > investigation.MaxSummaryLength {
 		return investigation.Conclusion{}, fmt.Errorf("the conclusion summary exceeds %d characters", investigation.MaxSummaryLength)
 	}
-	if !oneOf(jsonObject.Status, investigation.ConclusionStatuses) {
+	if !oneOf(jsonObject.Status, newConclusionStatuses) {
 		return investigation.Conclusion{}, fmt.Errorf("invalid conclusion status %q", jsonObject.Status)
+	}
+	if jsonObject.Impact == nil || jsonObject.Impact.Summary == nil || jsonObject.Impact.RunRefs == nil {
+		return investigation.Conclusion{}, fmt.Errorf("impact requires a summary and run_refs")
 	}
 	if err := validateRunRefs(jsonObject.Impact.RunRefs, len(runs), "impact"); err != nil {
 		return investigation.Conclusion{}, err
 	}
-	if strings.TrimSpace(jsonObject.Impact.Summary) == "" {
+	if strings.TrimSpace(*jsonObject.Impact.Summary) == "" &&
+		(jsonObject.Status != string(investigation.AnswerOnly) || len(jsonObject.Impact.RunRefs) != 0) {
 		return investigation.Conclusion{}, fmt.Errorf("the impact summary is empty")
 	}
 	conclusion := investigation.Conclusion{
 		Status:  investigation.ConclusionStatus(jsonObject.Status),
 		Summary: jsonObject.Summary,
 		Impact: investigation.Impact{
-			Summary: jsonObject.Impact.Summary,
+			Summary: *jsonObject.Impact.Summary,
 			RunRefs: jsonObject.Impact.RunRefs,
 		},
 	}
@@ -275,10 +272,6 @@ func validateConclusionStatus(conclusion investigation.Conclusion) error {
 		hasCause = hasCause || finding.Kind == investigation.FindingCause
 	}
 	switch conclusion.Status {
-	case investigation.VerifiedCause:
-		if !hasCause {
-			return fmt.Errorf("verified_cause requires a cited cause with a mechanism")
-		}
 	case investigation.SupportedExplanation:
 		explanation := false
 		for _, finding := range conclusion.Findings {

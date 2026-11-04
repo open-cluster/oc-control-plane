@@ -74,8 +74,9 @@ func DraftFrom(input GenerationInput) Postmortem {
 		}
 		for _, finding := range conclusion.Findings {
 			cited := CitedStatement{InvestigationID: result.InvestigationID.String(),
-				Statement: finding.Statement,
-				RunRefs:   append([]int(nil), finding.RunRefs...)}
+				Statement:    finding.Statement,
+				RunRefs:      append([]int{}, finding.RunRefs...),
+				EvidenceRefs: append([]investigation.EvidenceRef(nil), finding.EvidenceRefs...)}
 			switch finding.Kind {
 			case investigation.FindingCause:
 				draft.RootCauses = append(draft.RootCauses, cited)

@@ -732,6 +732,7 @@ paths:
         required: true
       responses:
         "200": { $ref: "#/components/responses/Postmortem" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/incidents/{incident}/postmortem/regenerate:
     parameters: *incident-path
@@ -1549,7 +1550,7 @@ components:
         incidentId: { $ref: "#/components/schemas/UUID" }
         windowFrom: { $ref: "#/components/schemas/Timestamp" }
         windowUntil: { $ref: "#/components/schemas/Timestamp" }
-        conclusionStatus: { type: string, enum: [verified_cause, supported_explanation, inconclusive, answer_only] }
+        conclusionStatus: { type: string, enum: [verified_cause, supported_explanation, inconclusive, answer_only], description: "Assessment outcome. verified_cause is retained on historical results." }
         summary: { type: string, minLength: 1, maxLength: 4096 }
         impact: { $ref: "#/components/schemas/Impact" }
         findings: { type: array, items: { $ref: "#/components/schemas/Finding" } }
@@ -1690,7 +1691,7 @@ components:
           additionalProperties: false
           required: [status, summary]
           properties:
-            status: { type: string, enum: [verified_cause, supported_explanation, inconclusive, answer_only] }
+            status: { type: string, enum: [verified_cause, supported_explanation, inconclusive, answer_only], description: "Assessment outcome. verified_cause is retained on historical events." }
             summary: { type: string, minLength: 1, maxLength: 4096 }
     FailedInvestigationEvent:
       type: object
@@ -1882,6 +1883,7 @@ components:
         investigationId: { $ref: "#/components/schemas/UUID" }
         statement: { type: string, minLength: 1, maxLength: 8192 }
         runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+        evidenceRefs: { type: array, items: { $ref: "#/components/schemas/EvidenceRef" } }
     ActionItem:
       type: object
       additionalProperties: false

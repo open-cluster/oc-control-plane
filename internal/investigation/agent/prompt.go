@@ -91,10 +91,10 @@ Stopping:
   never converts an open possibility into a cause.
 
 Concluding:
-- Conclude by calling the conclude tool, once. Conclusion status expresses assessment
-  certainty. A finding stated above its evidence is wrong even when it turns out true.
-- Keep impact separate from the overall summary. Cite impact only when reads establish it;
-  otherwise state plainly that impact is not established and use no run references.
+- Call conclude once. Use supported_explanation for a cited cause or contributing factor,
+  inconclusive when the explanation remains unsupported, and answer_only for a factual answer.
+- Keep impact separate from the overall summary. Cite impact only when reads establish it.
+  Describe unknown impact without references. For answer_only, leave irrelevant impact empty.
 - Propose actions rather than claiming execution. Each action states its rationale,
   verification, and the runs supporting it.
 - If reads are over and questions remain, keep open explanations as hypotheses and name
@@ -197,7 +197,7 @@ func concludeSchema(prior bool) map[string]any {
 	actions := array(actionSchema())
 	actions["maxItems"] = investigation.MaxConclusionActions
 	return object(properties{
-		"status": enumField(investigation.ConclusionStatuses...),
+		"status": enumField(newConclusionStatuses...),
 		"summary": map[string]any{
 			"type":      "string",
 			"maxLength": investigation.MaxSummaryLength,

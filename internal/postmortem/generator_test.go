@@ -15,6 +15,7 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 	t.Parallel()
 
 	incidentID := uuid.New()
+	priorID := uuid.New()
 	input := GenerationInput{
 		IncidentID:  incidentID,
 		Title:       "Checkout unavailable",
@@ -61,6 +62,18 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 		draft.RootCauses[0].RunRefs[0] != 3 {
 		t.Errorf("root causes = %+v", draft.RootCauses)
 	}
+	input.Results[0].Conclusion.Findings[0].RunRefs = nil
+	input.Results[0].Conclusion.Findings[0].EvidenceRefs = []investigation.EvidenceRef{
+		{InvestigationID: priorID, ToolRunOrdinal: 2},
+	}
+	cited, err := json.Marshal(DraftFrom(input).RootCauses)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(cited), `"evidenceRefs":[{"investigationId":"`+priorID.String()+`","toolRunOrdinal":2}]`) {
+		t.Errorf("prior citation missing from draft: %s", cited)
+	}
+
 	encoded, err := json.Marshal(draft)
 	if err != nil {
 		t.Fatal(err)

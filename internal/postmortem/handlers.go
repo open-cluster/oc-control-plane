@@ -165,6 +165,8 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 	switch {
 	case errors.Is(err, ErrUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "postmortem not found"})
+	case errors.Is(err, ErrUnavailableEvidence):
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
 	case errors.Is(err, ErrNotEligible):
 		writeJSON(writer, http.StatusConflict, errorView{Error: err.Error()})
 	case errors.Is(err, ErrAlreadyExists), errors.Is(err, ErrAlreadyReviewed):

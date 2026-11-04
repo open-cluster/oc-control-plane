@@ -30,7 +30,7 @@ func startInvestigationModel(t *testing.T) *httptest.Server {
 			fixtureNamespace, fixtureWorkload)
 		if calls.Add(1) > 1 {
 			name = "conclude"
-			arguments = fmt.Sprintf(`{"status":"verified_cause","summary":"Relay observed the failing workload.","impact":{"summary":"The workload is unhealthy.","run_refs":[1]},"findings":[{"statement":"Relay observed workload %s in namespace %s","kind":"cause","mechanism":"the unhealthy workload serves the affected requests","run_refs":[1],"evidence_refs":[]}],"hypotheses":[],"actions":[],"limitations":[]}`,
+			arguments = fmt.Sprintf(`{"status":"supported_explanation","summary":"Relay observed the failing workload.","impact":{"summary":"The workload is unhealthy.","run_refs":[1]},"findings":[{"statement":"Relay observed workload %s in namespace %s","kind":"cause","mechanism":"the unhealthy workload serves the affected requests","run_refs":[1],"evidence_refs":[]}],"hypotheses":[],"actions":[],"limitations":[]}`,
 				fixtureWorkload, fixtureNamespace)
 		}
 		writer.Header().Set("Content-Type", "text/event-stream")

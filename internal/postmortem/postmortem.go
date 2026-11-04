@@ -19,10 +19,11 @@ const (
 )
 
 var (
-	ErrUnknown         = errors.New("postmortem unknown")
-	ErrNotEligible     = errors.New("incident is not resolved")
-	ErrAlreadyExists   = errors.New("postmortem already exists")
-	ErrAlreadyReviewed = errors.New("postmortem is already reviewed")
+	ErrUnknown             = errors.New("postmortem unknown")
+	ErrNotEligible         = errors.New("incident is not resolved")
+	ErrAlreadyExists       = errors.New("postmortem already exists")
+	ErrAlreadyReviewed     = errors.New("postmortem is already reviewed")
+	ErrUnavailableEvidence = errors.New("postmortem correction cites unavailable evidence")
 )
 
 type TimelineEntry struct {
@@ -33,9 +34,10 @@ type TimelineEntry struct {
 }
 
 type CitedStatement struct {
-	InvestigationID string `json:"investigationId,omitempty"`
-	Statement       string `json:"statement"`
-	RunRefs         []int  `json:"runRefs"`
+	InvestigationID string                      `json:"investigationId,omitempty"`
+	Statement       string                      `json:"statement"`
+	RunRefs         []int                       `json:"runRefs"`
+	EvidenceRefs    []investigation.EvidenceRef `json:"evidenceRefs,omitempty"`
 }
 
 type ActionItem struct {
