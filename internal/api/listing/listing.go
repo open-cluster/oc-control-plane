@@ -114,10 +114,13 @@ var reserved = map[string]bool{"search": true, "sort": true, "cursor": true, "li
 func sortFrom(asked string, spec Spec) (Sort, error) {
 	sort := Sort{Field: asked}
 	if strings.HasPrefix(asked, "-") {
-		sort = Sort{Field: asked[1:], Descending: true}
+		sort = Sort{
+			Field:      asked[1:],
+			Descending: true,
+		}
 	}
 	if !contains(spec.Sortable, sort.Field) {
-		return Sort{}, fmt.Errorf("%w: %q; it is ordered by %v",
+		return Sort{}, fmt.Errorf("%w: %q. It is ordered by %v",
 			ErrUnknownSort, sort.Field, spec.Sortable)
 	}
 	return sort, nil
