@@ -1,32 +1,14 @@
 ---
 title: "Integrations"
-description: "Choose the alert and evidence sources needed for an OpenCluster Investigation."
+description: "Choose alert and evidence sources for OpenCluster."
 ---
 
-Use at least one alert source to create Incidents and add only the evidence sources your
-on-call team is permitted to read. A connected source is queried only when it is relevant
-to the Investigation and its verified access allows the Tool.
+Connect an alert source to create Incidents. Add the evidence sources your team uses to investigate them.
 
-| What you need | Choose | Evidence or intake | Relay required | Setup guide |
-| --- | --- | --- | --- | --- |
-| Send normalized alerts from another system | Generic Webhook | Canonical firing and resolved Alert Events | No | [Generic Webhook](/integrations/alerting/generic_webhook) |
-| Receive Prometheus alert lifecycles | Prometheus Alertmanager | Grouped firing and resolved alerts | No | [Prometheus Alertmanager](/integrations/alerting/alertmanager) |
-| Compare service errors, latency and resource usage | Prometheus | Metric-name discovery and bounded PromQL queries | No | [Prometheus](/integrations/observability/prometheus) |
-| Read relevant service logs | Loki | Bounded, timestamped LogQL excerpts with stream labels | No | [Loki](/integrations/observability/loki) |
-| Follow a request across services | Tempo | Trace search and bounded span relationships | No | [Tempo](/integrations/observability/tempo) |
-| Inspect cluster runtime state | Kubernetes | Workload state, Events, and bounded pod logs | Yes | [Kubernetes](/integrations/infrastructure/kubernetes) |
-| Compare an Incident with code changes | GitHub | Repositories, commits, pull requests, checks, files, and releases | No | [GitHub](/integrations/source-control/github) |
-| Read operational conversation context | Slack | Bounded channel and thread messages | No | [Slack](/integrations/collaboration/slack) |
+- **Alerts.** [Generic Webhook](/integrations/alerting/generic_webhook) accepts your alert sender's JSON. [Prometheus Alertmanager](/integrations/alerting/alertmanager) sends grouped firing and resolved alerts.
+- **Observability.** Connect [Prometheus](/integrations/observability/prometheus) for metrics, [Loki](/integrations/observability/loki) for logs and [Tempo](/integrations/observability/tempo) for traces.
+- **Infrastructure.** [Kubernetes](/integrations/infrastructure/kubernetes) provides workloads, Events and container logs through Relay.
+- **Changes.** [GitHub](/integrations/source-control/github) provides repository changes, checks and releases.
+- **Collaboration.** [Slack](/integrations/collaboration/slack) provides conversation context. An installed app can reply to direct mentions.
 
-Creating, changing, verifying, disabling, or removing an Integration requires the Role
-stated by its generated API operation; the console requires an **Admin** for setup. Each
-provider guide gives the least-privilege permissions, exact procedure, verification,
-limitations, rotation, and removal behavior.
-
-Verification records what the current credential and provider installation make
-available. It does not prove that a future Investigation will contain enough evidence to
-establish a cause. Provider content remains untrusted, and read-only access still requires
-the deployment owner to review retention, network, and credential policy.
-
-Start with [Connect your tools](/getting-started/connect-your-tools), then run an
-[Investigation](/getting-started/run-your-first-investigation).
+Use the API to create and manage Integrations. GitHub and Slack installation also use a browser for provider authorization. Start with [Connect your tools](/getting-started/connect-your-tools).

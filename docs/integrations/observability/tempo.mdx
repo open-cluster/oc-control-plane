@@ -1,19 +1,15 @@
 ---
 title: "Tempo"
-description: "Find relevant traces and inspect bounded spans during an Investigation."
+description: "Search distributed traces and inspect spans by trace ID."
 ---
 
-Connect Tempo to compare request timing and span errors with metrics, logs and deployments.
-Trace evidence can identify where time was spent; it does not by itself prove causation.
+Connect Tempo to find slow or failed requests and inspect how time was spent across services.
 
-## Connect Tempo
+## Connect
 
-Use a deployment-approved endpoint reachable from self-hosted OpenCluster, including an
-approved Grafana Cloud source. Prefer HTTPS and a read-only token. TLS is verified and
-redirects are refused. Private endpoints need direct access; requests do not use a Relay.
+You need the OpenCluster **Admin** role and permission to search traces and retrieve them by ID. Use an approved HTTPS endpoint reachable from OpenCluster, including any proxy prefix and excluding the Tempo API path. See [network and credential requirements](/security/overview).
 
-Create a `tempo` Integration through `POST /api/v1/integrations` using the
-[authenticated API](/api-reference/overview#authentication):
+Use the [API session and Origin setup](/api-reference/overview#authentication). Save this example as a private `tempo.json` file:
 
 ```json
 {
@@ -22,61 +18,29 @@ Create a `tempo` Integration through `POST /api/v1/integrations` using the
   "configuration": {
     "url": "https://traces.example.com",
     "auth": "bearer",
-    "tenantId": "production"
+    "token": "<read-only-token>"
   }
 }
 ```
 
-| Configuration | Meaning |
-| --- | --- |
-| `url` | Required base URL, including any proxy prefix but no API path, credentials, query or fragment. |
-| `auth` | Required: `bearer` or `basic`. |
-| `token` | One encrypted read-only token. Optional for Bearer on trusted unauthenticated sources; required for Basic. |
-| `username` | Required for Basic (use the source's documented user); omit for Bearer. |
-| `tenantId` | Optional single tenant sent as `X-Scope-OrgID`. Never selected by the Agent. |
+Add `tenantId` if Tempo requires a single tenant header. Use `auth: basic` with a `username` and read-only token for Basic authentication, including Grafana Cloud Tempo. Omit the bearer token only for a trusted endpoint that allows unauthenticated reads.
 
-Creation verifies actual search access. Trace retrieval can require additional upstream
-permission. Admins and Editors can revise configuration; omitted tokens are retained and
-used with revised destinations/authentication/tenants. Trust configuration administrators,
-approve changes and verify again after edits. There is no enforced destination allowlist;
-multi-tenant OpenCluster Cloud requires a separate egress policy.
+```bash
+curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
+  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
+  --data @tempo.json "$OPENCLUSTER_URL/api/v1/integrations"
+```
 
-## Investigate a request
+## Verify and use
 
-Ask: **“Find checkout traces with errors during the Incident and inspect a relevant trace.”**
-A focused TraceQL search could be `{ resource.service.name = "checkout" && status = error }`.
+Creation runs a bounded trace search. A valid empty response confirms search access. Check for `integration.status: verified`, save `integration.id` and use [verification](/api-reference/overview#verify-an-integration) after a configuration change. Trace retrieval may need separate permission at your endpoint.
 
-| Tool | Inputs and results |
-| --- | --- |
-| `tempo_search_traces` | Required `query`; optional `start`, `end`, `limit` (default 20, maximum 50). Returns trace IDs, root service/operation, timing, available error counts/hints, and service appearances within the returned sample. |
-| `tempo_get_trace` | Required hexadecimal `traceId` (at most 32 characters); optional `start`/`end`. Returns up to 200 chronological spans with service, parent IDs, timestamps, duration and error status. |
+OpenCluster can search with TraceQL and retrieve spans for a specific trace ID. Search returns a bounded sample. Use retrieved spans and their parent-child relationships to inspect where an example request spent time. Sampling, retention, instrumentation gaps and result limits affect coverage. Tempo metrics and tag discovery are unavailable.
 
-Times are RFC3339. Both Tools clamp to the Investigation window and at most its latest
-24 hours, rounding inward to whole seconds. Sources identify the Integration and trace;
-span IDs preserve the relationships reported by Tempo. Missing error information is
-unknown, not evidence of health. Search results are nondeterministic subsets, not rankings.
+Trace retrieval uses time bounds as backend search hints. A retrieved trace can include spans outside those bounds or omit part of the trace.
 
-The search summary states the exact returned sample size and counts each observed service
-at most once per trace, using its root service and available service statistics. Traces
-with missing service statistics are identified; absent statistics do not mean zero
-observations. Service presence alone does not identify which service consumed latency.
-Inspect span durations and parent relationships for a bottleneck. Missing or short child
-spans leave unexplained time; they do not verify a database wait, lock, or pool exhaustion.
+## Troubleshooting
 
-## Limits and incomplete data
-
-- Search limits, incomplete search jobs, upstream partial status, missing retained parents
-  and local span limits are reported as possibly incomplete. Reaching the search limit
-  does not prove additional traces exist. Empty search and scoped `not_found`
-  results do not establish global absence.
-- Retrieval time bounds are **backend search hints**. They may omit parts of a trace or
-  return spans outside the window; even a source `COMPLETE` status is not a guarantee of
-  global completeness or historical isolation. Keep source retention and query policies.
-- HTTP calls respect cancellation and a 10-second timeout. Decoded responses are limited
-  to 2 MiB and normalized results to 256 KiB. Oversized results fail explicitly. Arbitrary
-  attributes/events and the raw trace document are not sent to the Agent.
-- Only supported search and V2 trace JSON APIs are used. Experimental LLM formats are
-  not used, and optional span pruning is disabled. Invalid IDs, timings, responses and
-  permission failures are reported as failures. Known credential reflections are withheld.
-
-See the [Tempo API](https://grafana.com/docs/tempo/latest/api_docs/) for source-specific details.
+- If verification fails, check the endpoint, TLS trust, credentials and tenant.
+- If search succeeds but a trace cannot be retrieved, check trace-read permission, retention and the selected tenant.
+- If results are incomplete, narrow the search interval or selector. Replace credentials through PATCH with the full configuration and new token.

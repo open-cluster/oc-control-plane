@@ -1,63 +1,33 @@
 ---
 title: "Run your first investigation"
-description: "Start an Investigation from an Incident and review its cited result."
+description: "Open an Investigation from an Incident and review its cited result."
 ---
 
-An Investigation is one bounded evidence-gathering turn. This procedure starts one from
-an Incident and checks whether its result is safe to use.
+Complete the [Quickstart](/getting-started/quickstart) or use an existing Incident. Connect the relevant [Integrations](/integrations/overview), configure a model provider and check that `/readyz` succeeds. Use an **Editor** or **Admin** [API session](/api-reference/overview#authentication).
 
-## Prerequisites
+## Open and follow an Investigation
 
-- Complete the [Quickstart](/getting-started/quickstart) or use an existing Incident.
-- Connect and verify the evidence sources relevant to the alert.
-- Confirm the model provider is configured and `/readyz` succeeds.
+Use `GET /api/v1/incidents` to find the Incident ID. If an alert already opened an Investigation, use its ID from the Investigation list. To ask OpenCluster to investigate an existing Incident again, replace the placeholder below:
 
-## Start the Investigation
+```bash
+curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
+  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
+  --data '{"incidentId":"<incident-id>"}' "$OPENCLUSTER_URL/api/v1/investigations"
+```
 
-1. Open the Incident created by an alert.
-2. Select **Investigate**.
-3. Watch progress move from `queued` to `running` while OpenCluster reads the
-   connected sources.
+Save the returned `id` as `INVESTIGATION_ID` and check progress:
 
-You can also ask an operational question from a new Conversation. Each follow-up Message
-creates another immutable Investigation in that Conversation; completed work never
-resumes.
+```bash
+curl --fail --cookie "$OPENCLUSTER_COOKIE" \
+  "$OPENCLUSTER_URL/api/v1/investigations/$INVESTIGATION_ID"
+```
 
-## Understand the result
+The lifecycle moves from `queued` to `running`, then to `concluded`, `cancelled` or `failed`. See [event streams](/api-reference/overview#investigation-event-streams) for live progress.
 
-A finished result separates the summary, impact, Findings, hypotheses, Action Proposals,
-limitations, and numbered Tool Run citations.
+## Review the result
 
-- A Finding is trustworthy only to the extent supported by its cited Tool Runs.
-- A supported hypothesis is not a verified cause. Check its mechanism and competing
-  explanations.
-- An Action Proposal is advice, not an executed change. Review its rationale, citations,
-  and verification procedure.
-- A limitation names evidence OpenCluster could not obtain or a conclusion it could not
-  defend.
+Read the summary, Findings and limitations. Check each material Finding against the [cited observation](/concepts/investigations-and-conversations#inspect-a-cited-observation). Review the effective time bounds and whether the source result or prepared observation was incomplete. Treat proposed actions as recommendations and check their verification steps before acting.
 
-For a deployment question, a useful result may cite one GitHub change read and one
-Kubernetes Event read, leave an alternative hypothesis `unresolved`, and propose a
-rollback with a latency verification check. If either source is
-unavailable, the result must state that limitation instead of claiming a cause.
+A concluded Investigation can be inconclusive. If a source is missing, verify the Integration and review its permissions. For a follow-up question, open or continue a [Conversation](/concepts/investigations-and-conversations#conversations-and-follow-ups).
 
-## Verify the outcome
-
-Open each citation and confirm that its source, time window, and summary support the
-Finding. Review contradictions and truncated Tool Runs. A completed Investigation ends
-as `concluded`, `cancelled`, or `failed`. Assessment certainty and limitations describe
-whether the completed result answers your question:
-
-| Status | What to do |
-| --- | --- |
-| `concluded` | Review cited Findings, Action Proposals, `conclusionStatus`, and limitations. Address evidence limits or requested human input in a new Message. |
-| `cancelled` | Start a new Investigation only if the question is still useful. |
-| `failed` | Correct the reported provider or processing failure before retrying. |
-
-Select **Cancel investigation** when the question is no longer useful. Cancellation is
-best effort: in-flight reads may stop and the terminal status becomes `cancelled`.
-
-If an expected source is missing, return to its Integration, run verification, and check
-its permissions. Do not reinterpret an inconclusive result as a cause.
-
-Next, read [Investigations and results](/concepts/investigations-and-conversations).
+To stop work, send an authenticated `POST /api/v1/investigations/{investigation}/cancel` with the Origin header. Cancellation is best effort.

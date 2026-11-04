@@ -13,6 +13,15 @@ Read `conclusionStatus`, `limitations`, `stoppedBy`, and `error` separately to u
 the result. A `concluded` event's payload `status` describes assessment certainty;
 it is not the Investigation lifecycle status.
 
+- `supported_explanation` means cited evidence supports a cause or contributing
+  factor. A contributing factor can be supported while the primary cause remains open.
+- `inconclusive` means the available evidence could not establish the requested explanation.
+- `answer_only` answers a factual or noncausal question. Impact can be empty.
+
+Historical results and events may retain `verified_cause`. Review citations and
+limitations before relying on any assessment. `createdAt` records creation and
+`concludedAt` records the terminal transition, including cancellation or failure.
+
 The first activity event explains that OpenCluster is reviewing the request and available
 evidence sources. It does not mean a source has already been read. Older recorded startup
 events may have no explanatory text; their replay remains supported.
@@ -101,8 +110,8 @@ certainty; Findings do not carry a second confidence classification.
 
 Investigations represent other uncertainty as hypotheses or limitations instead.
 
-Final hypotheses are `supported`, `ruled_out`, or `unresolved`. Supported is weaker than
-verified. Limitations name missing access, telemetry, contradictions,
+Final hypotheses are `supported`, `ruled_out`, or `unresolved`. An unconfirmed
+mechanism remains a hypothesis. Limitations name missing access, telemetry, contradictions,
 unresolved assumptions, or essential human input.
 
 Citations show what OpenCluster read, not that the source was complete or correct. Check

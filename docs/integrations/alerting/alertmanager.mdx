@@ -1,131 +1,52 @@
 ---
 title: "Prometheus Alertmanager"
-description: "Create incidents from authenticated Alertmanager webhook deliveries."
+description: "Create and update Incidents from Alertmanager deliveries."
 ---
 
-Connect Alertmanager to create and update incidents from firing and resolved alerts.
-OpenCluster receives webhooks; it does not call Alertmanager.
-
-## What OpenCluster uses it for
-
-OpenCluster records the alert status, times, labels, annotations, fingerprint, and
-generator URL. It uses Alertmanager's grouping key to group delivered alerts into an
-incident. The triggering alert becomes the starting context for an investigation.
-
-## Prerequisites
-
-- Prometheus Alertmanager 0.28.0 or later. Version 0.28.0 added the `http_headers`
-  configuration used for the webhook secret; 0.27.0 and earlier reject it. OpenCluster
-  tests the configuration below against Alertmanager 0.34.0.
-- Network access from Alertmanager to the OpenCluster intake endpoint over HTTPS.
-- The **Admin** role in OpenCluster.
-
-## Access
-
-This integration is inbound only. The generated secret authenticates webhook
-deliveries in the `X-OpenCluster-Token` header. OpenCluster stores only a digest of the
-secret and cannot show it again. The static token authenticates the sender; it does not
-cryptographically sign the request body.
+Connect Alertmanager to open Incidents from firing alerts and update them when alerts resolve. OpenCluster uses Alertmanager's grouping key and retains the alert details.
 
 ## Connect
 
-<Steps>
-  <Step title="Create the integration">
-    In **Integrations**, choose **Prometheus Alertmanager**, enter a name, and create
-    the integration. Copy the webhook URL and secret from the response.
-  </Step>
-  <Step title="Configure Alertmanager">
-    Add the receiver, then route alerts to it:
+You need the OpenCluster **Admin** role, HTTPS reachability from Alertmanager to OpenCluster and Alertmanager 0.28.0 or later for the custom header. Use the [API session and Origin setup](/api-reference/overview#authentication):
 
-    ```yaml
-    receivers:
-      - name: opencluster
-        webhook_configs:
-          - url: "https://oc.example.com/webhooks/v1/integrations/<integration-id>/alert-events"
-            send_resolved: true
-            http_config:
-              http_headers:
-                X-OpenCluster-Token:
-                  secrets:
-                    - "<webhook-secret>"
+```bash
+curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
+  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
+  --data '{"type":"alertmanager","name":"Production alerts","configuration":{}}' \
+  "$OPENCLUSTER_URL/api/v1/integrations"
+```
 
-    route:
-      routes:
-        - receiver: opencluster
-          continue: true
-    ```
+Save `integration.id`, `integration.webhook.url` and the one-time `webhookSecret`. Add the receiver below with the returned URL and secret. Merge its child route into your existing routing tree:
 
-    Reload Alertmanager after validating the configuration.
-  </Step>
-</Steps>
+```yaml
+receivers:
+  - name: opencluster
+    webhook_configs:
+      - url: "https://oc.example.com/webhooks/v1/integrations/<integration-id>/alert-events"
+        send_resolved: true
+        http_config:
+          http_headers:
+            X-OpenCluster-Token:
+              secrets:
+                - "<webhook-secret>"
 
-## Verify
+route:
+  routes:
+    - receiver: opencluster
+      continue: true
+```
 
-Fire a test alert, open the integration, and select **Verify**. Verification reports the
-time of the last accepted delivery. If no delivery has arrived, check the receiver,
-route, URL, secret, and network path.
+Validate and reload Alertmanager. Keep the secret in protected configuration. The token authenticates the sender, so use TLS to protect it and the delivery.
 
-## During investigations
+## Verify and use
 
-The alert supplies the incident timing, labels, annotations, runbook and dashboard URLs
-when present, and the generator URL. Alertmanager is not a live investigation source;
-OpenCluster cannot query silences, inhibitions, or other active alerts.
+Fire a test alert. Expect `202 Accepted` on the first delivery and `200 OK` on an exact retry. Call the [verification endpoint](/api-reference/overview#verify-an-integration) to see the last accepted delivery. Use `GET /api/v1/incidents` to find the Incident.
 
-## Delivery behavior
-
-| Response | Meaning |
-| --- | --- |
-| `202` | The delivery and Incident updates were recorded. When a model provider is configured, one automatic Investigation is queued for each newly opened Incident. |
-| `200` | The same body was already accepted; it was not applied twice. |
-| `400` | The payload is invalid or, when a model provider is configured, opens more Incidents than the pending Investigation limit; do not retry unchanged. |
-| `401` | The secret is wrong, was rotated, or the integration is disabled. |
-| `413` | The body is larger than 1 MiB. |
-| `503` | Admission capacity is temporarily exhausted, pending Investigation capacity is exhausted with a configured model provider, or OpenCluster could not record the delivery; retry and honor `Retry-After` when present. |
-
-Deliveries can contain at most 2,048 alerts. Only `firing` and `resolved` statuses are
-accepted. If Alertmanager marks a delivery as truncated, OpenCluster records that the
-incident context is incomplete.
-
-When a model provider is configured, one automatic Investigation opens per new Incident.
-Deliveries that join or resolve an existing Incident do not open another. Without a
-configured model provider, Alert Events and Incident lifecycle state are still recorded
-and no Investigation capacity is reserved. OpenCluster does not backfill skipped
-automatic Investigations if a model provider is configured later.
-
-Accepted alert deliveries complete during admission. Exact retries remain idempotent and
-do not create another Alert Event, Incident, or Investigation.
-
-## Limitations
-
-Alertmanager supplies alert lifecycle context, not runtime or change evidence. Its
-grouping key determines provisional Incident grouping and does not prove a shared cause.
-Connect Kubernetes, GitHub, or another evidence source when an Investigation needs to
-explain the alert.
+OpenCluster records labels, annotations, timing and generator URLs. A new Incident queues an Investigation if a model provider is configured. The Integration receives alerts and cannot query Alertmanager for live alerts or silences.
 
 ## Troubleshooting
 
-- **Verify shows no delivery:** send a firing test alert and check Alertmanager logs.
-- **`401`:** replace the configured secret with the current value. Rotated secrets stop
-  working immediately.
-- **`400`:** confirm middleware has not changed Alertmanager's version 4 webhook body.
-  If an ungrouped batch exceeds the pending Investigation limit, split it into smaller
-  deliveries or configure source grouping before retrying.
-- **`503`:** honor `Retry-After` when present, reduce delivery frequency, or group alerts more aggressively.
-  See the [process-wide admission limit](/self-hosting/configuration#webhook-admission-limits).
-
-## Rotate or disconnect
-
-Rotating creates a new secret and invalidates the old one immediately. Update
-Alertmanager in the same maintenance step. Disable the integration to reject new
-deliveries while retaining incident history. Deletion is refused when retained records
-depend on the integration.
-
-## Next step
-
-Connect an [evidence source](/integrations/overview), then
-[run the first Investigation](/getting-started/run-your-first-investigation) from a test alert.
-
-## Availability
-
-Prometheus Alertmanager is available in OSS v0.1. Alertmanager and its mark belong to the
-Prometheus project. Review the [provider webhook contract](https://prometheus.io/docs/alerting/latest/configuration/#webhook_config).
+- **No delivery.** Check the receiver route, Alertmanager logs and reachability.
+- **401.** Confirm the Integration is enabled and replace a rotated secret immediately.
+- **400 or 413.** Check that the version 4 webhook body is intact. Send no more than 2,048 alerts and stay within 1 MiB per request.
+- **503.** Honor `Retry-After` when provided. Review [webhook admission limits](/self-hosting/configuration#webhook-admission-limits) if failures recur.
