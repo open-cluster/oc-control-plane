@@ -13,7 +13,7 @@ Use the [Prometheus configuration example](/api-reference/overview#prometheus-co
 
 ## After connection
 
-Creation checks that `vector(1)` returns the expected sample. No separate verification call is needed after successful creation.
+Creation checks metric query access. No separate verification call is needed after successful creation.
 
 OpenCluster can discover metric names and run instant and range PromQL queries. Range evaluations cover at most the latest 24 hours of the requested interval. An instant query has one evaluation time. Selectors such as `[60m]` and offsets can still read earlier data, so enforce historical access at the source. Responses can include Prometheus warnings and may be incomplete when limits apply. Native histogram results are unsupported.
 

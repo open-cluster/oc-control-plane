@@ -15,8 +15,8 @@ You need Git, Docker Compose, curl, OpenSSL, port `8081`, and outbound HTTPS acc
 
 From a checkout of the release you intend to deploy, create private files outside version control for the PostgreSQL
 password, PostgreSQL DSN, one-time bootstrap token, 32-byte encryption key, and model
-provider credential. Each environment variable below names a file. It never contains
-the credential itself.
+provider credential. The five `*_FILE` variables below name credential files. The remaining variables
+select the provider, model, and container user.
 
 On Linux or macOS, create the files and export the Compose inputs. Replace the obvious
 placeholders. The password in the DSN must be URL-encoded and equal the PostgreSQL
@@ -96,8 +96,9 @@ Verify the User, Organization, and **Admin** Role with:
 curl --fail --cookie .secrets/session-cookie http://localhost:8081/api/v1/session
 ```
 
-Treat the cookie file as a credential. A failed request commits nothing. Correct the
-input and retry with the bootstrap token.
+Treat the cookie file as a credential. If bootstrap rejects the input, correct it and retry.
+If the response is lost, try [signing in](/api-reference/overview#authentication) with the
+account you submitted before retrying bootstrap.
 
 The bootstrap token is deployment-wide and accepted only for the first local User. Keep
 it out of command history and remove access to the file after bootstrap succeeds. An

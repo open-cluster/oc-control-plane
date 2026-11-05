@@ -80,6 +80,8 @@ Use the returned `status` and `toolAvailability` for technical diagnosis. `verif
 
 Configuration edits without replacement credentials retain existing credentials and verification state. Recheck access after changing an endpoint or tenant. Replacement credentials are probed before saving. A successful probe cannot guarantee future queries.
 
+Prometheus checks the expected result of `vector(1)`. Loki checks a one-minute log query limited to one entry. Tempo runs a bounded trace search. Valid empty Loki and Tempo results confirm query access. Tempo trace retrieval can still require separate permission.
+
 ## Authorize GitHub or Slack in a browser
 
 **Advanced workaround for API-only deployments.** Use your browser's developer console
@@ -197,6 +199,8 @@ phase returns `200 OK`. Correct `400`, `401`, and `413` responses before retryin
 webhooks use `503` for temporary admission pressure so Alertmanager retries them. Retry with
 bounded backoff and honor `Retry-After` when present. Slack admission pressure remains `429`.
 
+For full request schemas, select `POST /webhooks/v1/integrations/{integration}/alert-events` under **Endpoints**, or locate it through the [API surface](/api-reference/surface#webhooks). The request schema includes both Generic Webhook and Alertmanager bodies.
+
 Use [Generic Webhook](/integrations/alerting/generic_webhook) or
 [Prometheus Alertmanager](/integrations/alerting/alertmanager) for sender setup. Alert
 deliveries finish during admission. Admins can recover terminal Slack processing
@@ -233,11 +237,18 @@ method/path entry in the navigation.
 
 An Admin creates Integrations or starts provider authorization. Editors and Admins can update, enable, disable, and verify existing Integrations. Only Admins can delete them or rotate webhook secrets. Viewers can read permitted metadata. Investigation and Conversation permissions are separate.
 
-Use the session and Origin setup above. Configuration files contain credentials and must remain private. Send the complete configuration when updating it. For GitHub or installed Slack apps, use the [browser authorization flow](#authorize-github-or-slack-in-a-browser).
+Use the [session and Origin setup](#authentication). Save the relevant JSON example below in a private file, then submit it with this shared command. Set `INTEGRATION_CONFIG` to that file's name. Send the complete configuration when updating it. For GitHub or installed Slack apps, use the [browser authorization flow](#authorize-github-or-slack-in-a-browser).
+
+```bash
+INTEGRATION_CONFIG=prometheus.json
+curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
+  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
+  --data @"$INTEGRATION_CONFIG" "$OPENCLUSTER_URL/api/v1/integrations"
+```
 
 ### Prometheus configuration
 
-Use the [API session and Origin setup](/api-reference/overview#authentication). Save your configuration in a private file named `prometheus.json`:
+Save your configuration as private `prometheus.json`, then use the [shared creation command](#connect-an-integration):
 
 ```json
 {
@@ -252,15 +263,9 @@ Use the [API session and Origin setup](/api-reference/overview#authentication). 
 
 Omit `bearerToken` if your endpoint allows unauthenticated reads.
 
-```bash
-curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
-  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
-  --data @prometheus.json "$OPENCLUSTER_URL/api/v1/integrations"
-```
-
 ### Loki configuration
 
-Use the [API session and Origin setup](/api-reference/overview#authentication). Save this example as a private `loki.json` file:
+Save this example as private `loki.json`, then use the [shared creation command](#connect-an-integration):
 
 ```json
 {
@@ -277,15 +282,9 @@ Use the [API session and Origin setup](/api-reference/overview#authentication). 
 
 Omit `tenantId` unless Loki requires a single tenant header. Omit the token only for a trusted endpoint that allows unauthenticated reads. For Basic authentication, including Grafana Cloud Loki, set `auth` to `basic`, add `username` from your Loki settings and use a read-only token.
 
-```bash
-curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
-  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
-  --data @loki.json "$OPENCLUSTER_URL/api/v1/integrations"
-```
-
 ### Tempo configuration
 
-Use the [API session and Origin setup](/api-reference/overview#authentication). Save this example as a private `tempo.json` file:
+Save this example as private `tempo.json`, then use the [shared creation command](#connect-an-integration):
 
 ```json
 {
@@ -300,12 +299,6 @@ Use the [API session and Origin setup](/api-reference/overview#authentication). 
 ```
 
 Add `tenantId` if Tempo requires a single tenant header. Use `auth: basic` with a `username` and read-only token for Basic authentication, including Grafana Cloud Tempo. Omit the bearer token only for a trusted endpoint that allows unauthenticated reads.
-
-```bash
-curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
-  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
-  --data @tempo.json "$OPENCLUSTER_URL/api/v1/integrations"
-```
 
 ### Kubernetes creation
 
@@ -324,7 +317,7 @@ curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
 
 ### Slack configuration
 
-If the deployment has no installation flow, an Admin can create a read-only Integration with an existing token. Use the [API session and Origin setup](/api-reference/overview#authentication), save the configuration in a private file named `slack.json`, and submit it:
+An Admin can use an existing token for read-only access without configuring the deployment's Slack installation flow. Save this as private `slack.json` and submit it with the [shared creation command](#connect-an-integration):
 
 ```json
 {
@@ -332,12 +325,6 @@ If the deployment has no installation flow, an Admin can create a read-only Inte
   "name": "Operations workspace",
   "configuration": {"botToken": "<read-only-token>"}
 }
-```
-
-```bash
-curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
-  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
-  --data @slack.json "$OPENCLUSTER_URL/api/v1/integrations"
 ```
 
 ### Generic Webhook creation
@@ -365,11 +352,11 @@ With an Editor or Admin session and a configured model provider, open a Conversa
 ```bash
 curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
   --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
-  --data '{"subject":"Checkout health","message":"Are checkout pods healthy in the payments namespace?"}' \
+  --data '{"subject":"Checkout health","message":"Is the checkout Deployment healthy in the payments namespace?"}' \
   "$OPENCLUSTER_URL/api/v1/conversations"
 ```
 
-Save the returned `id` as `CONVERSATION_ID`. Read the Conversation to follow its Messages and turns. Send a follow-up with `POST /api/v1/conversations/{conversation}/messages` and a body such as `{"message":"What do recent namespace Events show?"}`. Use the same cookie and Origin headers.
+Save the returned `id` as `CONVERSATION_ID`. Use `GET /api/v1/conversations/{conversation}` to read its Messages and turns. A turn's `investigationId` identifies the result at `GET /api/v1/investigations/{investigation}`, including Findings and citations. Follow the [Investigation event stream](#investigation-event-streams) for live progress. Send a follow-up with `POST /api/v1/conversations/{conversation}/messages` and a body such as `{"message":"What do recent namespace Events show?"}`. Use the same cookie and Origin headers.
 
 ## Investigate an Incident
 

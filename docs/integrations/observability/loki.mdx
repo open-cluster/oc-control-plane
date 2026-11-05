@@ -15,7 +15,7 @@ Use the [Loki configuration example](/api-reference/overview#loki-configuration)
 
 ## After connection
 
-Creation runs a one-minute log query limited to one entry. A valid empty result confirms query access. No separate verification call is needed after successful creation.
+Creation checks log query access. A valid empty result confirms query access. No separate verification call is needed after successful creation.
 
 Ask “What errors appeared in checkout logs in the last 15 minutes?” You do not need to write LogQL. As an optional advanced query, use labels from your logging setup. For example, `{app="checkout"} |= "error"` selects matching lines when your streams use the `app` label. OpenCluster supports log excerpts with timestamps and stream labels. Loki metric queries and label discovery are unavailable.
 
