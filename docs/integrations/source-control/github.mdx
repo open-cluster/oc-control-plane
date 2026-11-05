@@ -3,7 +3,7 @@ title: "GitHub"
 description: "Investigate code changes and CI failures in selected GitHub repositories."
 ---
 
-Connect GitHub to compare an Incident with commits, pull requests, failed checks, files and published releases.
+Connect GitHub to answer operational questions about repositories, commits, pull requests, CI checks, files, and releases. Use change history alongside other connected sources during an investigation.
 
 ## Prerequisites
 
@@ -23,15 +23,17 @@ Set its setup URL to the deployment's public HTTPS origin followed by `/api/v1/i
 
 ## Connect
 
+The current self-hosted deployment uses an advanced API-only browser procedure until the frontend ships.
+
 1. Start the [browser authorization flow](/api-reference/overview#authorize-github-or-slack-in-a-browser) with type `github`.
 2. In GitHub, choose the account and select the repositories OpenCluster should read. Confirm the requested permissions.
 3. Return to OpenCluster in the same browser session. The redirect URL contains `connect=connected` and the Integration ID when setup succeeds.
 
 Use GitHub's installation settings to change the repository selection. Repeating setup for the same installation in the same Organization refreshes the Integration.
 
-## Verify and use
+## After connection
 
-Read the Integration by ID or call the [verification endpoint](/api-reference/overview#verify-an-integration). Check for `verified` and review `toolAvailability`. OpenCluster reads only repositories selected for the installation, with bounded file, diff and log results. Code search and writes are unavailable.
+Provider authorization checks installation access. OpenCluster reads only repositories selected for the installation, with bounded file, diff and log results. Code search and writes are unavailable.
 
 ## Troubleshooting
 

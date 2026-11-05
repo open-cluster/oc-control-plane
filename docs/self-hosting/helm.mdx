@@ -14,10 +14,10 @@ description: "Deploy the control plane on Kubernetes with existing Secrets, prob
 You need Kubernetes, Helm 3, a reachable PostgreSQL database, outbound HTTPS access to
 the selected model provider, and two Secrets:
 
-- `opencluster-database` with key `postgres-dsn`;
+- `opencluster-database` with key `postgres-dsn`.
 - `opencluster-credentials` with keys `bootstrap-token`, `sealing-key`, and `model-key`.
 
-The shipped chart names these Secret keys `bootstrap-token` and `sealing-key`; they supply
+The shipped chart names these Secret keys `bootstrap-token` and `sealing-key`. They supply
 the administrator bootstrap token and 32-byte credential-encryption key respectively.
 The bootstrap token must be at least 32 characters and the encryption key exactly 32 bytes.
 Do not put their values in Helm values or command history.
@@ -27,7 +27,7 @@ Do not put their values in Helm values or command history.
 Create a values file with the public URL, released image, model provider, and model:
 
 `server.publicURL` is required. Set it to the real public HTTPS origin used for
-sign-in, callbacks, and webhooks; the chart does not default it to a local address.
+sign-in, callbacks, and webhooks. The chart does not default it to a local address.
 
 ```yaml
 image:
@@ -71,7 +71,7 @@ Both commands must succeed before the deployment accepts user traffic.
 
 Set `relay.enabled=true`, provide at least one `relay.spkiPins` value, and name a TLS
 Secret in `relay.tls.existingSecret`. The Secret must contain the configured certificate
-and private-key keys. Expose the Relay port only to customer Relays; they initiate the
+and private-key keys. Expose the Relay port only to customer Relays. They initiate the
 connection and pin the control-plane public key.
 
 ## Resources and upgrades
@@ -79,7 +79,7 @@ connection and pin the control-plane public key.
 The chart intentionally ships no generic CPU or memory requests. Set requests and limits
 from measured Investigation concurrency and provider workloads before production. OSS
 v0.1 does not publish a qualified in-place upgrade path. Do not infer compatibility from
-image or chart tags; see [Feature availability](/feature-availability).
+image or chart tags. See [Feature availability](/feature-availability).
 
 Back up PostgreSQL, disable any autoscaler that could restart old replicas, scale the old
 Deployment to zero, and wait for every old Pod to terminate. Do not use a rolling upgrade
@@ -87,14 +87,14 @@ or run mixed versions against one database. The current ledgered baseline migrat
 when retained user Message attribution agrees with each Conversation source, every
 retained nonempty Investigation question has assigned user Messages, and any nonempty
 Postmortem reviewer is the UUID of an existing User. A failed check rolls back the migration
-without changing the old schema; repair the data with the old version or restore the backup
+without changing the old schema. Repair the data with the old version or restore the backup
 before retrying. Unknown or unledgered pre-release schemas still
 require a fresh application database and complete setup.
 
 Update API clients before the new Pods start. Conversations now expose `source` (`web` or
-`slack`) instead of `surface` and have no lifecycle `state`; Message roles are `user` and
+`slack`) instead of `surface` and have no lifecycle `state`. Message roles are `user` and
 `assistant`, attribution uses `authorId` and `authorName`, and replies are assistant Messages
-rather than Turn answers. Final hypotheses have no ID or `exploring` status; Investigation event envelopes use
+rather than Turn answers. Final hypotheses have no ID or `exploring` status. Investigation event envelopes use
 `schemaVersion: 2` with seven compact payloads.
 
 ## Common failure and recovery
@@ -107,5 +107,10 @@ missing ingress or TLS routing.
 
 ## Next step
 
-After ingress and TLS routing are verified, use the API to create the first User
-and Organization and continue with the [Quickstart](/getting-started/quickstart).
+After ingress and TLS routing are verified, follow the
+[bootstrap procedure](/self-hosting/docker-compose#3-create-the-first-user-and-organization).
+Replace `http://localhost:8081` with your public HTTPS origin in both request URLs and
+the Origin header. Set `OPENCLUSTER_BOOTSTRAP_TOKEN_FILE` to a protected local file
+containing the same bootstrap token supplied by your Helm Secret. Create the private
+`.secrets` directory before saving header and cookie files. Then
+[connect a source](/getting-started/connect-your-tools) and ask a question.

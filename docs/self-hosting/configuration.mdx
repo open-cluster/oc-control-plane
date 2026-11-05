@@ -46,32 +46,32 @@ go run ./cmd/controlplane
 ```
 
 Compose consumes `OPENCLUSTER_*` deployment inputs and supplies `OC_*` variables inside
-the container. Use the [Quickstart exports](/getting-started/quickstart#1-create-local-secret-files)
+the container. Use the [Compose exports](/self-hosting/docker-compose#1-create-local-secret-files)
 for Compose rather than the standalone `.env.example`.
 
 | Requirement | When needed |
 | --- | --- |
-| Database DSN and encryption key | A running HTTP service; retain the encryption key across restarts. Recovery commands need only the database DSN. |
+| Database DSN and encryption key | A running HTTP service. Retain the encryption key across restarts. Recovery commands need only the database DSN. |
 | Bootstrap token | Initial Organization and Admin creation only. |
 | AI provider, exact model, and API key | Together, to enable Investigations. Without them, the API remains available and Investigation requests report unavailability. |
 | OIDC issuer, client ID, and client secret | Together, when using OIDC. Local authentication remains available. |
 | GitHub App ID and private key | Together, when using GitHub App installation. |
-| Slack App client ID and secret | Together, for Slack installation; signed inbound events also require the signing secret. |
-| Relay listener and SPKI pins | When enabling Relay; use the deployment's separate Relay TLS settings. |
+| Slack App client ID and secret | Together, for Slack installation. Signed inbound events also require the signing secret. |
+| Relay listener and SPKI pins | When enabling Relay. Use the deployment's separate Relay TLS settings. |
 | Logs, telemetry, session lifetime, worker and model limits | Optional overrides with existing defaults. |
 
 ## Backend listener and public origin
 
-The standalone backend listens on `:8081`; its local public origin is
+The standalone backend listens on `:8081`. Its local public origin is
 `http://localhost:8081`. `OC_SERVER_ADDRESS` controls that backend listener.
 `OC_PUBLIC_URL` is the actual public entry point used by browser requests, sign-in and
 Integration callbacks, and generated webhook URLs. It is independent of the listen address.
 
 For production, set `OC_PUBLIC_URL` to the reachable HTTPS origin served by your existing
-edge routing. Browser origins may have one trailing slash; paths, credentials, queries,
+edge routing. Browser origins may have one trailing slash. Paths, credentials, queries,
 fragments, and invalid hosts or ports are rejected. HTTP is allowed only for `localhost`,
 `127.0.0.1`, and `[::1]` development origins. Session-cookie security is unchanged.
-Use ASCII DNS names or canonical IP addresses; mapped and scoped IPv6 addresses are unsupported.
+Use ASCII DNS names or canonical IP addresses. Mapped and scoped IPv6 addresses are unsupported.
 
 A separately installed frontend may listen on `http://localhost:8080`. Set that as the
 public origin only after verifying its same-origin proxy to backend `8081` for `/api/`
@@ -81,7 +81,7 @@ not supply that frontend or proxy. Without it, access the backend directly on `8
 ## Configuration file
 
 Set `OC_CONFIG_FILE` to load product-oriented YAML. Plaintext secrets are not accepted in
-YAML; reference mounted files instead:
+YAML. Reference mounted files instead:
 
 ```yaml
 server:
@@ -140,27 +140,27 @@ existing Secret, run `kubectl rollout restart deployment/<release>-opencluster`,
 `kubectl rollout status deployment/<release>-opencluster`. Confirm `/readyz` and a bounded
 Investigation before considering the change complete.
 
-Set `OC_LOG_LEVEL` to `debug`, `info`, `warn`, or `error`; the default is `info`.
+Set `OC_LOG_LEVEL` to `debug`, `info`, `warn`, or `error`. The default is `info`.
 Logs are flat JSON on stderr, with `time`, `level`, and `msg`. Request and Tool
 execution durations use numeric `duration_ms`. Routine requests, including successful
-health probes, are DEBUG; readiness failures produce a safe, correlated WARN.
+health probes, are DEBUG. Readiness failures produce a safe, correlated WARN.
 Tool execution logs include the Integration, Investigation, ordinal, and outcome,
 without query arguments or observations. Opaque adapter errors remain DEBUG because
-they can include malformed queries; recognized network errors and timeouts use WARN.
+they can include malformed queries. Recognized network errors and timeouts use WARN.
 Use `OC_OTLP_ENDPOINT` when exporting traces to a collector.
 
 Investigation execution exports one `investigation.run` span with child
-`reasoning.complete` model-call and `investigation.tool` execution spans. Existing Investigation metric names remain stable;
-the historical duration outcome `needs_input` remains a metric dimension for requests
+`reasoning.complete` model-call and `investigation.tool` execution spans. Existing Investigation metric names remain stable.
+The historical duration outcome `needs_input` remains a metric dimension for requests
 requiring narrower input, while the public lifecycle status is `concluded`. Tool metrics
 group by the catalog Tool name across Integrations, without resource identifiers.
 Local authentication is always available. OIDC is enabled when its issuer, client ID, and
-client secret are all configured; a partial OIDC configuration stops startup. Relay is
-optional and listens separately from HTTP;
-customer Relays initiate outbound connections and pin the configured control-plane key.
+client secret are all configured. A partial OIDC configuration stops startup. Relay is
+optional and listens separately from HTTP.
+Customer Relays initiate outbound connections and pin the configured control-plane key.
 `OC_SESSION_LIFETIME_SECONDS` is deployment-owned and defaults to 43,200 seconds.
-Organizations start with 90 days of audit retention and can configure it independently;
-browser credential lifetime remains deployment-owned.
+Organizations start with 90 days of audit retention and can configure it independently.
+Browser credential lifetime remains deployment-owned.
 
 ## Model provider
 
@@ -173,19 +173,19 @@ For OpenRouter, use a full model identifier such as `z-ai/glm-4.7`. Requests req
 Tool calling and support for the supplied parameters. OpenCluster disables provider
 fallbacks, denies data collection, requires zero data retention, and sorts eligible
 endpoints by price. Account restrictions still apply. If no endpoint satisfies these
-requirements, the Investigation fails; OpenCluster never relaxes them or selects another model.
+requirements, the Investigation fails. OpenCluster never relaxes them or selects another model.
 
 Both providers default to an output allowance of 32,000 tokens per model request,
 including reasoning. This allowance does not describe the model's context capacity.
 Anthropic retains native thinking
-continuation; OpenRouter retains the model's native reasoning continuation without adding
+continuation. OpenRouter retains the model's native reasoning continuation without adding
 unsupported reasoning controls.
 
 Anthropic thinking controls follow known model compatibility. Models requiring manual
-thinking retain it during finalization; models that reject forced Tool selection use
+thinking retain it during finalization. Models that reject forced Tool selection use
 automatic choice with the same structured-result validation. Unrecognized model IDs are
 sent unchanged with provider defaults for optional thinking and effort controls. A model
-that cannot satisfy the result contract fails clearly; OpenCluster does not replace it.
+that cannot satisfy the result contract fails clearly. OpenCluster does not replace it.
 
 Token usage comes from provider responses. Missing or invalid categories are unavailable,
 not measured zero. When a cache breakdown is missing or inconsistent, input can include
@@ -196,7 +196,7 @@ in output usage. Stored totals sum available measurements and may be incomplete.
 
 Set `OC_AI_MAX_OUTPUT_SIZE` (YAML: `ai.maxOutputTokens`) to an output allowance supported
 by the selected model, including reasoning. Its default is `32000` tokens.
-Requests are sent directly; the provider determines whether the context fits. After an
+Requests are sent directly. The provider determines whether the context fits. After an
 actual context rejection, OpenCluster can retry once with optional context removed,
 or with only finalization available when no optional context can be removed. Current
 Messages and completed Tool exchanges remain intact. A rejected recovery fails the
@@ -204,10 +204,10 @@ Investigation rather than claiming an answer.
 
 Provider retries share the configured request deadline, including time spent waiting.
 Anthropic retry delays are respected without shortening them. An ambiguous connection failure
-can cause repeated inference when the SDK retries; reported usage is not a complete billing ledger.
+can cause repeated inference when the SDK retries. Reported usage is not a complete billing ledger.
 
 Restart the control plane, wait for `/readyz`, and run one bounded Investigation. Startup
-proves that the file is readable; only a completed Investigation proves that the selected
+proves that the file is readable. Only a completed Investigation proves that the selected
 provider and model satisfy the structured result contract. For authentication, quota,
 rate-limit, or unsupported-model errors, correct the provider account or model and start
 a new Investigation.
@@ -222,30 +222,30 @@ and training terms before production use.
 | Variable | Purpose |
 | --- | --- |
 | `OC_CONFIG_FILE` | Optional strict YAML configuration file. |
-| `OC_SERVER_ADDRESS` | HTTP listen address; default `:8081`. |
-| `OC_PUBLIC_URL` | Browser and webhook origin; default `http://localhost:8081`. |
-| `OC_DATABASE_DSN` / `OC_DATABASE_DSN_FILE` | PostgreSQL DSN file. Direct value or file; do not set both. |
-| `OC_SESSION_LIFETIME_SECONDS` | Browser session lifetime in seconds; default `43200`, range `300`–`2592000`. |
-| `OC_BOOTSTRAP_TOKEN` / `OC_BOOTSTRAP_TOKEN_FILE` | Optional one-time first-User bootstrap token file. Omit after setup to disable initialization. Direct value or file; do not set both. |
+| `OC_SERVER_ADDRESS` | HTTP listen address. Default `:8081`. |
+| `OC_PUBLIC_URL` | Browser and webhook origin. Default `http://localhost:8081`. |
+| `OC_DATABASE_DSN` / `OC_DATABASE_DSN_FILE` | PostgreSQL DSN file. Direct value or file. Do not set both. |
+| `OC_SESSION_LIFETIME_SECONDS` | Browser session lifetime in seconds. Default `43200`, range `300`–`2592000`. |
+| `OC_BOOTSTRAP_TOKEN` / `OC_BOOTSTRAP_TOKEN_FILE` | Optional one-time first-User bootstrap token file. Omit after setup to disable initialization. Direct value or file. Do not set both. |
 | `OC_OIDC_ISSUER` | HTTPS OIDC issuer. |
 | `OC_OIDC_CLIENT_ID` | OIDC client ID. |
-| `OC_OIDC_CLIENT_SECRET` / `OC_OIDC_CLIENT_SECRET_FILE` | OIDC client-secret file. Direct value or file; do not set both. |
+| `OC_OIDC_CLIENT_SECRET` / `OC_OIDC_CLIENT_SECRET_FILE` | OIDC client-secret file. Direct value or file. Do not set both. |
 | `OC_RELAY_ADDRESS` | Optional Relay gRPC listen address. |
 | `OC_RELAY_SPKI_PINS` | Comma-separated control-plane SPKI pins. |
 | `OC_AI_PROVIDER` | AI provider: `anthropic` or `openrouter`. |
 | `OC_AI_MODEL` | Exact model identifier. |
-| `OC_AI_API_KEY` / `OC_AI_API_KEY_FILE` | AI provider credential file. Direct value or file; do not set both. |
-| `OC_AI_MAX_OUTPUT_SIZE` | Optional output allowance in tokens, including reasoning; default `32000`. |
-| `OC_INVESTIGATION_WORKERS` | Concurrent Investigation workers per replica; default `8`. |
-| `OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION` | Maximum unclaimed Investigations per Organization; default `100`. |
-| `OC_ENCRYPTION_KEY` / `OC_ENCRYPTION_KEY_FILE` | 32-byte credential-encryption key file. Direct value or file; do not set both. |
-| `OC_LOG_LEVEL` | Log level; default `info`. |
+| `OC_AI_API_KEY` / `OC_AI_API_KEY_FILE` | AI provider credential file. Direct value or file. Do not set both. |
+| `OC_AI_MAX_OUTPUT_SIZE` | Optional output allowance in tokens, including reasoning. Default `32000`. |
+| `OC_INVESTIGATION_WORKERS` | Concurrent Investigation workers per replica. Default `8`. |
+| `OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION` | Maximum unclaimed Investigations per Organization. Default `100`. |
+| `OC_ENCRYPTION_KEY` / `OC_ENCRYPTION_KEY_FILE` | 32-byte credential-encryption key file. Direct value or file. Do not set both. |
+| `OC_LOG_LEVEL` | Log level. Default `info`. |
 | `OC_OTLP_ENDPOINT` | Optional OTLP collector host and port. |
 | `OC_SLACK_CLIENT_ID` | Deployment Slack App client ID. |
-| `OC_SLACK_CLIENT_SECRET` / `OC_SLACK_CLIENT_SECRET_FILE` | Slack App client-secret file. Direct value or file; do not set both. |
-| `OC_SLACK_SIGNING_SECRET` / `OC_SLACK_SIGNING_SECRET_FILE` | Slack request signing-secret file. Direct value or file; do not set both. |
+| `OC_SLACK_CLIENT_SECRET` / `OC_SLACK_CLIENT_SECRET_FILE` | Slack App client-secret file. Direct value or file. Do not set both. |
+| `OC_SLACK_SIGNING_SECRET` / `OC_SLACK_SIGNING_SECRET_FILE` | Slack request signing-secret file. Direct value or file. Do not set both. |
 | `OC_GITHUB_APP_ID` | Deployment GitHub App ID. |
-| `OC_GITHUB_APP_PRIVATE_KEY` / `OC_GITHUB_APP_PRIVATE_KEY_FILE` | GitHub App private-key file. Direct value or file; do not set both. |
+| `OC_GITHUB_APP_PRIVATE_KEY` / `OC_GITHUB_APP_PRIVATE_KEY_FILE` | GitHub App private-key file. Direct value or file. Do not set both. |
 
 The OSS binary uses one mounted AI deployment for every Organization.
 
@@ -260,9 +260,9 @@ verification, and one bounded Investigation.
 ## Webhook admission limits
 
 Each control-plane process allows a shared burst of 600 webhook requests and restores
-10 requests per second before authentication. This protects both alert and Slack intake;
-changing an Integration identifier or forwarding header does not create fresh capacity.
-During overload, alert webhooks receive `503` and Slack receives `429`; both include
+10 requests per second before authentication. This protects both alert and Slack intake.
+Changing an Integration identifier or forwarding header does not create fresh capacity.
+During overload, alert webhooks receive `503` and Slack receives `429`. Both include
 `Retry-After`.
 
 The budget is process-wide and multiplies across replicas. Integration identifiers and
@@ -273,12 +273,12 @@ The metrics endpoint exposes `oc.webhooks.requests` by `surface` and bounded `re
 `oc.webhooks.slack_ack_duration` for Slack acknowledgement latency.
 
 `OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION` separately bounds the durable pending
-Investigation queue; its default is `100`. Automatic alert Investigations, manual
+Investigation queue. Its default is `100`. Automatic alert Investigations, manual
 Investigations, and Conversation turns share this Organization-wide capacity across
 replicas. Claimed Investigations no longer consume pending capacity.
 
 When a model provider is configured, an alert delivery that opens new Incidents must fit all their
 automatic Investigations. If the current backlog cannot fit them, the whole delivery is
-refused with `503` and `Retry-After`; a delivery needing more slots than the configured
+refused with `503` and `Retry-After`. A delivery needing more slots than the configured
 limit receives permanent `400`. Without a model provider, alert intake records Incident state
 without reserving Investigation capacity.

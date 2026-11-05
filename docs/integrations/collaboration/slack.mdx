@@ -1,9 +1,9 @@
 ---
 title: "Slack"
-description: "Read incident conversations and reply to direct app mentions."
+description: "Read operational conversations and reply to direct app mentions."
 ---
 
-Connect Slack to bring responder context into Investigations. An installed app can also answer direct mentions in the same thread.
+Connect Slack for operational questions, deployment context, troubleshooting, collaboration, and incident investigations. An installed app can also answer direct mentions in the same thread.
 
 ## Prerequisites
 
@@ -19,37 +19,25 @@ For mentions, configure the signing secret and subscribe the app to `app_mention
 
 ## Connect
 
+The current self-hosted deployment uses an advanced API-only browser procedure for authorization until the frontend ships.
+
 1. Start the [browser authorization flow](/api-reference/overview#authorize-github-or-slack-in-a-browser) with type `slack`.
 2. Authorize the app in Slack and return in the same browser session. The redirect URL contains `connect=connected` and the Integration ID when setup succeeds.
 3. Invite the app to the channels it should read. OpenCluster does not join channels on its own.
 
-If the deployment has no installation flow, an Admin can create a read-only Integration with an existing token. Use the [API session and Origin setup](/api-reference/overview#authentication), save the configuration in a private file named `slack.json`, and submit it:
-
-```json
-{
-  "type": "slack",
-  "name": "Incident workspace",
-  "configuration": {"botToken": "<read-only-token>"}
-}
-```
-
-```bash
-curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
-  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
-  --data @slack.json "$OPENCLUSTER_URL/api/v1/integrations"
-```
+For read-only access with an existing token instead of app installation, use the [Slack configuration example](/api-reference/overview#slack-configuration) to connect through the API.
 
 A pasted bot token cannot enable app-mention replies. An existing user token with `search:read` can search conversations visible to that user, including private channels and direct messages. Use it only if that broader access is intended. Installed bots cannot search workspace-wide.
 
-## Verify and use
+## After connection
 
-Check `status`, `toolAvailability` and `inbound` on the Integration. Use the [verification endpoint](/api-reference/overview#verify-an-integration) to recheck scopes. Reads cover text in permitted channels and threads. Available history depends on Slack retention and access.
+Authorization checks access and granted scopes. Reads cover text in permitted channels and threads. Available history depends on Slack retention and access.
 
 If mentions are enabled, mention `@OpenCluster` in a channel the app has joined. It replies in the originating thread. Mention it there again to continue the Conversation. A failed Slack reply does not change the stored Investigation result.
 
 ## Troubleshooting
 
 - **No messages.** Invite the app and verify the channel's history scope.
-- **No reply.** Check the installed app, signing secret, event subscription, channel membership and `inbound` status.
+- **No reply.** Check the installed app, signing secret, event subscription, channel membership and the [API inbound availability](/api-reference/overview#verify-an-integration).
 - **Token revoked.** Reconnect the app or replace a pasted token with a valid one, then verify.
 - **Reply delivery failed.** An Admin can retry terminal failed work through the [API reference](/api-reference/surface). A retry can occasionally duplicate a message if the earlier send succeeded in Slack.

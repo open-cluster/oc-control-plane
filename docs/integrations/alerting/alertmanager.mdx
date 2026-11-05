@@ -7,16 +7,11 @@ Connect Alertmanager to open Incidents from firing alerts and update them when a
 
 ## Connect
 
-You need the OpenCluster **Admin** role, HTTPS reachability from Alertmanager to OpenCluster and Alertmanager 0.28.0 or later for the custom header. Use the [API session and Origin setup](/api-reference/overview#authentication):
+You need the OpenCluster **Admin** role, HTTPS reachability from Alertmanager to OpenCluster and Alertmanager 0.28.0 or later for the custom header. Create the Integration through the API.
 
-```bash
-curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
-  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
-  --data '{"type":"alertmanager","name":"Production alerts","configuration":{}}' \
-  "$OPENCLUSTER_URL/api/v1/integrations"
-```
+Follow the [Alertmanager creation example](/api-reference/overview#alertmanager-creation).
 
-Save `integration.id`, `integration.webhook.url` and the one-time `webhookSecret`. Add the receiver below with the returned URL and secret. Merge its child route into your existing routing tree:
+Save the returned webhook URL and one-time secret. Add the receiver below with the returned URL and secret. Route the relevant alerts to this receiver using your existing [Alertmanager routing configuration](https://prometheus.io/docs/alerting/latest/configuration/#route):
 
 ```yaml
 receivers:
@@ -30,17 +25,13 @@ receivers:
               secrets:
                 - "<webhook-secret>"
 
-route:
-  routes:
-    - receiver: opencluster
-      continue: true
 ```
 
 Validate and reload Alertmanager. Keep the secret in protected configuration. The token authenticates the sender, so use TLS to protect it and the delivery.
 
-## Verify and use
+## After connection
 
-Fire a test alert. Expect `202 Accepted` on the first delivery and `200 OK` on an exact retry. Call the [verification endpoint](/api-reference/overview#verify-an-integration) to see the last accepted delivery. Use `GET /api/v1/incidents` to find the Incident.
+Fire a test alert. Expect `202 Accepted` on the first delivery and `200 OK` on an exact retry. An accepted delivery proves receipt at that time, without a separate verification request. Waiting for a first delivery is not necessarily a failure.
 
 OpenCluster records labels, annotations, timing and generator URLs. A new Incident queues an Investigation if a model provider is configured. The Integration receives alerts and cannot query Alertmanager for live alerts or silences.
 

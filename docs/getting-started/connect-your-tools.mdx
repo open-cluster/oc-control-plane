@@ -1,16 +1,22 @@
 ---
 title: "Connect your tools"
-description: "Connect an alert or evidence source and check its access."
+description: "Choose sources that can answer your operational questions."
 ---
 
-Choose an [Integration](/integrations/overview) that can answer an on-call question or deliver your alerts. For a first Investigation, start with one alert source and one relevant evidence source.
+Connect the systems your team already uses. Metrics show changes, logs describe application behavior, traces show request timing, and infrastructure and change history add context. OpenCluster can combine available sources during an Investigation.
 
-1. Sign in as an **Admin**. Set up your [API session and Origin](/api-reference/overview#authentication).
-2. Follow your Integration's guide to create it through the API or authorize it in the provider. Kubernetes requires a connected Relay.
-3. Verify access using the procedure in the guide. For an alert Integration, send a test delivery first. For an evidence Integration, check the available reads in `toolAvailability`.
+## Choose an Integration
 
-Admins can create or remove Integrations. Editors and Admins can update and verify them. Verification checks current access and does not require the source to contain data matching your Incident.
+Browse the [Integration guides](/integrations/overview) for capabilities, provider permissions, and connection requirements. Start with one relevant source. You do not need an alert source to ask operational questions.
 
-Store one-time webhook secrets as credentials. When rotating a secret, update the sender promptly. Disable an Integration to stop new use while preserving history. Deletion is refused while retained records depend on it. See [Security](/security/overview) for credential and network requirements.
+## Establish access
 
-Next, [run your first Investigation](/getting-started/run-your-first-investigation).
+An Admin creates the Integration or authorizes the provider installation. GitHub and Slack use provider authorization. Kubernetes uses a Relay inside your environment. Alert senders need the webhook URL and secret configured at the sender.
+
+The current deployment uses the [API setup procedure](/api-reference/overview#connect-an-integration). GitHub and Slack also require the documented advanced browser procedure until the frontend ships.
+
+## Use the connected source
+
+Prometheus, Loki, and Tempo check query access during creation. Provider authorization checks GitHub and Slack access. Kubernetes requires an explicit Relay capability check in the API procedure. Alert sources establish receipt when a valid delivery is accepted. Waiting for a first alert does not by itself indicate a failure.
+
+A successful check confirms access at that time. Provider permissions, retention, and availability still affect later reads. Follow the source guide if access fails, then [ask a question or investigate an Incident](/getting-started/run-your-first-investigation).

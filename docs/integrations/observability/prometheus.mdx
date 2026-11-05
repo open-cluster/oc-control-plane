@@ -9,32 +9,15 @@ Connect Prometheus to investigate metric changes over the same interval as an al
 
 You need the OpenCluster **Admin** role and a Prometheus HTTP API reachable from OpenCluster. Use an approved HTTPS endpoint. If it requires authentication, use a read-only bearer token. The URL may include a proxy prefix, but should exclude the query API path. See [network and credential requirements](/security/overview).
 
-Use the [API session and Origin setup](/api-reference/overview#authentication). Save your configuration in a private file named `prometheus.json`:
+Use the [Prometheus configuration example](/api-reference/overview#prometheus-configuration) to connect through the API.
 
-```json
-{
-  "type": "prometheus",
-  "name": "Production metrics",
-  "configuration": {
-    "url": "https://metrics.example.com",
-    "bearerToken": "<read-only-token>"
-  }
-}
-```
+## After connection
 
-Omit `bearerToken` if your endpoint allows unauthenticated reads.
-
-```bash
-curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
-  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
-  --data @prometheus.json "$OPENCLUSTER_URL/api/v1/integrations"
-```
-
-## Verify and use
-
-Creation checks that `vector(1)` returns the expected sample. Check `integration.status` for `verified` and save `integration.id`. To repeat the check, call the [verification endpoint](/api-reference/overview#verify-an-integration).
+Creation checks that `vector(1)` returns the expected sample. No separate verification call is needed after successful creation.
 
 OpenCluster can discover metric names and run instant and range PromQL queries. Range evaluations cover at most the latest 24 hours of the requested interval. An instant query has one evaluation time. Selectors such as `[60m]` and offsets can still read earlier data, so enforce historical access at the source. Responses can include Prometheus warnings and may be incomplete when limits apply. Native histogram results are unsupported.
+
+For example, ask “Did checkout errors and latency rise at the same time?” OpenCluster can correlate available metrics with logs, traces, and change context. Optional PromQL such as `rate(http_requests_total[5m])` requires a metric that exists in your deployment.
 
 ## Troubleshooting
 

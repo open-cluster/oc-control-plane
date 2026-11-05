@@ -7,36 +7,30 @@ Use Generic Webhook when your alerting system can send JSON over HTTP. OpenClust
 
 ## Connect
 
-You need the OpenCluster **Admin** role and a sender that can reach the HTTPS webhook endpoint and set request headers. Use the [API session and Origin setup](/api-reference/overview#authentication):
+You need the OpenCluster **Admin** role and a sender that can reach the HTTPS webhook endpoint and set request headers. An Admin creates the Integration through the API.
 
-```bash
-curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
-  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
-  --data '{"type":"generic_webhook","name":"Database alerts","configuration":{}}' \
-  "$OPENCLUSTER_URL/api/v1/integrations"
-```
+Follow the [Generic Webhook creation example](/api-reference/overview#generic-webhook-creation).
 
-Save `integration.id`, `integration.webhook.url` and the one-time `webhookSecret`. Set `WEBHOOK_URL` to that URL and set `WEBHOOK_SECRET` privately. Send a firing event:
+Configure the returned webhook URL and one-time secret in your sender. Set the `X-OpenCluster-Token` header to the secret. A representative firing event is:
 
-```bash
-curl --fail-with-body --include \
-  --header "X-OpenCluster-Token: $WEBHOOK_SECRET" \
-  --header 'Content-Type: application/json' \
-  --data '{
+```json
+{
     "eventId": "database-0042",
     "status": "firing",
     "title": "Database latency is high",
     "severity": "critical",
     "startedAt": "2026-08-28T07:00:00Z",
-    "deduplicationKey": "production/database-latency"
-  }' "$WEBHOOK_URL"
+    "deduplicationKey": "production/database-latency",
+    "labels": {"service": "database", "team": "platform"},
+    "annotations": {"summary": "Database queries are slower than expected"}
+  }
 ```
 
 Send the resolution with the same event ID, start time and deduplication key, set `status` to `resolved` and add `resolvedAt`. Optional fields include string maps for `labels` and `annotations`, and an HTTP(S) `sourceUrl`. See the [webhook contract](/api-reference/overview#webhooks) for the full schema.
 
-## Verify and use
+## After connection
 
-A new delivery returns `202 Accepted`. An exact retry returns `200 OK`. Call the [verification endpoint](/api-reference/overview#verify-an-integration) to see the last accepted delivery, then list Incidents with `GET /api/v1/incidents`.
+A new delivery returns `202 Accepted`. An exact retry returns `200 OK`. An accepted delivery proves receipt at that time. Waiting for the first delivery is not necessarily a failure.
 
 A new firing Incident queues an Investigation when a model provider is configured. Alert fields supply Incident context. For runtime or change data, connect an additional Integration.
 
