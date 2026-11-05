@@ -3,6 +3,7 @@ package controlplane
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,6 +52,16 @@ func TestResolvedIncidentPostmortemDraftCanBeCorrectedRegeneratedAndReviewed(t *
 	}
 	if draft.Revision != 2 || draft.Resolution != "Rolled back the deployment." {
 		t.Fatalf("regenerated draft = %+v", draft)
+	}
+
+	status, body = plane.call(t, http.MethodPatch, base, map[string]any{
+		"rootCauses": []map[string]any{{
+			"statement": "Pool exhaustion", "runRefs": []int{},
+			"evidenceRefs": []map[string]any{{"investigationId": uuid.New(), "toolRunOrdinal": 1}},
+		}},
+	})
+	if status != http.StatusBadRequest || !strings.Contains(body, "unavailable evidence") {
+		t.Fatalf("correction with unavailable evidence answered %d: %s", status, body)
 	}
 
 	status, body = plane.call(t, http.MethodPatch, base,

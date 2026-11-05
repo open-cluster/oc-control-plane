@@ -1,8 +1,9 @@
 revision: structured-conclusion-v2
 fixtures:
-  - name: verified-cause
+  - name: legacy-status-rejected
     runs: 1
-    valid: true
+    valid: false
+    errorContains: invalid conclusion status
     document:
       status: verified_cause
       summary: Deployment abc123 caused checkout failures.
@@ -19,9 +20,21 @@ fixtures:
     document:
       status: answer_only
       summary: checkout-api is running v2.14.1.
-      impact: {summary: Impact was not assessed for this operator question., run_refs: []}
+      impact: {summary: "", run_refs: []}
       findings:
         - {statement: checkout-api is running v2.14.1., kind: observation, mechanism: "", run_refs: [1], evidence_refs: []}
+      hypotheses: []
+      actions: []
+      limitations: []
+  - name: answer-only-with-malformed-impact
+    runs: 0
+    valid: false
+    errorContains: impact requires a summary and run_refs
+    document:
+      status: answer_only
+      summary: No deployment was found.
+      impact: {}
+      findings: []
       hypotheses: []
       actions: []
       limitations: []
@@ -30,7 +43,7 @@ fixtures:
     valid: false
     errorContains: no mechanism
     document:
-      status: verified_cause
+      status: supported_explanation
       summary: The deployment caused the outage.
       impact: {summary: Checkout is failing., run_refs: [1]}
       findings:

@@ -133,10 +133,13 @@ curl --fail-with-body --request POST http://localhost:8081/api/v1/integrations \
   --data '{"type":"generic_webhook","name":"Quickstart alerts","configuration":{}}'
 ```
 
-Save the returned `integration.id` and one-time `webhookSecret` immediately. Replace
-the placeholders below and send a firing event:
+Save the returned `integration.id`, `integration.webhook.url` and one-time
+`webhookSecret` immediately. Replace
+the placeholders below and send a firing event using the current UTC time.
+To retry the same delivery, rerun only the `curl` command so the timestamp stays the same.
 
 ```bash
+STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 curl --request POST "http://localhost:8081/webhooks/v1/integrations/<integration-id>/alert-events" \
   --header "Content-Type: application/json" \
   --header "X-OpenCluster-Token: <webhook-secret>" \
@@ -145,7 +148,7 @@ curl --request POST "http://localhost:8081/webhooks/v1/integrations/<integration
     "status":"firing",
     "title":"Checkout latency is high",
     "severity":"critical",
-    "startedAt":"2026-08-29T10:00:00Z",
+    "startedAt":"'"$STARTED_AT"'",
     "deduplicationKey":"quickstart/checkout-latency",
     "labels":{"service":"checkout"},
     "annotations":{"summary":"Synthetic quickstart alert"}

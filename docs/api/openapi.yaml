@@ -1109,6 +1109,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/Postmortem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         default:
           $ref: '#/components/responses/ErrorResponse'
       operationId: updatePostmortem
@@ -3223,6 +3225,7 @@ components:
             - supported_explanation
             - inconclusive
             - answer_only
+          description: Assessment outcome. verified_cause is retained on historical results.
         summary:
           type: string
           minLength: 1
@@ -3697,6 +3700,7 @@ components:
                 - supported_explanation
                 - inconclusive
                 - answer_only
+              description: Assessment outcome. verified_cause is retained on historical events.
             summary:
               type: string
               minLength: 1
@@ -4169,6 +4173,10 @@ components:
             type: integer
             minimum: 1
           uniqueItems: true
+        evidenceRefs:
+          type: array
+          items:
+            $ref: '#/components/schemas/EvidenceRef'
     ActionItem:
       type: object
       additionalProperties: false

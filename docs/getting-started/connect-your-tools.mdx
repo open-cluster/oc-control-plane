@@ -1,50 +1,16 @@
 ---
 title: "Connect your tools"
-description: "Add read-only integrations and verify what evidence OpenCluster can retrieve."
+description: "Connect an alert or evidence source and check its access."
 ---
 
-An Integration is one configured installation in an Organization. Choose at least one
-alert source to create Incidents and one evidence source that can help explain them.
-OpenCluster requests read-only access and never changes a connected system.
+Choose an [Integration](/integrations/overview) that can answer an on-call question or deliver your alerts. For a first Investigation, start with one alert source and one relevant evidence source.
 
-| What you need | Integration | Evidence or intake | Relay required | Setup guide |
-| --- | --- | --- | --- | --- |
-| Send canonical alerts from any system | Generic Webhook | Firing and resolved Alert Events | No | [Generic Webhook](/integrations/alerting/generic_webhook) |
-| Receive Prometheus alert lifecycles | Prometheus Alertmanager | Grouped firing and resolved alerts | No | [Prometheus Alertmanager](/integrations/alerting/alertmanager) |
-| Compare service errors, latency and resource usage | Prometheus | Metric discovery and bounded PromQL queries | No | [Prometheus](/integrations/observability/prometheus) |
-| Read relevant service logs | Loki | Bounded LogQL log excerpts | No | [Loki](/integrations/observability/loki) |
-| Follow a request across services | Tempo | Trace search and bounded spans | No | [Tempo](/integrations/observability/tempo) |
-| Inspect cluster runtime state | Kubernetes | Workloads, Events, and bounded pod logs | Yes | [Kubernetes](/integrations/infrastructure/kubernetes) |
-| Compare incidents with code changes | GitHub | Repositories, commits, pull requests, checks, files, and releases | No | [GitHub](/integrations/source-control/github) |
-| Read incident conversation context | Slack | Bounded channel and thread messages | No | [Slack](/integrations/collaboration/slack) |
+1. Sign in as an **Admin**. Set up your [API session and Origin](/api-reference/overview#authentication).
+2. Follow your Integration's guide to create it through the API or authorize it in the provider. Kubernetes requires a connected Relay.
+3. Verify access using the procedure in the guide. For an alert Integration, send a test delivery first. For an evidence Integration, check the available reads in `toolAvailability`.
 
-## Prerequisites
+Admins can create or remove Integrations. Editors and Admins can update and verify them. Verification checks current access and does not require the source to contain data matching your Incident.
 
-You need the **Admin** role in your Organization and the provider permissions
-listed in the selected setup guide. Kubernetes also requires a deployed Relay with an
-outbound connection to the control plane.
+Store one-time webhook secrets as credentials. When rotating a secret, update the sender promptly. Disable an Integration to stop new use while preserving history. Deletion is refused while retained records depend on it. See [Security](/security/overview) for credential and network requirements.
 
-## Connect and verify
-
-1. Open **Integrations** and choose the Integration.
-2. Enter the required non-secret configuration and credential, or complete the provider
-   authorization flow when the deployment offers one.
-3. Select **Verify** and review the available evidence and any limitations.
-4. For an inbound alert Integration, send one test delivery.
-
-Credentials are write-only after submission. Webhook secrets are displayed once. A
-successful Verification sets the Integration to `verified`; individual Tools are offered
-only when their verified grants are present. Before the first Verification the status is
-empty, and an unsuccessful Verification sets it to `failed`.
-
-If verification fails, check the provider URL, credential, least-privilege permissions,
-and network access before replacing the credential. Verification proves current access;
-it does not guarantee that a later Investigation will find enough evidence for a cause.
-
-## Disable, rotate, or remove
-
-Disable an Integration to exclude it from new Investigations while retaining history.
-Replace its credential through the provider guide's rotation procedure. Deletion is
-refused while retained records depend on the Integration.
-
-Next, [run your first investigation](/getting-started/run-your-first-investigation).
+Next, [run your first Investigation](/getting-started/run-your-first-investigation).

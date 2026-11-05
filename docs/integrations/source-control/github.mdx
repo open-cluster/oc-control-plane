@@ -1,134 +1,41 @@
 ---
 title: "GitHub"
-description: "Give investigations read-only access to selected repositories, changes, CI failures, files, and releases."
+description: "Investigate code changes and CI failures in selected GitHub repositories."
 ---
 
-Connect GitHub so investigations can inspect code changes, pull requests, CI failures,
-files, and releases in selected repositories. Access is read-only and follows a GitHub
-App installation.
-
-## What OpenCluster uses it for
-
-GitHub helps establish what changed near an incident, whether a change passed CI, what
-a pull request intended, and what configuration or release was present. OpenCluster
-only sees repositories selected for the App installation.
+Connect GitHub to compare an Incident with commits, pull requests, failed checks, files and published releases.
 
 ## Prerequisites
 
-- Permission to install apps on the GitHub account or organization you want to connect.
-- The **Admin** role in OpenCluster.
-- For self-hosted deployments: a GitHub App configured for the deployment.
+You need the OpenCluster **Admin** role and permission to administer the GitHub App installation. Configure a GitHub App for the deployment. The App needs no webhook.
+
+Set its setup URL to the deployment's public HTTPS origin followed by `/api/v1/integrations/connect/callback` and enable redirect on update. Configure the App ID and a private-key file in [deployment configuration](/self-hosting/configuration#environment-reference). Keep the key on the deployment.
 
 ## GitHub App permissions
 
-| Repository permission | Access | Why it is needed |
-| --- | --- | --- |
-| Metadata | Read | List repositories granted to the installation. GitHub requires this permission for every App. |
-| Contents | Read | Read commits, diffs, files, and releases. |
-| Pull requests | Read | Read pull request descriptions and changed files. |
-| Checks | Read | Read check results for a change. |
-| Actions | Read | Read workflow runs and failing job logs. |
-
-No write permission is required.
+| Repository permission | Access |
+| --- | --- |
+| Metadata | Read |
+| Contents | Read |
+| Pull requests | Read |
+| Checks | Read |
+| Actions | Read |
 
 ## Connect
 
-<Steps>
-  <Step title="Press Connect GitHub">
-    In **Integrations**, choose **GitHub**, then **Connect GitHub**. OpenCluster sends
-    you to GitHub.
-  </Step>
-  <Step title="Choose the account and repositories">
-    GitHub asks which account to install on, which repositories OpenCluster may read,
-    and shows the permissions above for approval. The choice is made in GitHub.
-  </Step>
-  <Step title="Land back in OpenCluster">
-    GitHub returns you to OpenCluster, which validates the installation with GitHub,
-    checks its repository access, and shows it as `verified`. There is no
-    second step and no ID to copy.
-  </Step>
-</Steps>
+1. Start the [browser authorization flow](/api-reference/overview#authorize-github-or-slack-in-a-browser) with type `github`.
+2. In GitHub, choose the account and select the repositories OpenCluster should read. Confirm the requested permissions.
+3. Return to OpenCluster in the same browser session. The redirect URL contains `connect=connected` and the Integration ID when setup succeeds.
 
-Connect once for each GitHub account or organization. Repeating the flow for an account
-that is already connected re-checks it instead of adding a duplicate — which is also what
-happens when you change an existing installation's repositories.
+Use GitHub's installation settings to change the repository selection. Repeating setup for the same installation in the same Organization refreshes the Integration.
 
-OpenCluster stores no GitHub installation token. It creates short-lived installation tokens
-on demand from the deployment's App.
+## Verify and use
 
-## Configure the App for a self-hosted deployment
-
-Create the App in GitHub with the permissions above. It needs no webhook. Generate a
-private key, then set the deployment's App ID and private-key file as described in the
-[configuration reference](/self-hosting/configuration#environment-reference). Set the App's
-setup URL to `https://YOUR-OPENCLUSTER/api/v1/integrations/connect/callback` and enable
-redirect on update. The callback URL must match the deployment's public URL exactly,
-scheme included. The private key stays on the deployment.
-
-## Verify
-
-Verification checks the App installation and its repository selection. `verified` means
-GitHub answered for the installation; individual Tools remain limited by verified grants.
-A suspended, removed, or inaccessible installation is `failed` until verification succeeds.
-
-## Change which repositories are read
-
-Repository selection lives in GitHub, not in OpenCluster. Open the installation's settings
-from the link on the integration, change the selection there, and the next investigation
-reads the new set. Nothing needs to be re-entered here.
-
-## During investigations
-
-OpenCluster may read repository metadata, commits and diffs, pull requests, checks,
-workflow runs and failing-job log tails, file contents, or published releases. Reads
-that support time windows are clamped to the incident window. The path depends on the
-incident; all repositories and data types are not read automatically.
-
-## Limitations
-
-- No write operations and no code search. No write permission is requested at all.
-- Reads are limited to the repositories the installation selected. A read outside that
-  selection says so rather than failing silently.
-- Large files, logs, and diffs are bounded; truncation is marked.
-- GitHub's repository, file, diff, and API rate limits still apply.
-- Release reads include published releases, not every tag.
-- Changing the App's selected repositories changes what future investigations can
-  access. That change is made in GitHub.
+Read the Integration by ID or call the [verification endpoint](/api-reference/overview#verify-an-integration). Check for `verified` and review `toolAvailability`. OpenCluster reads only repositories selected for the installation, with bounded file, diff and log results. Code search and writes are unavailable.
 
 ## Troubleshooting
 
-- **Deployment has no GitHub App:** configure the App ID and private-key file, then
-  restart OpenCluster.
-- **The connection could not be completed:** the link expired or was already used. Press
-  **Connect GitHub** again.
-- **Could not confirm you administer this installation:** the GitHub account that
-  authorized the connection cannot administer the account being connected. Sign in to
-  GitHub as someone who can, then connect again.
-- **Installation not found:** confirm the ID belongs to this App and that the App is
-  still installed.
-- **No longer installed:** the App was uninstalled or its access was revoked in GitHub.
-  Connect again.
-- **No repositories:** select at least one repository in the installation settings.
-- **Rate limited:** wait for GitHub's limit to reset, then verify or investigate again.
-
-## Rotate or disconnect
-
-For a self-hosted GitHub App, generate a replacement private key, replace the mounted
-private-key file, restart the control plane, and verify the Integration before revoking
-the old key. Existing Integration reads use installation tokens created from the App
-private key.
-
-Disable the integration to remove GitHub from new investigations while retaining the
-record. Deletion is refused when investigation records depend on it. Uninstalling the App
-in GitHub removes OpenCluster's access immediately and independently; the integration then
-reports that it is no longer installed.
-
-## Next step
-
-Connect an [alert source](/integrations/overview), then
-[run the first Investigation](/getting-started/run-your-first-investigation) with GitHub available as evidence.
-
-## Availability
-
-GitHub is available in OSS v0.1 when the deployment has a GitHub App. GitHub and its mark
-belong to GitHub, Inc.
+- **GitHub is unavailable for installation.** Check the App settings, private key and deployment public URL.
+- **Setup refused.** Confirm your browser is signed in to OpenCluster and your GitHub account can administer the installation. Restart setup if the link expired.
+- **Missing repositories or reads.** Check the installation's repository selection and App permissions, then verify again.
+- **Key rotation.** Configure the replacement key, restart and verify before revoking the old key. Uninstalling the App revokes access independently.

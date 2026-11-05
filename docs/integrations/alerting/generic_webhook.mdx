@@ -1,122 +1,48 @@
 ---
 title: "Generic Webhook"
-description: "Create incidents from canonical alert events sent by unsupported alert sources."
+description: "Create Incidents from authenticated alert events."
 ---
 
-Use Generic Webhook when an alert source can send an outbound HTTP request but does not
-have a first-class OpenCluster integration. The sender must produce the canonical schema;
-OpenCluster does not run field mappings or transformations.
-
-## Prerequisites
-
-- Network access from the sender to the OpenCluster intake endpoint over HTTPS.
-- A sender that can set the `X-OpenCluster-Token` header and send JSON.
-- The **Admin** role in OpenCluster.
-
-## Least-privilege access
-
-The sender needs permission only to reach its generated webhook URL and read the
-one-time secret. The credential authenticates this Integration only; it is not a product
-API credential.
+Use Generic Webhook when your alerting system can send JSON over HTTP. OpenCluster groups firing and resolved Alert Events into Incidents. Configure any field mappings in the sender.
 
 ## Connect
 
-Create a **Generic Webhook** integration, then copy its webhook URL and one-time secret.
-Send each alert to that URL with the secret in `X-OpenCluster-Token`.
+You need the OpenCluster **Admin** role and a sender that can reach the HTTPS webhook endpoint and set request headers. Use the [API session and Origin setup](/api-reference/overview#authentication):
 
-```json
-{
-  "eventId": "alert-2026-0042",
-  "status": "firing",
-  "title": "Database latency is high",
-  "severity": "critical",
-  "startedAt": "2026-08-28T07:00:00Z",
-  "deduplicationKey": "production/database-latency",
-  "labels": { "region": "eu-central-1" },
-  "annotations": { "runbook": "Check the primary database" },
-  "sourceUrl": "https://monitor.example/alerts/42"
-}
+```bash
+curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
+  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
+  --data '{"type":"generic_webhook","name":"Database alerts","configuration":{}}' \
+  "$OPENCLUSTER_URL/api/v1/integrations"
 ```
 
-Use the same `eventId`, `startedAt`, and `deduplicationKey` for the matching resolution,
-set `status` to `resolved`, and add `resolvedAt`. Repeating the same phase is safe. Reusing
-an `eventId` with different content in the same phase returns `400`.
+Save `integration.id`, `integration.webhook.url` and the one-time `webhookSecret`. Set `WEBHOOK_URL` to that URL and set `WEBHOOK_SECRET` privately. Send a firing event:
 
-## Schema limits
+```bash
+curl --fail-with-body --include \
+  --header "X-OpenCluster-Token: $WEBHOOK_SECRET" \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "eventId": "database-0042",
+    "status": "firing",
+    "title": "Database latency is high",
+    "severity": "critical",
+    "startedAt": "2026-08-28T07:00:00Z",
+    "deduplicationKey": "production/database-latency"
+  }' "$WEBHOOK_URL"
+```
 
-| Field | Requirement |
-| --- | --- |
-| `eventId` | 1–256 characters; stable for the alert lifecycle |
-| `status` | `firing` or `resolved` |
-| `title` | 1–512 characters after trimming |
-| `severity` | `info`, `warning`, or `critical` |
-| `startedAt` | RFC 3339 timestamp |
-| `resolvedAt` | Required only for `resolved`; not before `startedAt` |
-| `deduplicationKey` | 1–256 characters; groups related alerts |
-| `labels` | At most 32 string entries; keys up to 64, values up to 256 characters |
-| `annotations` | At most 32 string entries; keys up to 64, values up to 2,048 characters |
-| `sourceUrl` | Optional absolute HTTP or HTTPS URL up to 2,048 characters |
+Send the resolution with the same event ID, start time and deduplication key, set `status` to `resolved` and add `resolvedAt`. Optional fields include string maps for `labels` and `annotations`, and an HTTP(S) `sourceUrl`. See the [webhook contract](/api-reference/overview#webhooks) for the full schema.
 
-Unknown or duplicate fields, invalid UTF-8, trailing JSON, and an Organization identifier
-are rejected. Annotation text is displayed as untrusted source content. OpenCluster never
-fetches `sourceUrl` during intake.
+## Verify and use
 
-## Verify
+A new delivery returns `202 Accepted`. An exact retry returns `200 OK`. Call the [verification endpoint](/api-reference/overview#verify-an-integration) to see the last accepted delivery, then list Incidents with `GET /api/v1/incidents`.
 
-Send one firing event and confirm the response is `202 Accepted`. Open the matching
-Alert Event and Incident. An exact retry should return `200 OK` without creating another
-lifecycle phase.
-
-When a firing event opens a new Incident and a model provider is configured, acceptance
-also queues its automatic Investigation. Without a model provider, the Alert Event and Incident are
-still recorded but no Investigation is created. Updates to the same Incident do not open
-another Investigation.
-
-## Evidence available
-
-The Alert Event supplies its title, severity, lifecycle timestamps, labels, annotations,
-deduplication key, and optional source URL. It creates Incident context but does not let
-OpenCluster read the sender or the linked source URL during an Investigation.
-
-## Limitations
-
-Generic Webhook performs no field mapping or enrichment. The sender must preserve one
-stable lifecycle identity and canonical schema. Connect a separate evidence Integration
-when an Investigation needs runtime, change, or conversation data.
-
-## Delivery responses
-
-| Response | Meaning |
-| --- | --- |
-| `202` | This lifecycle phase and Incident updates were recorded; an automatic Investigation is queued for a new Incident only when a model provider is configured. |
-| `200` | The same phase and normalized content was already accepted. |
-| `400` | The schema is invalid or the identity conflicts with accepted content. |
-| `401` | The secret is wrong, was rotated, or the integration is disabled. |
-| `413` | The body is larger than 1 MiB. |
-| `503` | Admission capacity is temporarily exhausted or OpenCluster could not record the delivery; retry and honor `Retry-After` when present. |
+A new firing Incident queues an Investigation when a model provider is configured. Alert fields supply Incident context. For runtime or change data, connect an additional Integration.
 
 ## Troubleshooting
 
-- `400`: validate the canonical fields, lifecycle identity, timestamps, and body size.
-- `401`: check the Integration ID and current secret; rotate it if the stored value is
-  uncertain.
-- `503`: retry with bounded backoff, honor `Retry-After` when present, and preserve the
-  same lifecycle identity. Pending Investigation capacity refusals record no part of the
-  event and include `Retry-After`; accepted duplicates and Incident updates still succeed
-  at full capacity.
-
-## Rotate, disable, or remove
-
-Rotate the webhook secret, store the replacement immediately, and update the sender
-before its next delivery. Rotation invalidates the old value. Disable the Integration to
-stop new deliveries while retaining history. Deletion is refused when retained records
-depend on it.
-
-## Next step
-
-Connect an [evidence source](/integrations/overview), then
-[run the first Investigation](/getting-started/run-your-first-investigation) from a test Alert Event.
-
-## Availability
-
-Generic Webhook is available in OSS v0.1 and has no third-party provider mark.
+- **400.** Check required fields, timestamps and event identity. Reusing an event ID with different content in the same phase is refused.
+- **401.** Check the current secret and confirm the Integration is enabled. Rotation invalidates the old secret immediately.
+- **413.** Reduce the request body below the 1 MiB limit.
+- **503.** Retry with bounded backoff and honor `Retry-After` when supplied. Keep the same event identity.

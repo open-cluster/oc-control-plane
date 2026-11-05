@@ -70,6 +70,13 @@ both permit it.
 
 Read-only Tools reduce change risk but do not make source data harmless or complete.
 
+Prometheus, Loki and Tempo requests go directly from OpenCluster to the configured
+endpoint. Use approved HTTPS destinations and restrict deployment egress. These
+Integrations verify TLS certificates and reject redirects. The deployment does not
+enforce a destination allowlist. Admins and Editors can change endpoint settings.
+An edit that omits a credential retains it, so review the destination before
+changing configuration. Enforce tenant access, query limits and retention at the source.
+
 ## Data handling
 
 OpenCluster stores normalized Alert Events, Incidents, Messages, Investigation events,

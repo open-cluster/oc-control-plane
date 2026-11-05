@@ -1,111 +1,40 @@
 ---
 title: "Kubernetes"
-description: "Give investigations bounded live Kubernetes reads through an outbound Relay."
+description: "Inspect workloads, namespace events, and container logs through Relay."
 ---
 
-Connect Kubernetes to let investigations inspect workload runtime, namespace events, and
-container logs without giving the control plane a Kubernetes credential or exposing the API
-server inbound.
+Connect Kubernetes to investigate workload health and recent changes without exposing your Kubernetes API to OpenCluster.
 
 ## Prerequisites
 
-- A Relay deployed in the cluster and connected to OpenCluster.
-- Relay service-account access to the namespaces and resources you intend to read.
 - The **Admin** role in OpenCluster.
-
-## Access and trust boundary
-
-The Relay connects outbound. Its service account is the maximum access boundary. The
-Integration's comma-separated namespace allow-list can narrow that access and can never widen
-it. OpenCluster requests only the bounded read operations supported by both this deployment
-and the connected Relay.
-
-The model chooses relevant reads from the available tools. An alert's namespace or workload
-name does not automatically trigger reads against every Kubernetes Integration.
-
-Do not grant create, update, patch, delete, or Kubernetes Secret-data access. Inventory
-synchronization records identifiers, image references, quantities, versions, and hashes; it
-does not copy ConfigMap data, Secret data, or environment values.
-
-## Tools and required permissions
-
-| Tool | Kubernetes access | Bounds and output |
-| --- | --- | --- |
-| Workload runtime | Read one Deployment, StatefulSet, or DaemonSet and its pods | One namespace and named workload; at most 50 pods; reports completeness and source read time |
-| Namespace events | List core `events` | One namespace, within the Investigation window and at most seven days; at most 200 events; reports retention coverage and completeness |
-| Container logs | Read core `pods/log` | One named pod and container; at most 2,000 lines and 256 KiB; reports which bound truncated the result |
-
-The Relay may enforce lower local ceilings. Results report the effective limits so a local cap
-cannot look like a complete read. Typed not-found and unavailable outcomes remain absence or
-failure states; they are never rewritten as evidence that nothing exists.
+- A Relay connected outbound to your deployment. Find its ID with `GET /api/v1/relays`.
+- A Relay service account allowed to read the workloads, pods, namespace Events and pod logs you intend to inspect. Keep credentials inside the cluster. Grant only the necessary read permissions.
 
 ## Connect
 
-<Steps>
-  <Step title="Create the integration">
-    In **Integrations**, choose **Kubernetes**, enter a name, and select the Relay for the
-    cluster.
-  </Step>
-  <Step title="Set the namespace boundary">
-    Optionally enter a comma-separated namespace allow-list. Leave it empty to use every
-    namespace reachable by the Relay service account.
-  </Step>
-  <Step title="Verify the Relay">
-    Select **Verify**. A `verified` result means the Relay is connected. Only reads whose
-    capability grants were verified are offered.
-  </Step>
-</Steps>
+Use the [API session and Origin setup](/api-reference/overview#authentication). Replace the Relay ID and namespace list:
 
-## Verify
+```bash
+curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
+  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
+  --data '{
+    "type": "kubernetes",
+    "name": "Production cluster",
+    "relayId": "<relay-id>",
+    "configuration": {"namespaceAllowList": "checkout,payments"}
+  }' "$OPENCLUSTER_URL/api/v1/integrations"
+```
 
-Individual Tool availability names any missing Relay capability after Verification.
-Run one read during an Investigation and confirm its Integration, namespace, source read
-time, effective bounds, and truncation status.
+The comma-separated namespace list narrows Relay access. An empty list leaves the scope to the Relay's own policy and Kubernetes RBAC.
 
-## During investigations
+## Verify and use
 
-Each enabled, currently verified Kubernetes Integration is offered as its own Source. Two
-clusters using the same Integration Type remain distinct and independently reachable. Every
-Tool call records the Integration, arguments, actual time window, truncation, safe summary,
-and source references.
-
-If an investigation stops waiting, OpenCluster cancels a read that has not started and asks
-the Relay to stop a read already in progress. The recorded outcome remains available for
-troubleshooting.
-
-## Limitations
-
-The Integration can read only the closed capabilities supported by both the control plane
-and the connected Relay. Kubernetes retention, RBAC, namespace boundaries, and the Relay's
-local ceilings can make a result incomplete. OpenCluster does not read Secret data or
-perform write operations.
+Save `integration.id` and call the [verification endpoint](/api-reference/overview#verify-an-integration). Check Relay connectivity and `toolAvailability` for each read. An Investigation can inspect a named Deployment, StatefulSet or DaemonSet and its pods, list Events in one namespace, or read a named container's logs. Local Relay limits and Kubernetes retention can shorten results. OpenCluster does not read Secret data.
 
 ## Troubleshooting
 
-- **Relay is not connected:** check the Relay process, outbound network path, and OpenCluster
-  endpoint.
-- **A supported read operation is missing:** check the Relay version and Kubernetes RBAC, then verify
-  again.
-- **A read is unavailable:** verify the integration and confirm the Relay supports that
-  operation.
-- **Namespace is refused:** add it to the Integration allow-list or use a namespace already
-  allowed; the list cannot grant service-account access.
-- **A read is truncated:** narrow the namespace, workload, container, or Investigation window.
-
-## Rotate or disconnect
-
-Rotate cluster credentials inside the Relay deployment, reconnect it, and verify the
-Integration before relying on new reads. Disable the Integration to stop synchronization
-and new reads while retaining existing records. Deletion is refused when retained records
-depend on it.
-
-## Next step
-
-Connect an [alert source](/integrations/overview), then
-[run the first Investigation](/getting-started/run-your-first-investigation) with Kubernetes available as evidence.
-
-## Availability
-
-Kubernetes through Relay is available in OSS v0.1. Kubernetes and its mark belong to the
-Cloud Native Computing Foundation. Review the
-[Kubernetes RBAC contract](https://kubernetes.io/docs/reference/access-authn-authz/rbac/).
+- **Relay disconnected.** Check the Relay process, endpoint and outbound network path.
+- **Read unavailable.** Check the Relay version and advertised capabilities, then verify again.
+- **Namespace or access refused.** Check the Integration allowlist, Relay policy and service-account RBAC.
+- **Incomplete output.** Narrow the workload, container or time interval.

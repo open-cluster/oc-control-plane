@@ -10,15 +10,14 @@ import (
 var ErrModelUnavailable = investigation.ErrReasonerUnavailable
 
 var (
-	ErrRefused       = errors.New("the model provider declined the request")
-	ErrOutage        = errors.New("the model provider is unreachable")
-	ErrRejected      = errors.New("the model provider rejected the request as malformed")
-	ErrMalformed     = errors.New("the model's answer did not satisfy the declared schema")
-	ErrTimeout       = errors.New("the model provider did not answer within the deadline")
-	ErrContextWindow = errors.New("the model provider rejected the request context")
+	ErrRefused                  = errors.New("model provider declined the request")
+	ErrOutage                   = errors.New("model provider is unreachable")
+	ErrRejected                 = errors.New("model provider rejected the request")
+	ErrMalformed                = errors.New("model response does not match the schema")
+	ErrTimeout                  = errors.New("model provider timed out")
+	ErrContextWindow            = errors.New("model context window exceeded")
+	errUnavailablePriorEvidence = errors.New("a finding cites unavailable prior evidence; cite current reads with run_refs, and use evidence_refs only for supplied prior Investigation/ordinal pairs; otherwise leave evidence_refs empty")
 )
-
-var errUnavailablePriorEvidence = errors.New("a finding cites unavailable prior evidence; cite current reads with run_refs, and use evidence_refs only for supplied prior Investigation/ordinal pairs; otherwise leave evidence_refs empty")
 
 type Outcome int16
 
@@ -96,12 +95,21 @@ func (f *Failure) Unwrap() []error {
 }
 
 func Failed(outcome Outcome, provider, model, detail string) *Failure {
-	return &Failure{Outcome: outcome, Provider: provider, Model: model, Detail: detail}
+	return &Failure{
+		Outcome:  outcome,
+		Provider: provider,
+		Model:    model,
+		Detail:   detail,
+	}
 }
 
 func FailedBecause(outcome Outcome, provider, model, detail string, cause error) *Failure {
 	return &Failure{
-		Outcome: outcome, Provider: provider, Model: model, Detail: detail, cause: cause,
+		Outcome:  outcome,
+		Provider: provider,
+		Model:    model,
+		Detail:   detail,
+		cause:    cause,
 	}
 }
 

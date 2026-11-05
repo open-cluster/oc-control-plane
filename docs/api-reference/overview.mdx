@@ -40,24 +40,79 @@ vendor references remain in the integration guides.
 
 ## Authentication
 
-Normal product routes authenticate with the opaque `__Host-oc_session` cookie issued by
-local sign-in or generic OIDC. General bearer API tokens are not shipped in OSS v0.1.
-Do not write the session value to generated-client logs.
+Use the session cookie issued by local sign-in or OIDC. Bootstrap uses its one-time deployment token. Webhooks use separate credentials.
 
-Bootstrap is the only product setup request that accepts the one-time deployment
-credential as an `Authorization: Bearer` value. Webhook credentials authenticate only
-their `/webhooks/v1` routes.
+If you completed the [Quickstart](/getting-started/quickstart), reuse its cookie jar:
 
-Unsafe cookie-backed requests also require an `Origin` header exactly matching the
-configured public URL. Same-origin browser clients let the cookie jar manage the
-`HttpOnly`, `Secure` session cookie.
+```bash
+export OPENCLUSTER_URL="http://localhost:8081"
+export OPENCLUSTER_COOKIE=".secrets/session-cookie"
+```
 
-<Warning>
-  Generated cURL examples currently omit this header because the canonical OpenAPI
-  contract records the requirement only as an extension. For `POST`, `PUT`, `PATCH`, and
-  `DELETE` product requests authenticated by the session cookie, add
-  `--header "Origin: $OPENCLUSTER_URL"`. Without it, OpenCluster returns `403`.
-</Warning>
+For an existing local account, use your deployment URL. Run `umask 077` before creating
+a private `sign-in.json` file with the `email` and `password` fields. The command below
+removes the password file when the request finishes, even if sign-in fails.
+
+```bash
+umask 077
+export OPENCLUSTER_COOKIE="$PWD/opencluster.cookies"
+(
+  trap 'rm -f -- sign-in.json' EXIT
+  curl --fail-with-body --cookie-jar "$OPENCLUSTER_COOKIE" \
+    --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
+    --data @sign-in.json "$OPENCLUSTER_URL/api/v1/auth/local/sign-in"
+)
+```
+
+Treat the cookie jar as a credential. Unsafe product requests such as POST and PATCH must include `Origin` matching the configured public origin. Add the header when copying generated examples.
+
+## Verify an Integration
+
+Set `INTEGRATION_ID` to the ID returned during setup. An Editor or Admin can request verification:
+
+```bash
+curl --fail-with-body --request POST --cookie "$OPENCLUSTER_COOKIE" \
+  --header "Origin: $OPENCLUSTER_URL" \
+  "$OPENCLUSTER_URL/api/v1/integrations/$INTEGRATION_ID/verify"
+```
+
+Check the returned `status`, `verificationNote` and `toolAvailability`. Each guide explains what that Integration verifies.
+
+## Authorize GitHub or Slack in a browser
+
+**Advanced workaround for API-only deployments.** Use your browser's developer console
+to start authorization with the same browser session that receives the provider callback.
+
+Use the deployment's public HTTPS origin. Check `supportsConnect` for the Integration type in `GET /api/v1/integration-types`.
+
+1. Open `/healthz` on the OpenCluster origin in your browser. For OIDC, first visit `/api/v1/auth/oidc/start` on that origin and complete sign-in. For local authentication, open the browser's developer console on the OpenCluster origin and run:
+
+   ```js
+   const signIn = await fetch("/api/v1/auth/local/sign-in", {
+     method: "POST",
+     headers: {"Content-Type": "application/json"},
+     body: JSON.stringify({
+       email: prompt("OpenCluster Admin email"),
+       password: prompt("OpenCluster password"),
+     }),
+   });
+   if (!signIn.ok) throw new Error("Sign-in failed: " + signIn.status);
+   ```
+
+2. In the same browser, start setup. Replace `github` with `slack` for Slack:
+
+   ```js
+   const setup = await fetch(
+     "/api/v1/integration-types/github/connect?returnTo=%2Fapi%2Fv1%2Fsession",
+     {method: "POST"},
+   );
+   if (!setup.ok) throw new Error("Setup failed: " + setup.status);
+   location.assign((await setup.json()).authorizationUrl);
+   ```
+
+3. Approve the installation at the provider and return in the same browser. The redirect goes to the session endpoint. Check its URL for `connect=connected` and the `integration` ID. Open `/api/v1/integrations/<integration-id>` on the same origin to confirm its status. If setup fails or expires, start again.
+
+A cURL cookie jar is separate from your browser session. The callback needs the browser session that started setup.
 
 ## Organization identity
 
@@ -68,7 +123,7 @@ resolved identity with:
 ```bash
 export ORGANIZATION_ID="$(
   curl --fail-with-body --silent \
-    --cookie "__Host-oc_session=$OPENCLUSTER_SESSION" \
+    --cookie "$OPENCLUSTER_COOKIE" \
     "$OPENCLUSTER_URL/api/v1/session" |
   jq --raw-output '.organization.id'
 )"
@@ -80,7 +135,7 @@ Then call an Organization-owned operation without supplying an Organization sele
 
 ```bash
 curl --fail-with-body \
-  --cookie "__Host-oc_session=$OPENCLUSTER_SESSION" \
+  --cookie "$OPENCLUSTER_COOKIE" \
   "$OPENCLUSTER_URL/api/v1/incidents"
 ```
 

@@ -91,10 +91,10 @@ Stopping:
   never converts an open possibility into a cause.
 
 Concluding:
-- Conclude by calling the conclude tool, once. Conclusion status expresses assessment
-  certainty. A finding stated above its evidence is wrong even when it turns out true.
-- Keep impact separate from the overall summary. Cite impact only when reads establish it;
-  otherwise state plainly that impact is not established and use no run references.
+- Call conclude once. Use supported_explanation for a cited cause or contributing factor,
+  inconclusive when the explanation remains unsupported, and answer_only for a factual answer.
+- Keep impact separate from the overall summary. Cite impact only when reads establish it.
+  Describe unknown impact without references. For answer_only, leave irrelevant impact empty.
 - Propose actions rather than claiming execution. Each action states its rationale,
   verification, and the runs supporting it.
 - If reads are over and questions remain, keep open explanations as hypotheses and name
@@ -186,7 +186,8 @@ func concludeDefinition(prior bool) integrations.ToolDefinition {
 			"at most " + strconv.Itoa(investigation.MaxSummaryLength) + " characters — it " +
 			"is the reply an operator reads first, not the report; the detail belongs in " +
 			"the findings, which are not bounded by it. Oversized output must be corrected. " +
-			"Propose at most " + strconv.Itoa(investigation.MaxConclusionActions) + " actions; each title, rationale and verification is limited to " +
+			"Propose at most " + strconv.Itoa(investigation.MaxConclusionActions) + " actions. " +
+			"Each title, rationale and verification is limited to " +
 			strconv.Itoa(investigation.MaxActionTextLength) + " UTF-8 bytes.",
 		InputSchema: concludeSchema(prior),
 	}
@@ -196,8 +197,11 @@ func concludeSchema(prior bool) map[string]any {
 	actions := array(actionSchema())
 	actions["maxItems"] = investigation.MaxConclusionActions
 	return object(properties{
-		"status":      enumField(investigation.ConclusionStatuses...),
-		"summary":     map[string]any{"type": "string", "maxLength": investigation.MaxSummaryLength},
+		"status": enumField(newConclusionStatuses...),
+		"summary": map[string]any{
+			"type":      "string",
+			"maxLength": investigation.MaxSummaryLength,
+		},
 		"impact":      impactSchema(),
 		"findings":    array(agentFindingSchema(prior)),
 		"hypotheses":  array(hypothesisSchema()),
@@ -247,7 +251,8 @@ func actionSchema() map[string]any {
 func limitationSchema() map[string]any {
 	return object(properties{
 		"type":      enumField(investigation.LimitationTypes...),
-		"statement": stringField, "run_refs": array(integerField),
+		"statement": stringField,
+		"run_refs":  array(integerField),
 	})
 }
 
@@ -347,11 +352,17 @@ func renderResult(result toolFeedback) ToolResultTurn {
 			}
 		}
 		encoded, _ := json.Marshal(page)
-		return ToolResultTurn{CallID: result.CallID, Content: historyResponsePrefix + string(encoded)}
+		return ToolResultTurn{
+			CallID:  result.CallID,
+			Content: historyResponsePrefix + string(encoded),
+		}
 	}
 
-	return ToolResultTurn{CallID: result.CallID, Content: *run.ObservationText,
-		IsError: run.Outcome == investigation.RunFailed}
+	return ToolResultTurn{
+		CallID:  result.CallID,
+		Content: *run.ObservationText,
+		IsError: run.Outcome == investigation.RunFailed,
+	}
 }
 
 func concludeInstruction(reason string) string {

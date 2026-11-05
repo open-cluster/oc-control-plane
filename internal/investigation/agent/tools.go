@@ -184,7 +184,8 @@ func (r *Agent) execute(
 		}
 	}
 	span.SetAttributes(attribute.String("oc.tool.outcome", outcome))
-	observability.LoggerFor(runCtx, r.Logger, "").Log(runCtx, level, "Tool execution finished",
+	observability.LoggerFor(runCtx, r.Logger, "").Log(
+		runCtx, level, "Tool execution finished",
 		slog.String("integration_id", run.IntegrationID.String()),
 		slog.String("tool", tool.Name), slog.Int("ordinal", ordinal),
 		slog.String("outcome", outcome),

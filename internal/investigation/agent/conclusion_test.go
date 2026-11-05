@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestStructuredConclusionContractRequiresMechanismForAVerifiedCause(t *testing.T) {
+func TestStructuredConclusionContractRequiresMechanismForACause(t *testing.T) {
 	t.Parallel()
 
 	properties, ok := ConcludeDefinition().InputSchema["properties"].(map[string]any)
@@ -31,7 +31,7 @@ func TestStructuredConclusionContractRequiresMechanismForAVerifiedCause(t *testi
 	assertSchemaFields(t, hypotheses["items"], "run_refs", "statement", "status", "test")
 
 	document, err := json.Marshal(map[string]any{
-		"status":  "verified_cause",
+		"status":  "supported_explanation",
 		"summary": "The deployment caused the checkout outage.",
 		"impact": map[string]any{
 			"summary": "Checkout requests are failing.", "run_refs": []int{1},
@@ -49,10 +49,9 @@ func TestStructuredConclusionContractRequiresMechanismForAVerifiedCause(t *testi
 	}
 
 	if _, err := decodeConclusion(document, []investigation.ToolRun{{Outcome: investigation.RunSucceeded}}, nil); err == nil {
-		t.Fatal("a verified cause without a causal mechanism was accepted")
+		t.Fatal("a cause without a causal mechanism was accepted")
 	}
 
-	_ = investigation.VerifiedCause
 }
 
 func assertSchemaFields(t *testing.T, candidate any, want ...string) {

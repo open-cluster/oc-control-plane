@@ -61,6 +61,7 @@ OpenCluster currently supports:
 - **GitHub** — repository and change context
 - **Slack** — operational context and threaded conversations
 - **Prometheus Alertmanager** — alert and Incident intake
+- **Generic Webhook** — authenticated JSON alert intake
 - **Prometheus** — metric discovery and bounded PromQL queries against approved self-hosted sources
 - **Loki** — bounded LogQL log excerpts from approved self-hosted or Grafana Cloud sources
 - **Tempo** — trace search and bounded span relationships from approved sources
@@ -70,7 +71,8 @@ Integrations expose only the capabilities that were successfully verified for th
 The Integration type API lists Tools, setup capabilities, and configured counts.
 Registered types are available in the running build.
 
-See the [integration documentation](https://docs.open-cluster.io/integrations).
+See [Connect your tools](https://docs.open-cluster.io/getting-started/connect-your-tools)
+for API setup and provider authorization.
 
 ## Capabilities
 

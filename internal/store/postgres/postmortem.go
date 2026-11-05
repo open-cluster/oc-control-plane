@@ -262,6 +262,22 @@ func (p *Database) Correct(
 			if current.Status == postmortem.StatusReviewed {
 				return postmortem.Postmortem{}, postmortem.ErrAlreadyReviewed
 			}
+			var refs []investigation.EvidenceRef
+			for _, statements := range []*[]postmortem.CitedStatement{corrections.RootCauses, corrections.ContributingFactors} {
+				if statements == nil {
+					continue
+				}
+				for _, statement := range *statements {
+					refs = append(refs, statement.EvidenceRefs...)
+				}
+			}
+			missing, err := evidenceMissing(ctx, tx, organization, refs)
+			if err != nil {
+				return postmortem.Postmortem{}, err
+			}
+			if missing {
+				return postmortem.Postmortem{}, postmortem.ErrUnavailableEvidence
+			}
 			current = postmortem.ApplyCorrections(current, corrections)
 			current.Revision++
 			document, err := json.Marshal(current)
