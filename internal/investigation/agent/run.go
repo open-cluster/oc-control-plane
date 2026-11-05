@@ -387,7 +387,7 @@ func (r *Agent) Run(
 							err = Failed(OutcomeRejected, r.modelConfig.Provider, completion.Model,
 								"the prior evidence could not be verified")
 						} else if missing {
-							invalid = ErrUnavailablePriorEvidence
+							invalid = errUnavailablePriorEvidence
 						}
 					}
 				}

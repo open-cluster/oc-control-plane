@@ -183,7 +183,7 @@ func concludeDefinition(prior bool) integrations.ToolDefinition {
 			"findings, hypotheses, proposed actions, and limitations. Return no " +
 			"findings rather than a guess when nothing was established. " +
 			"Cite this Investigation's runs with run_refs; reuse only supplied prior evidence_refs pairs. Keep the answer " +
-			"at most " + strconv.Itoa(investigation.MaxSummaryLength) + " characters(the more concise the better) — it " +
+			"at most " + strconv.Itoa(investigation.MaxSummaryLength) + " characters — it " +
 			"is the reply an operator reads first, not the report; the detail belongs in " +
 			"the findings, which are not bounded by it. Oversized output must be corrected. " +
 			"Propose at most " + strconv.Itoa(investigation.MaxConclusionActions) + " actions. " +

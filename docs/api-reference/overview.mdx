@@ -49,14 +49,19 @@ export OPENCLUSTER_URL="http://localhost:8081"
 export OPENCLUSTER_COOKIE=".secrets/session-cookie"
 ```
 
-For an existing local account, use your deployment URL and save a JSON object with `email` and `password` in a private file named `sign-in.json`. Request a new cookie, then remove the password file:
+For an existing local account, use your deployment URL. Run `umask 077` before creating
+a private `sign-in.json` file with the `email` and `password` fields. The command below
+removes the password file when the request finishes, even if sign-in fails.
 
 ```bash
 umask 077
 export OPENCLUSTER_COOKIE="$PWD/opencluster.cookies"
-curl --fail-with-body --cookie-jar "$OPENCLUSTER_COOKIE" \
-  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
-  --data @sign-in.json "$OPENCLUSTER_URL/api/v1/auth/local/sign-in"
+(
+  trap 'rm -f -- sign-in.json' EXIT
+  curl --fail-with-body --cookie-jar "$OPENCLUSTER_COOKIE" \
+    --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
+    --data @sign-in.json "$OPENCLUSTER_URL/api/v1/auth/local/sign-in"
+)
 ```
 
 Treat the cookie jar as a credential. Unsafe product requests such as POST and PATCH must include `Origin` matching the configured public origin. Add the header when copying generated examples.
@@ -74,6 +79,9 @@ curl --fail-with-body --request POST --cookie "$OPENCLUSTER_COOKIE" \
 Check the returned `status`, `verificationNote` and `toolAvailability`. Each guide explains what that Integration verifies.
 
 ## Authorize GitHub or Slack in a browser
+
+**Advanced workaround for API-only deployments.** Use your browser's developer console
+to start authorization with the same browser session that receives the provider callback.
 
 Use the deployment's public HTTPS origin. Check `supportsConnect` for the Integration type in `GET /api/v1/integration-types`.
 

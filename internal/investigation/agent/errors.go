@@ -16,7 +16,7 @@ var (
 	ErrMalformed                = errors.New("model response does not match the schema")
 	ErrTimeout                  = errors.New("model provider timed out")
 	ErrContextWindow            = errors.New("model context window exceeded")
-	ErrUnavailablePriorEvidence = errors.New("a finding cites unavailable prior evidence; cite current reads with run_refs, and use evidence_refs only for supplied prior Investigation/ordinal pairs; otherwise leave evidence_refs empty")
+	errUnavailablePriorEvidence = errors.New("a finding cites unavailable prior evidence; cite current reads with run_refs, and use evidence_refs only for supplied prior Investigation/ordinal pairs; otherwise leave evidence_refs empty")
 )
 
 type Outcome int16

@@ -390,7 +390,7 @@ func boundedList(elements []any, replace *strings.Replacer) (string, int) {
 	rendered.WriteString("]")
 	if kept < len(elements) {
 		rendered.WriteString(" … [" + strconv.Itoa(kept) + " of " +
-			strconv.Itoa(len(elements)) + " items. the rest cut at " +
+			strconv.Itoa(len(elements)) + " items; the rest cut at " +
 			strconv.Itoa(maxRunContentBytes) + " bytes]")
 	}
 	return rendered.String(), kept
