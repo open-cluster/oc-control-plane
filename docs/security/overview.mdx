@@ -100,6 +100,8 @@ independent expiry. Known credential-shaped argument fields and opened credentia
 reflections are removed before new observation persistence. This does not detect every
 secret: retained source excerpts can still contain sensitive operational data.
 
+A retained observation is limited to 64 KiB, including its headers and arguments. Content prepared for the model has a separate 16 KiB budget. Retained observations may therefore contain more source content than the model received. Protect observation access and backups accordingly.
+
 ## Secrets and Relay
 
 Secrets accept a direct environment value or an optional `_FILE` path, never both. Startup errors omit secret values and paths. Restart after changing configuration or secret files.
@@ -135,5 +137,3 @@ to apply the shipped controls.
 ## Manage Integrations
 
 Store one-time webhook secrets securely. When an Admin rotates a secret, update the sender promptly because the old secret stops working immediately. Editors and Admins can disable an Integration to stop new use while preserving history. Only Admins can delete Integrations. Deletion is refused while retained records depend on the Integration.
-
-A retained observation is limited to 64 KiB, including its headers and arguments. Content prepared for the model has a separate 16 KiB budget. Retained observations may therefore contain more source content than the model received. Protect observation access and backups accordingly.
