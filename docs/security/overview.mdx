@@ -54,7 +54,8 @@ removal prevents authentication without deleting identity history.
 Logout clears the browser cookie and deletes the current session even without a membership.
 Expired sessions are cleaned up automatically. Audit records follow the audit retention policy.
 An absent or expired cookie can be cleared again. Logout still requires the configured
-Origin. A storage failure returns an error because durable sign-out was not confirmed.
+Origin. When session revocation fails, logout returns an error and leaves the valid cookie
+intact so the user can retry.
 
 ## Trust boundaries
 
