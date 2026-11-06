@@ -1,29 +1,14 @@
 ---
 title: "OpenCluster"
-description: "Investigate incidents across the systems you already use, and review cited findings."
+description: "Ask operational questions and investigate production incidents with cited evidence."
 ---
 
-OpenCluster is an open-source AI SRE for investigating production incidents. It follows
-bounded read-only evidence across your existing alerting, infrastructure, collaboration,
-and source-control systems, keeps competing hypotheses visible, and returns a structured
-conclusion you can audit.
+OpenCluster is an open-source AI SRE for answering operational questions and investigating production incidents. It brings together metrics, logs, traces, workload state, code changes, and team discussions from connected systems.
 
-OpenCluster does not execute production changes. Each material claim cites the numbered
-Tool Run that supports it, and each Action Proposal states its rationale and verification
-procedure.
+Ask “Why did checkout latency increase?” or “What changed before the errors started?” Use an installed [Slack app](/integrations/collaboration/slack#ask-in-slack) or the [Conversation API](/api-reference/overview#ask-a-question), then ask follow-up questions in the same conversation. An alert is not required. Optional alert sources can open incidents and start investigations automatically.
 
-Start with the local end-to-end path, choose the systems that can supply evidence, or
-browse the HTTP contract. [Feature availability](/feature-availability) distinguishes
-what ships in OSS v0.1 from what is unavailable.
+Results include findings with citations to the evidence OpenCluster read, recommended actions, and explicit limitations. Inspect the supporting observations to assess whether the explanation fits. OpenCluster proposes production changes for human review and does not execute them.
 
-<CardGroup cols={3}>
-  <Card title="Quickstart" icon="rocket" href="/getting-started/quickstart">
-    Run one investigation from alert to conclusion.
-  </Card>
-  <Card title="Integrations" icon="plug" href="/integrations/overview">
-    Choose an alert source and the evidence sources an Investigation can read.
-  </Card>
-  <Card title="API reference" icon="code" href="/api-reference/overview">
-    Authenticate with your Organization and find every public operation.
-  </Card>
-</CardGroup>
+Start with the [Quickstart](/getting-started/quickstart), explore [Integrations](/integrations/overview), or learn how to [review results](/concepts/investigations-and-conversations).
+
+Administration and connection setup currently use the API. A web experience is under development and is not included in the self-hosted release. See [Feature availability](/feature-availability) for what ships.

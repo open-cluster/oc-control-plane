@@ -1,14 +1,40 @@
 ---
 title: "Integrations"
-description: "Choose alert and evidence sources for OpenCluster."
+description: "Connect observability, infrastructure, source control, collaboration, and alerting systems."
 ---
 
-Connect an alert source to create Incidents. Add the evidence sources your team uses to investigate them.
+Connect OpenCluster to the tools your team already uses. Metrics, logs, traces, infrastructure state, code changes, and team discussions help answer operational questions and investigate incidents. An alert is not required.
 
-- **Alerts.** [Generic Webhook](/integrations/alerting/generic_webhook) accepts your alert sender's JSON. [Prometheus Alertmanager](/integrations/alerting/alertmanager) sends grouped firing and resolved alerts.
-- **Observability.** Connect [Prometheus](/integrations/observability/prometheus) for metrics, [Loki](/integrations/observability/loki) for logs and [Tempo](/integrations/observability/tempo) for traces.
-- **Infrastructure.** [Kubernetes](/integrations/infrastructure/kubernetes) provides workloads, Events and container logs through Relay.
-- **Changes.** [GitHub](/integrations/source-control/github) provides repository changes, checks and releases.
-- **Collaboration.** [Slack](/integrations/collaboration/slack) provides conversation context. An installed app can reply to direct mentions.
+Start with a source that can answer your question. An integration may serve several purposes, such as Slack providing both an interaction channel and evidence.
 
-Use the API to create and manage Integrations. GitHub and Slack installation also use a browser for provider authorization. Start with [Connect your tools](/getting-started/connect-your-tools).
+## Observability
+
+Connect [Prometheus](/integrations/observability/prometheus), [Loki](/integrations/observability/loki), and [Tempo](/integrations/observability/tempo) for metrics, logs, and distributed traces.
+
+Ask “Why did checkout latency increase during the last 30 minutes?” OpenCluster can compare available measurements, log excerpts, and example traces, citing the evidence behind its findings.
+
+## Infrastructure
+
+Connect [Kubernetes](/integrations/infrastructure/kubernetes) to inspect a named workload and its pods, namespace events, and container logs. Relay runs in your environment and keeps Kubernetes credentials there.
+
+## Source control
+
+Connect [GitHub](/integrations/source-control/github) for commits, pull requests, CI failures, files, and releases in selected repositories. OpenCluster uses a GitHub App with read-only repository permissions.
+
+## Collaboration
+
+Connect [Slack](/integrations/collaboration/slack) to ask questions through direct app mentions and continue conversations in threads. Slack questions can use other connected sources. Their Slack evidence reads stay within the originating thread.
+
+Slack can also provide permitted discussion history as evidence for questions started through the Conversation API. Access depends on the connected token, its scopes, and channel membership.
+
+## Alerting
+
+Connect [Prometheus Alertmanager](/integrations/alerting/alertmanager) or [Generic Webhook](/integrations/alerting/generic_webhook) to create and update incidents from incoming alerts. Alert sources are optional.
+
+## Access and connection
+
+An Admin creates an integration or authorizes its provider installation. GitHub and installed Slack apps use provider authorization. Slack also accepts existing tokens for read-only access. Kubernetes requires a Relay, and alert senders need a webhook URL and secret.
+
+Each guide explains required access, connection methods, examples, and limitations. Administration currently uses the [API connection procedures](/api-reference/overview#connect-an-integration). A web setup experience is under development.
+
+A successful connection check confirms access at that time. Source permissions, retention, and availability still affect later reads. Kubernetes needs an explicit Relay capability check during setup. Alert sources can receive alerts before verification, and waiting for a first delivery alone does not indicate an outage.

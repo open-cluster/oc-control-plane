@@ -19,17 +19,18 @@
   <a href="https://discord.com/invite/8HrEBhUagE">Discord</a>
 </p>
 
-OpenCluster is an open-source AI SRE for production incident investigation.
+OpenCluster is an open-source AI SRE for operational questions and production incident investigation.
 
-It connects alerts with context from Kubernetes, GitHub, Slack, and other operational
-systems to determine impact, investigate likely causes, and recommend what to do next.
+Ask through Slack or the Conversation API using evidence from Kubernetes, GitHub,
+metrics, logs, traces, and permitted discussions. Alerts can also start investigations.
+OpenCluster reports cited findings, explicit limitations, and recommended next steps.
 
 Every material Finding is backed by the Tool Runs that support it, so operators can inspect
 how a conclusion was reached instead of treating the AI response as a black box.
 Uncertainty, missing telemetry, and unresolved assumptions remain explicit.
-Tool Runs preserve subsecond execution timing separately from source-query bounds;
-source limits and content clipped for the model remain distinct limitations.
-Editors and Admins can inspect retained bounded observations on demand; ordinary
+Tool Runs preserve subsecond execution timing separately from source-query bounds.
+Source limits and content clipped for the model remain distinct limitations.
+Editors and Admins can inspect retained bounded observations on demand. Ordinary
 Investigation detail remains lightweight.
 
 > OpenCluster is pre-release software. APIs and storage may change before the first stable release.
@@ -101,12 +102,12 @@ Organization, and operational mutations are audited.
 Investigations use Anthropic or OpenRouter through native Tool calling. OpenCluster owns
 Tool authorization, execution budgets, evidence recording, and conclusion validation.
 
-Findings require citations to successful reads; failed or skipped reads can explain
+Findings require citations to successful reads. Failed or skipped reads can explain
 limitations but cannot establish a Finding. Startup activity describes the initial phase,
 and recorded activity remains available when a client reconnects.
 Tool completion activity is published only after the Tool Run's provenance is recorded.
-Operational JSON logs correlate Investigations and Tool executions with trace identifiers;
-routine requests and successful health probes log at DEBUG, with durations in milliseconds.
+Operational JSON logs correlate Investigations and Tool executions with trace identifiers.
+Routine requests and successful health probes log at DEBUG, with durations in milliseconds.
 
 ### Relay
 
@@ -166,11 +167,11 @@ docker compose -f deploy/compose/compose.yaml up --build
 A local deployment requires PostgreSQL, an administrator bootstrap token, an encryption
 key, and a supported model provider.
 
-Follow the [Quickstart](https://docs.open-cluster.io/getting-started/quickstart) for full setup.
-The standalone backend uses port `8081`; its default local public origin is
+Follow [Docker Compose setup](https://docs.open-cluster.io/self-hosting/docker-compose) for installation and bootstrap.
+The standalone backend uses port `8081`. Its default local public origin is
 `http://localhost:8081`. A separately deployed frontend must provide its own verified routing.
 Helm requires `server.publicURL` to be set to the deployment's actual public origin.
-Model requests use provider context-limit responses for bounded recovery; the output allowance
+Model requests use provider context-limit responses for bounded recovery. The output allowance
 remains configurable through `OC_AI_MAX_OUTPUT_SIZE`.
 
 ## Development
@@ -182,7 +183,7 @@ make verify
 ```
 
 The full container-backed root-module suite runs packages sequentially to preserve
-shared test-container lifetimes; race detection remains enabled.
+shared test-container lifetimes. Race detection remains enabled.
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) before submitting changes.
 

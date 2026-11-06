@@ -4,7 +4,7 @@ description: "Authenticate, use your Organization, handle errors and pagination,
 ---
 
 OpenCluster serves JSON over the versioned `/api/v1` product API. The canonical contract
-is `api/openapi.yaml`; generated operation pages provide request builders, schemas,
+is `api/openapi.yaml`. Generated operation pages provide request builders, schemas,
 responses, and cURL examples.
 
 Set the base URL for your deployment:
@@ -17,19 +17,19 @@ export OPENCLUSTER_URL="https://oc.example.com"
 
 Use `GET /api/v1/investigations/{investigation}/runs/{ordinal}/observation` to inspect
 one cited Tool Run as an Editor or Admin. The response returns bounded prepared text and
-source context; older unavailable observations are `null`. Viewer access returns `403`.
+source context. Older unavailable observations are `null`. Viewer access returns `403`.
 Ordinary Investigation detail, lists, and events omit these bodies. See
-[Inspect a cited observation](/concepts/investigations-and-conversations#inspect-a-cited-observation)
+[Observation response details](#observation-response-details)
 for clipping, timing, sensitivity, and retention semantics.
 
 ## Integration catalog
 
 Use `GET /api/v1/integration-types` to discover registered types, their Tools, setup
-capabilities, and configured counts. An omitted `tools` list means no query Tools;
+capabilities, and configured counts. An omitted `tools` list means no query Tools.
 `receivesWebhooks` identifies alert intake. Per-Integration `toolAvailability` reports
-which Tools are currently usable.
+which operations are eligible under the last verification and recorded grants. This is not a live health check.
 
-Each integration guide describes its configuration fields and credentials. Secret inputs
+The configuration examples below describe credential inputs. Secret inputs
 are accepted during setup and never returned in configuration reads.
 
 The pre-production catalog response no longer includes `logo`, `available`, `capabilities`,
@@ -42,7 +42,7 @@ vendor references remain in the integration guides.
 
 Use the session cookie issued by local sign-in or OIDC. Bootstrap uses its one-time deployment token. Webhooks use separate credentials.
 
-If you completed the [Quickstart](/getting-started/quickstart), reuse its cookie jar:
+If you completed [Docker Compose setup](/self-hosting/docker-compose), reuse its cookie jar:
 
 ```bash
 export OPENCLUSTER_URL="http://localhost:8081"
@@ -76,7 +76,11 @@ curl --fail-with-body --request POST --cookie "$OPENCLUSTER_COOKIE" \
   "$OPENCLUSTER_URL/api/v1/integrations/$INTEGRATION_ID/verify"
 ```
 
-Check the returned `status`, `verificationNote` and `toolAvailability`. Each guide explains what that Integration verifies.
+Use the returned `status` and `toolAvailability` for technical diagnosis. `verificationNote` may be included in verification and credential mutation responses. Ordinary reads do not reconstruct it. Query-source creation and provider authorization already probe access. Kubernetes needs this explicit check. For webhook sources, this operation reports accepted delivery history and returns `failed` when none exists. That alone does not establish an outage.
+
+Configuration edits without replacement credentials retain existing credentials and verification state. Recheck access after changing an endpoint or tenant. Replacement credentials are probed before saving. A successful probe cannot guarantee future queries.
+
+Prometheus checks the expected result of `vector(1)`. Loki checks a one-minute log query limited to one entry. Tempo runs a bounded trace search. Valid empty Loki and Tempo results confirm query access. Tempo trace retrieval can still require separate permission.
 
 ## Authorize GitHub or Slack in a browser
 
@@ -148,13 +152,13 @@ have separate authentication, payload, and retry contracts. Health, readiness, m
 and Relay gRPC traffic are not part of the product OpenAPI surface.
 
 OSS v0.1 is pre-release. Use the OpenAPI document shipped with the exact source or release
-you deploy; do not assume compatibility from a `latest` URL.
+you deploy. Do not assume compatibility from a `latest` URL.
 
 Investigation and Conversation turn statuses are `queued`, `running`, `concluded`,
 `failed`, and `cancelled`. This replaces the earlier `investigating` with `running` and
 maps `partial` and `needs_input` to `concluded`. Clients must read `conclusionStatus`,
 limitations, and `stoppedBy` for outcomes rather than interpreting lifecycle as certainty.
-Upgrade clients and server replicas together; mixed versions may return either status
+Upgrade clients and server replicas together. Mixed versions may return either status
 vocabulary during a rolling upgrade. No database migration is required for this change.
 
 ## Pagination
@@ -168,14 +172,14 @@ Do not decode a cursor or construct one from a resource ID.
 ## Errors
 
 JSON errors contain a safe `error` message and may include a stable `reason` or required
-Permission. Use the HTTP status and request identifier for diagnosis; do not parse the
+Permission. Use the HTTP status and request identifier for diagnosis. Do not parse the
 message text to make authorization decisions.
 
 | Status | Meaning | Client action |
 | --- | --- | --- |
-| `400` | Invalid request | Correct the request; do not retry it unchanged. |
+| `400` | Invalid request | Correct the request. Do not retry it unchanged. |
 | `401` | Missing or rejected authentication | Sign in again or correct the route-specific credential. |
-| `403` | Insufficient Permission | Request the required Role; changing the Organization ID does not grant access. |
+| `403` | Insufficient Permission | Request the required Role. Changing the Organization ID does not grant access. |
 | `404` | Unknown or inaccessible resource | Do not use the response to infer another Organization's data. |
 | `409` | State conflict | Refresh the resource and resolve the conflicting state. |
 | `429` | Rate limited | Retry after `Retry-After` when present. |
@@ -188,12 +192,14 @@ Responses containing Organization data use `Cache-Control: no-store`.
 The canonical alert path is
 `POST /webhooks/v1/integrations/{integration}/alert-events`. The Integration selects the
 provider adapter. Generic Webhook and Alertmanager use the one-time
-`X-OpenCluster-Token`; Slack uses its signed provider request.
+`X-OpenCluster-Token`. Slack uses its signed provider request.
 
 `202 Accepted` means a delivery is durable, and an exact retry of an accepted lifecycle
 phase returns `200 OK`. Correct `400`, `401`, and `413` responses before retrying. Alert
-webhooks use `503` for temporary admission pressure so Alertmanager retries them; retry with
+webhooks use `503` for temporary admission pressure so Alertmanager retries them. Retry with
 bounded backoff and honor `Retry-After` when present. Slack admission pressure remains `429`.
+
+For full request schemas, select `POST /webhooks/v1/integrations/{integration}/alert-events` under **Endpoints**, or locate it through the [API surface](/api-reference/surface#webhooks). The request schema includes both Generic Webhook and Alertmanager bodies.
 
 Use [Generic Webhook](/integrations/alerting/generic_webhook) or
 [Prometheus Alertmanager](/integrations/alerting/alertmanager) for sender setup. Alert
@@ -203,11 +209,11 @@ by Conversation and Message sequence through the Slack recovery operation.
 ## Investigation event streams
 
 Investigation activity uses increasing sequence identifiers. SSE clients reconnect with
-`Last-Event-ID`; comment frames are heartbeats and carry no product event. Store the last
+`Last-Event-ID`. Comment frames are heartbeats and carry no product event. Store the last
 processed sequence only after handling its event successfully.
 
 Streams send an idle heartbeat every 15 seconds and can stay open beyond ordinary HTTP
-request timeouts. Each event batch has a 10-second write deadline; a stalled connection
+request timeouts. Each event batch has a 10-second write deadline. A stalled connection
 is dropped and can reconnect using its last processed sequence. Streams close on a terminal
 event, an already processed terminal cursor, or server shutdown. Reconnect after shutdown
 to resume from durable activity.
@@ -220,9 +226,212 @@ Terminal events are `concluded`, `failed`, and `cancelled`. Ignore an unknown fu
 type while retaining its envelope so a newer server remains compatible with an older
 client. The generated stream operation documents the seven currently shipped event
 payloads: started, progress, Tool started, Tool completed, concluded, failed, and cancelled.
-These payloads carry operational display data only; hypotheses appear in the final
+These payloads carry operational display data only. Hypotheses appear in the final
 Investigation conclusion. A refused unavailable Tool is reported as a failed read without
 claiming it started against an Integration.
 
 Browse the [API surface](/api-reference/surface) or select an individual generated
 method/path entry in the navigation.
+
+## Connect an Integration
+
+An Admin creates Integrations or starts provider authorization. Editors and Admins can update, enable, disable, and verify existing Integrations. Only Admins can delete them or rotate webhook secrets. Viewers can read permitted metadata. Investigation and Conversation permissions are separate.
+
+Use the [session and Origin setup](#authentication). Save the relevant JSON example below in a private file, then submit it with this shared command. Set `INTEGRATION_CONFIG` to that file's name. Send the complete configuration when updating it. For GitHub or installed Slack apps, use the [browser authorization flow](#authorize-github-or-slack-in-a-browser).
+
+```bash
+INTEGRATION_CONFIG=prometheus.json
+curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
+  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
+  --data @"$INTEGRATION_CONFIG" "$OPENCLUSTER_URL/api/v1/integrations"
+```
+
+### Prometheus configuration
+
+Save your configuration as private `prometheus.json`, then use the [shared creation command](#connect-an-integration):
+
+```json
+{
+  "type": "prometheus",
+  "name": "Production metrics",
+  "configuration": {
+    "url": "https://metrics.example.com",
+    "bearerToken": "<read-only-token>"
+  }
+}
+```
+
+Omit `bearerToken` if your endpoint allows unauthenticated reads.
+
+### Loki configuration
+
+Save this example as private `loki.json`, then use the [shared creation command](#connect-an-integration):
+
+```json
+{
+  "type": "loki",
+  "name": "Production logs",
+  "configuration": {
+    "url": "https://logs.example.com",
+    "auth": "bearer",
+    "token": "<read-only-token>",
+    "tenantId": "production"
+  }
+}
+```
+
+Omit `tenantId` unless Loki requires a single tenant header. Omit the token only for a trusted endpoint that allows unauthenticated reads. For Basic authentication, including Grafana Cloud Loki, set `auth` to `basic`, add `username` from your Loki settings and use a read-only token.
+
+### Tempo configuration
+
+Save this example as private `tempo.json`, then use the [shared creation command](#connect-an-integration):
+
+```json
+{
+  "type": "tempo",
+  "name": "Production traces",
+  "configuration": {
+    "url": "https://traces.example.com",
+    "auth": "bearer",
+    "token": "<read-only-token>"
+  }
+}
+```
+
+Add `tenantId` if Tempo requires a single tenant header. Use `auth: basic` with a `username` and read-only token for Basic authentication, including Grafana Cloud Tempo. Omit the bearer token only for a trusted endpoint that allows unauthenticated reads.
+
+### Kubernetes creation
+
+Find the connected Relay ID with `GET /api/v1/relays`. Replace the Relay ID and namespace list below. After creation, request [verification](#verify-an-integration).
+
+```bash
+curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
+  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
+  --data '{
+    "type": "kubernetes",
+    "name": "Production cluster",
+    "relayId": "<relay-id>",
+    "configuration": {"namespaceAllowList": "checkout,payments"}
+  }' "$OPENCLUSTER_URL/api/v1/integrations"
+```
+
+### Slack configuration
+
+An Admin can use an existing token for read-only access without configuring the deployment's Slack installation flow. Save this as private `slack.json` and submit it with the [shared creation command](#connect-an-integration):
+
+```json
+{
+  "type": "slack",
+  "name": "Operations workspace",
+  "configuration": {"botToken": "<read-only-token>"}
+}
+```
+
+### Generic Webhook creation
+
+```bash
+curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
+  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
+  --data '{"type":"generic_webhook","name":"Database alerts","configuration":{}}' \
+  "$OPENCLUSTER_URL/api/v1/integrations"
+```
+
+### Alertmanager creation
+
+```bash
+curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
+  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
+  --data '{"type":"alertmanager","name":"Production alerts","configuration":{}}' \
+  "$OPENCLUSTER_URL/api/v1/integrations"
+```
+
+## Ask a question
+
+With an Editor or Admin session and a configured model provider, open a Conversation:
+
+```bash
+curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
+  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
+  --data '{"subject":"Checkout health","message":"Is the checkout Deployment healthy in the payments namespace?"}' \
+  "$OPENCLUSTER_URL/api/v1/conversations"
+```
+
+Save the returned `id` as `CONVERSATION_ID`. Use `GET /api/v1/conversations/{conversation}` to read its Messages and turns. A turn's `investigationId` identifies the result at `GET /api/v1/investigations/{investigation}`, including Findings and citations. Follow the [Investigation event stream](#investigation-event-streams) for live progress. Send a follow-up with `POST /api/v1/conversations/{conversation}/messages` and a body such as `{"message":"What do recent namespace Events show?"}`. Use the same cookie and Origin headers.
+
+## Investigate an Incident
+
+Use `GET /api/v1/incidents` to find the Incident and `GET /api/v1/investigations` to find any automatically opened Investigation. To open another Investigation intentionally:
+
+```bash
+curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
+  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
+  --data '{"incidentId":"<incident-id>"}' "$OPENCLUSTER_URL/api/v1/investigations"
+```
+
+Read `GET /api/v1/investigations/{investigation}` or follow the event stream. Progress moves from `queued` to `running`, then `concluded`, `failed`, or `cancelled`. A concluded run can remain inconclusive.
+
+## Conversation windows and pagination
+
+To ask about a specific interval, send both `windowFrom` and `windowUntil` when posting
+a Message, or when creating a Conversation with its first Message. Use RFC3339 timestamps
+with an offset. The start is inclusive and the end exclusive. The end cannot be in the
+future. Values are normalized to UTC microseconds and echoed on the accepted Message and
+Investigation. Invalid windows return `400` before accepting the request.
+
+Without explicit bounds, ordinary questions cover at least the preceding 24 hours.
+Incident questions retain their Incident-derived window. The first queued Message fixes
+the next batch's window. Later Messages inherit it, or may supply the same normalized
+bounds. Different bounds return `409`. Resend after that batch opens. Waiting or restarting
+does not move an accepted window.
+
+The Conversation API returns its first 50 turns as execution metadata, in ascending turn
+order. Replies live in the ordered Message transcript. To read more,
+pass `turnsNext` as `cursor` to `GET /api/v1/conversations/{conversation}/turns`.
+That endpoint accepts `limit` from 1 to 200 (default 50) and returns `turns` and `next`.
+Continue until `next` is null. Cursors belong to the same Organization and Conversation.
+Search and selectable sorting are not supported. The recent Message tail is separate.
+
+
+## Observation response details
+
+An Editor or Admin can retrieve one Tool Run's retained observation with
+`GET /api/v1/investigations/{investigation}/runs/{ordinal}/observation`.
+Use the Investigation ID and one-based ordinal from the citation. A Viewer can still
+read summaries and Tool Run metadata, but this observation request returns `403`.
+
+The response includes the requested arguments, outcome, source identifiers, execution
+timing, and current Integration name and type. A renamed Integration changes this display
+information. It does not rewrite the retained observation or its stable identifier.
+
+| Field | Interpretation |
+| --- | --- |
+| `observationText` | Exact bounded text prepared for the next model Tool result. `null` means unavailable, including older runs. An empty string means retained empty text. |
+| `truncated` | The source result may be incomplete. |
+| `modelClipped` | Content or arguments were omitted to fit the model or complete-observation budget, independently of source limits. |
+| `windowApplied` | `true` means the adapter supplied effective bounds. `false` means known fallback bounds. `null` means older bounds are unknown. |
+
+Preparation does not acknowledge remote provider delivery: cancellation or a provider
+failure can prevent submission. Ordinary Investigation detail, lists, and activity events
+omit observation bodies. Old observations are not reconstructed by rerunning queries.
+
+
+## Citation references
+
+In API results, `runRefs` names Tool Run ordinals in the containing Investigation.
+Reused Findings use `evidenceRefs` pairs of `investigationId` and `toolRunOrdinal`.
+Follow the referenced Investigation's detail and `runs` to resolve them. Two Investigations
+can each have Run 1, so the ordinal alone cannot identify reused evidence.
+Unavailable or unauthorized Investigations return the same `404`. If a cited Tool Run
+has been pruned, the Finding retains its reference and detail reports a `missing_telemetry`
+limitation. It does not substitute another run or claim fresh verification.
+
+
+## Interpret integration availability
+
+`status` and `verifiedAt` describe a recorded check. `toolAvailability` combines that check, recorded grants, and the disabled flag. Provider access or Relay connectivity can change afterward.
+
+Kubernetes verification records advertised Relay capabilities. A partial set can still return `verified`, including when no query operation is available. It does not test Kubernetes RBAC. GitHub verification checks installation and repository access, not every operation's permissions. An installation with no selected repositories can still verify.
+
+Slack's `inbound.available` currently indicates a configured signing secret and provider installation. It can remain true for a disabled integration, which ignores incoming mentions. Check enabled state, event delivery, granted scopes, and model-provider configuration when diagnosing replies. `verificationNote` is transient response guidance and is not reconstructed on ordinary reads.
+
+Investigation lifecycle is separate from assessment certainty. `queued` means waiting and `running` means assigned for execution, including interrupted work awaiting recovery. Terminal states are `concluded`, `failed`, and `cancelled`. Read `conclusionStatus`, `limitations`, `stoppedBy`, and `error` to interpret the outcome. The concluded event's payload `status` describes the assessment. Historical results may retain `verified_cause`. `concludedAt` records any terminal transition.

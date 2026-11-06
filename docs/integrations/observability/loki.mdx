@@ -3,40 +3,21 @@ title: "Loki"
 description: "Read timestamped log excerpts during an Investigation."
 ---
 
-Connect Loki to find service errors, deployment messages and other log entries around an Incident.
+Connect Loki to find service errors, deployment messages and other log entries during investigations and operational questions.
 
 ## Connect
 
 You need the OpenCluster **Admin** role, a Loki endpoint reachable from OpenCluster and permission to run log queries. Use an approved HTTPS URL, including any proxy prefix and excluding the Loki API path. See [network and credential requirements](/security/overview).
 
-Use the [API session and Origin setup](/api-reference/overview#authentication). Save this example as a private `loki.json` file:
+Use bearer or Basic authentication with a read-only token. Basic authentication also needs a username. Grafana Cloud uses its Loki username and token. Supply a tenant ID only when your endpoint requires it.
 
-```json
-{
-  "type": "loki",
-  "name": "Production logs",
-  "configuration": {
-    "url": "https://logs.example.com",
-    "auth": "bearer",
-    "token": "<read-only-token>",
-    "tenantId": "production"
-  }
-}
-```
+Use the [Loki configuration example](/api-reference/overview#loki-configuration) to connect through the API.
 
-Omit `tenantId` unless Loki requires a single tenant header. Omit the token only for a trusted endpoint that allows unauthenticated reads. For Basic authentication, including Grafana Cloud Loki, set `auth` to `basic`, add `username` from your Loki settings and use a read-only token.
+## After connection
 
-```bash
-curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
-  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
-  --data @loki.json "$OPENCLUSTER_URL/api/v1/integrations"
-```
+Creation checks log query access. A valid empty result confirms query access. No separate verification call is needed after successful creation.
 
-## Verify and use
-
-Creation runs a one-minute log query limited to one entry. A valid empty result confirms query access. Check for `integration.status: verified` and save `integration.id` for [reverification](/api-reference/overview#verify-an-integration).
-
-Ask for log entries using labels from your logging setup. For example, `{app="checkout"} |= "error"` selects matching lines when your streams use the `app` label. OpenCluster supports log excerpts with timestamps and stream labels. Loki metric queries and label discovery are unavailable.
+Ask “What errors appeared in checkout logs in the last 15 minutes?” You do not need to write LogQL. As an optional advanced query, use labels from your logging setup. For example, `{app="checkout"} |= "error"` selects matching lines when your streams use the `app` label. OpenCluster supports log excerpts with timestamps and stream labels. Loki metric queries, live tailing, and label discovery are unavailable.
 
 A read covers at most the latest 24 hours of the requested interval, up to 200 entries. The start is inclusive and the end exclusive. Retention, query limits and shortened entries can affect what is visible.
 

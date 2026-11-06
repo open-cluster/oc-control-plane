@@ -1,195 +1,28 @@
 ---
 title: "Quickstart"
-description: "Start OpenCluster, create its first Organization, accept an alert, and inspect an Investigation."
+description: "Connect a source, ask a question, and review the evidence."
 ---
 
-This walkthrough starts the complete local stack, accepts a canonical Alert Event, and
-opens the resulting Incident and Investigation. Allow about 15 minutes after the images
-build.
+Start with an operational question. You do not need an alert or an incident.
 
-## Before you start
+## 1. Prepare OpenCluster
 
-You need Docker with Docker Compose, Git, curl, port `8081`, and outbound HTTPS
-access to Anthropic or OpenRouter. You also need an API key and model identifier for that
-provider. The checked-in Compose stack runs PostgreSQL and the control plane. It is
-API-only and does not publish the optional Relay unless you enable its profile.
+For a new deployment, follow [Docker Compose setup](/self-hosting/docker-compose) or [Helm](/self-hosting/helm) and configure a model provider. If OpenCluster is already running, ask your administrator which sources are connected.
 
-The v0.1 repository does not declare minimum Docker, Compose, Git, CPU, or memory
-versions. Before continuing, confirm `docker compose version` and `git --version` run.
-Treat the absence of qualified minimums as a pre-release limitation, not permission to
-assume an old deployment tool is supported.
+Administration currently uses the API. A web experience is under development. You can ask questions through an installed Slack app or the Conversation API.
 
-OpenCluster v0.1 does not publish a qualified CPU or memory minimum. Docker must have
-enough capacity to build the Go image and run two services; increase its allocation if
-the build or PostgreSQL is terminated for memory pressure. Measure real Investigation
-concurrency before sizing production.
+## 2. Connect one relevant source
 
-## 1. Create local secret files
+Choose a source from the [Integration overview](/integrations/overview). For example, Kubernetes can report the health of a named workload, while Loki can read application logs. An Admin connects the source using its guide and the linked API procedure.
 
-Clone the repository and create files outside version control for the PostgreSQL
-password, PostgreSQL DSN, one-time bootstrap token, 32-byte encryption key, and model
-provider credential. Each environment variable below names a file; it never contains
-the credential itself.
+## 3. Ask a specific question
 
-On Linux or macOS, create the files and export the Compose inputs. Replace the obvious
-placeholders; the password in the DSN must be URL-encoded and equal the PostgreSQL
-password file.
+Try “Is the checkout Deployment healthy in the payments namespace?” with Kubernetes, or “What errors appeared in checkout logs in the last 15 minutes?” with Loki. Include the workload, service, repository, or time interval you care about.
 
-```bash
-install -d -m 700 .secrets
-printf '%s' '<POSTGRES_PASSWORD>' > .secrets/postgres-password
-printf '%s' 'postgresql://opencluster:<URL_ENCODED_PASSWORD>@postgres:5432/opencluster?sslmode=disable' > .secrets/postgres-dsn
-openssl rand -hex 32 > .secrets/bootstrap-token
-openssl rand -out .secrets/encryption-key 32
-printf '%s' '<MODEL_API_KEY>' > .secrets/model-key
-chmod 600 .secrets/*
+In a channel with the installed Slack app, mention `@OpenCluster` with your question. It replies in a thread. Alternatively, use the [Conversation API example](/api-reference/overview#ask-a-question), which covers sending a question and retrieving the answer. API questions require Editor or Admin access.
 
-export OPENCLUSTER_POSTGRES_PASSWORD_FILE="$PWD/.secrets/postgres-password"
-export OPENCLUSTER_DATABASE_DSN_FILE="$PWD/.secrets/postgres-dsn"
-export OPENCLUSTER_BOOTSTRAP_TOKEN_FILE="$PWD/.secrets/bootstrap-token"
-export OPENCLUSTER_ENCRYPTION_KEY_FILE="$PWD/.secrets/encryption-key"
-export OPENCLUSTER_AI_API_KEY_FILE="$PWD/.secrets/model-key"
-export OPENCLUSTER_AI_PROVIDER=anthropic
-export OPENCLUSTER_AI_MODEL='<MODEL_ID>'
-export OPENCLUSTER_RUNTIME_UID="$(id -u)"
-export OPENCLUSTER_RUNTIME_GID="$(id -g)"
-```
+## 4. Review and follow up
 
-OpenRouter users set `OPENCLUSTER_AI_PROVIDER=openrouter` and an exact model identifier
-such as `z-ai/glm-4.7`. The model must support Tool calling and have an endpoint that
-satisfies OpenCluster's zero-retention policy. See [model configuration](/self-hosting/configuration#model-provider).
-Docker Desktop users without `id` can set both runtime values to an available numeric
-non-root ID such as `1000`.
+Read the answer's findings, citations, and limitations. Missing evidence may leave a question unanswered. Ask a follow-up, such as “Did the deployment happen before the errors started?” In Slack, mention the app again in the same thread.
 
-The DSN uses the Compose service host `postgres`, database and user `opencluster`. The
-generated bootstrap token is longer than the 32-character minimum, and the encryption
-key is exactly 32 bytes.
-
-## 2. Start OpenCluster
-
-From the repository root, export the required `OPENCLUSTER_*` values and run:
-
-```bash
-docker compose -f deploy/compose/compose.yaml up --build
-```
-
-Wait until PostgreSQL is healthy and the `control-plane` service remains
-running:
-
-```bash
-docker compose -f deploy/compose/compose.yaml ps
-curl --fail http://localhost:8081/healthz
-curl --fail http://localhost:8081/readyz
-```
-
-The service table should show `postgres` as `healthy` and `control-plane` as running.
-Both probe commands must exit successfully before you continue. The root URL returns
-`404` because this deployment has no browser console. If a service exits, run
-`docker compose -f deploy/compose/compose.yaml logs <service>` and check the mounted file
-paths before retrying.
-
-## 3. Create the first User and Organization
-
-Bootstrap atomically creates the Organization, first User, **Admin** Membership,
-password, and session. It is deployment-wide and works only once. Replace the sample
-identity and password before running:
-
-```bash
-umask 077
-printf 'Authorization: Bearer %s\n' "$(tr -d '\r\n' < "$OPENCLUSTER_BOOTSTRAP_TOKEN_FILE")" > .secrets/bootstrap-header
-curl --fail-with-body --request POST http://localhost:8081/api/v1/auth/local/bootstrap \
-  --header @.secrets/bootstrap-header \
-  --header 'Origin: http://localhost:8081' \
-  --header 'Content-Type: application/json' \
-  --cookie-jar .secrets/session-cookie \
-  --data '{"organizationName":"Platform Team","email":"admin@example.com","displayName":"On-call","password":"<STRONG_PASSWORD>"}'
-rm .secrets/bootstrap-header
-```
-
-The successful response returns `{"bootstrapped":true}` and saves your session cookie.
-Verify the User, Organization, and **Admin** Role with:
-
-```bash
-curl --fail --cookie .secrets/session-cookie http://localhost:8081/api/v1/session
-```
-
-Treat the cookie file as a credential. A failed request commits nothing; correct the
-input and retry with the bootstrap token.
-
-The bootstrap token is deployment-wide and accepted only for the first local User. Keep
-it out of command history and remove access to the file after bootstrap succeeds. An
-invalid token is refused, a reused token returns a conflict, and an unsafe cookie-backed
-request without the configured `Origin` is refused.
-
-## 4. Connect a Generic Webhook
-
-Create a **Generic Webhook** named `Quickstart alerts` with your authenticated session:
-
-```bash
-curl --fail-with-body --request POST http://localhost:8081/api/v1/integrations \
-  --cookie .secrets/session-cookie \
-  --header 'Origin: http://localhost:8081' \
-  --header 'Content-Type: application/json' \
-  --data '{"type":"generic_webhook","name":"Quickstart alerts","configuration":{}}'
-```
-
-Save the returned `integration.id`, `integration.webhook.url` and one-time
-`webhookSecret` immediately. Replace
-the placeholders below and send a firing event using the current UTC time.
-To retry the same delivery, rerun only the `curl` command so the timestamp stays the same.
-
-```bash
-STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-curl --request POST "http://localhost:8081/webhooks/v1/integrations/<integration-id>/alert-events" \
-  --header "Content-Type: application/json" \
-  --header "X-OpenCluster-Token: <webhook-secret>" \
-  --data '{
-    "eventId":"quickstart-1",
-    "status":"firing",
-    "title":"Checkout latency is high",
-    "severity":"critical",
-    "startedAt":"'"$STARTED_AT"'",
-    "deduplicationKey":"quickstart/checkout-latency",
-    "labels":{"service":"checkout"},
-    "annotations":{"summary":"Synthetic quickstart alert"}
-  }'
-```
-
-The first valid delivery returns `202 Accepted`; an exact retry returns `200 OK`. A
-`401` means the secret is missing or wrong. A `400` means the JSON does not match the
-canonical schema. See [Generic Webhook](/integrations/alerting/generic_webhook) for all
-fields and retry outcomes.
-
-## 5. Verify the Incident and Investigation
-
-Read the Incident and its automatically opened Investigation:
-
-The automatic Investigation is present only when a model provider was available when the Alert Event was accepted.
-
-```bash
-curl --fail --cookie .secrets/session-cookie http://localhost:8081/api/v1/incidents
-curl --fail --cookie .secrets/session-cookie http://localhost:8081/api/v1/investigations
-```
-
-Match the Investigation's `incidentId` to the Incident created for
-`Checkout latency is high`. Read its details at `/api/v1/investigations/<investigation-id>`;
-do not create another Investigation merely to process this alert.
-
-Progress moves from `queued` to `running`. A completed run ends as `concluded` and
-separates impact, Findings, hypotheses, Action Proposals, and limitations.
-With only a synthetic alert, an inconclusive answer is honest and expected: the result
-should identify missing evidence rather than invent a cause. Every material claim must
-cite a numbered Tool Run.
-
-## Clean up
-
-Stop the stack while retaining the PostgreSQL volume:
-
-```bash
-docker compose -f deploy/compose/compose.yaml down
-```
-
-Do not add `--volumes` unless you intend to erase the local database. Before a production
-deployment, review [Configuration](/self-hosting/configuration),
-[Troubleshooting](/self-hosting/troubleshooting), and the
-[security model](/security/overview).
+Continue with [Run your first investigation](/getting-started/run-your-first-investigation) for guidance on useful questions and reviewing results.

@@ -2,7 +2,7 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
   "name": "OpenCluster",
-  "description": "Set up OpenCluster, connect incident data, and investigate alerts.",
+  "description": "Connect operational sources, ask questions, and investigate incidents.",
   "colors": {
     "primary": "#2F5CA0",
     "light": "#9DC7F1",
@@ -62,7 +62,6 @@
           "index",
           "feature-availability",
           "getting-started/quickstart",
-          "getting-started/connect-your-tools",
           "getting-started/run-your-first-investigation"
         ]
       },
@@ -123,6 +122,7 @@
     ]
   },
   "redirects": [
+    { "source": "/getting-started/connect-your-tools", "destination": "/integrations/overview" },
     { "source": "/quickstart", "destination": "/getting-started/quickstart" },
     { "source": "/investigations/overview", "destination": "/concepts/investigations-and-conversations" },
     { "source": "/investigations/how-investigations-work", "destination": "/concepts/investigations-and-conversations" },

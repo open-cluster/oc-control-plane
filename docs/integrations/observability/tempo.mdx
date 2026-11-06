@@ -9,35 +9,19 @@ Connect Tempo to find slow or failed requests and inspect how time was spent acr
 
 You need the OpenCluster **Admin** role and permission to search traces and retrieve them by ID. Use an approved HTTPS endpoint reachable from OpenCluster, including any proxy prefix and excluding the Tempo API path. See [network and credential requirements](/security/overview).
 
-Use the [API session and Origin setup](/api-reference/overview#authentication). Save this example as a private `tempo.json` file:
+Use bearer or Basic authentication with a read-only token. Basic authentication also needs a username. Supply a tenant ID when required by your endpoint.
 
-```json
-{
-  "type": "tempo",
-  "name": "Production traces",
-  "configuration": {
-    "url": "https://traces.example.com",
-    "auth": "bearer",
-    "token": "<read-only-token>"
-  }
-}
-```
+Use the [Tempo configuration example](/api-reference/overview#tempo-configuration) to connect through the API.
 
-Add `tenantId` if Tempo requires a single tenant header. Use `auth: basic` with a `username` and read-only token for Basic authentication, including Grafana Cloud Tempo. Omit the bearer token only for a trusted endpoint that allows unauthenticated reads.
+## After connection
 
-```bash
-curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
-  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
-  --data @tempo.json "$OPENCLUSTER_URL/api/v1/integrations"
-```
-
-## Verify and use
-
-Creation runs a bounded trace search. A valid empty response confirms search access. Check for `integration.status: verified`, save `integration.id` and use [verification](/api-reference/overview#verify-an-integration) after a configuration change. Trace retrieval may need separate permission at your endpoint.
+Creation runs a bounded trace search. A valid empty response confirms search access. No separate verification call is needed after successful creation. Trace retrieval may need separate permission at your endpoint.
 
 OpenCluster can search with TraceQL and retrieve spans for a specific trace ID. Search returns a bounded sample. Use retrieved spans and their parent-child relationships to inspect where an example request spent time. Sampling, retention, instrumentation gaps and result limits affect coverage. Tempo metrics and tag discovery are unavailable.
 
 Trace retrieval uses time bounds as backend search hints. A retrieved trace can include spans outside those bounds or omit part of the trace.
+
+For example, ask “Where did checkout requests spend time in the last 15 minutes?” An optional TraceQL selector is `{ resource.service.name = "checkout" }`. Use a service name recorded in your traces.
 
 ## Troubleshooting
 

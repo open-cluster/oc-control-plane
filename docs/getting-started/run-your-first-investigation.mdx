@@ -1,33 +1,26 @@
 ---
 title: "Run your first investigation"
-description: "Open an Investigation from an Incident and review its cited result."
+description: "Ask a question, review cited findings, and continue the Conversation."
 ---
 
-Complete the [Quickstart](/getting-started/quickstart) or use an existing Incident. Connect the relevant [Integrations](/integrations/overview), configure a model provider and check that `/readyz` succeeds. Use an **Editor** or **Admin** [API session](/api-reference/overview#authentication).
+Use an operational question or an existing Incident as your starting point. Connect a [relevant source](/integrations/overview) and configure a model provider. Editors and Admins can ask through the API and open investigations. Slack questions use the installed app.
 
-## Open and follow an Investigation
+## Ask an operational question
 
-Use `GET /api/v1/incidents` to find the Incident ID. If an alert already opened an Investigation, use its ID from the Investigation list. To ask OpenCluster to investigate an existing Incident again, replace the placeholder below:
+Start a Conversation with a specific question, such as “Is the checkout Deployment healthy in the payments namespace?” or “What errors appeared in checkout logs in the last 15 minutes?” Name the source or service when several could apply.
 
-```bash
-curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
-  --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
-  --data '{"incidentId":"<incident-id>"}' "$OPENCLUSTER_URL/api/v1/investigations"
-```
+The shipping deployment uses the [Conversation API example](/api-reference/overview#ask-a-question). An installed [Slack app](/integrations/collaboration/slack) can also answer direct mentions in an authorized channel thread.
 
-Save the returned `id` as `INVESTIGATION_ID` and check progress:
+## Investigate an Incident
 
-```bash
-curl --fail --cookie "$OPENCLUSTER_COOKIE" \
-  "$OPENCLUSTER_URL/api/v1/investigations/$INVESTIGATION_ID"
-```
+An accepted firing alert can open an Incident and automatically queue an Investigation when a model provider is available. Follow that Investigation rather than opening a duplicate. To investigate an existing Incident again, use the [Incident investigation procedure](/api-reference/overview#investigate-an-incident).
 
-The lifecycle moves from `queued` to `running`, then to `concluded`, `cancelled` or `failed`. See [event streams](/api-reference/overview#investigation-event-streams) for live progress.
+## Review the answer
 
-## Review the result
+Read the summary, cited Findings, and limitations. Citations identify the reads supporting each Finding. Review their timestamps and any incomplete results. Editors and Admins can [inspect a cited observation](/concepts/investigations-and-conversations#inspect-a-cited-observation).
 
-Read the summary, Findings and limitations. Check each material Finding against the [cited observation](/concepts/investigations-and-conversations#inspect-a-cited-observation). Review the effective time bounds and whether the source result or prepared observation was incomplete. Treat proposed actions as recommendations and check their verification steps before acting.
+A completed Investigation may answer a factual question, support an explanation, or remain inconclusive. Missing access or telemetry can prevent an answer. Action Proposals are recommendations for you to review and verify. OpenCluster does not execute production changes.
 
-A concluded Investigation can be inconclusive. If a source is missing, verify the Integration and review its permissions. For a follow-up question, open or continue a [Conversation](/concepts/investigations-and-conversations#conversations-and-follow-ups).
+## Continue the Conversation
 
-To stop work, send an authenticated `POST /api/v1/investigations/{investigation}/cancel` with the Origin header. Cancellation is best effort.
+Ask a focused follow-up, such as “Did the deployment happen before the errors started?” Follow-ups open new investigations in the same conversation. Messages sent during active work wait and may be handled together. Earlier results stay unchanged, and prior cited Findings provide context. See [Conversations and follow-ups](/concepts/investigations-and-conversations#conversations-and-follow-ups).

@@ -1,207 +1,44 @@
 ---
 title: "Investigations and results"
-description: "Understand bounded Investigation turns, cited results, proposed actions, and draft Postmortems."
+description: "Follow a conversation, assess cited findings, and review actions and postmortems."
 ---
 
-An Investigation is one immutable evidence-gathering turn. It moves through `queued` and
-`running`, then ends as `concluded`, `cancelled`, or `failed`. `queued` means waiting for
-execution; `running` means assigned to a worker. Interrupted execution remains `running`
-until failure recovery completes. `concluded` means execution completed, including an
-inconclusive assessment or a request for human input.
+An investigation reads connected sources to answer an operational question or investigate an incident. It has a time window and execution limits, so the answer reflects the evidence available for that turn.
 
-Read `conclusionStatus`, `limitations`, `stoppedBy`, and `error` separately to understand
-the result. A `concluded` event's payload `status` describes assessment certainty;
-it is not the Investigation lifecycle status.
-
-- `supported_explanation` means cited evidence supports a cause or contributing
-  factor. A contributing factor can be supported while the primary cause remains open.
-- `inconclusive` means the available evidence could not establish the requested explanation.
-- `answer_only` answers a factual or noncausal question. Impact can be empty.
-
-Historical results and events may retain `verified_cause`. Review citations and
-limitations before relying on any assessment. `createdAt` records creation and
-`concludedAt` records the terminal transition, including cancellation or failure.
-
-The first activity event explains that OpenCluster is reviewing the request and available
-evidence sources. It does not mean a source has already been read. Older recorded startup
-events may have no explanatory text; their replay remains supported.
-Tool completion activity follows a recorded Tool Run. If recording fails, the Investigation
-cannot use that result as evidence or report its completion.
-When several eligible Integrations offer the same operation, OpenCluster selects the source
-explicitly from the connected sources it may read. With one eligible source, selection is
-automatic. The Tool Run records which Integration supplied the result.
+A completed investigation can answer a factual question, support an explanation, or remain inconclusive. Completion alone does not mean a cause was established. Missing access, telemetry, or human input may prevent a defensible answer.
 
 ## Conversations and follow-ups
 
-A Conversation is the ordered context a person talks to. Each Message may open a new Investigation. Follow-ups reuse bounded prior Findings and citations without copying raw provider payloads or private model reasoning.
+Keep related questions in the same conversation. For example, ask “Why did checkout latency rise?” and then “Does the deployment at 09:42 explain it?” Earlier cited findings provide context without changing the earlier result.
 
-Recent context includes up to 12 user and assistant Messages, oldest first, with their
-timestamps. Only Messages owned by earlier Investigations are included; current and
-queued requests remain separate. A previous reply is retained even if it arrived after
-the current request was queued. Recent replies provide compact text; their structured
-details, including Action Proposals and citations, are available on demand.
-Another Conversation's private answers are not included. Long entries are shortened and
-marked as truncated. This bounded context is not a complete memory of the Conversation.
-When recent context is insufficient, the investigator can read bounded older pages from
-the same Conversation. Those pages preserve Message order, corrections, canonical answers,
-and their Investigation identities. Stored history is context rather than a current request
-or fresh evidence. Prior Findings retain their observation time and evidence window and can
-be reconsidered after a correction, refresh request, or window change.
-Initial Findings, including those shared through the same Incident, must have been
-concluded before the current Investigation opened. Later evidence enters through explicit
-reads rather than silently changing prior context.
+Follow-ups open new investigations. Messages sent while work is active wait and may be handled together in the next turn. Conversation history provides context, but it is not a complete memory or fresh evidence. Ask explicitly for a new interval or a fresh check when conditions change.
 
-Completed Investigations never resume, including those requiring human input. Send a new
-Message to create the next turn.
-
-To ask about a specific interval, send both `windowFrom` and `windowUntil` when posting
-a Message, or when creating a Conversation with its first Message. Use RFC3339 timestamps
-with an offset. The start is inclusive and the end exclusive; the end cannot be in the
-future. Values are normalized to UTC microseconds and echoed on the accepted Message and
-Investigation. Invalid windows return `400` before accepting the request.
-
-Without explicit bounds, ordinary questions cover at least the preceding 24 hours;
-Incident questions retain their Incident-derived window. The first queued Message fixes
-the next batch's window. Later Messages inherit it, or may supply the same normalized
-bounds. Different bounds return `409`; resend after that batch opens. Waiting or restarting
-does not move an accepted window.
-
-The Conversation API returns its first 50 turns as execution metadata, in ascending turn
-order. Replies live in the ordered Message transcript. To read more,
-pass `turnsNext` as `cursor` to `GET /api/v1/conversations/{conversation}/turns`.
-That endpoint accepts `limit` from 1 to 200 (default 50) and returns `turns` and `next`.
-Continue until `next` is null. Cursors belong to the same Organization and Conversation;
-search and selectable sorting are not supported. The recent Message tail is separate.
-
-The structured Conclusion, assistant Message, and final activity event are saved together,
-so reconnecting sees the same outcome. Failed final writes do not report a completed reply.
-An interrupted or superseded worker cannot append results or activity after losing ownership.
-
-Messages sent during an active Investigation wait for its completion. An Organization can
-have up to 100 unassigned user Messages waiting across its Conversations, alongside the
-separate limit for waiting Investigations. When capacity is full, new Messages are refused;
-retry after work progresses. Accepted Messages remain stored. Older backlogs larger than
-the limit drain in chronological batches of at most 100.
-
-Each Investigation receives the complete Messages assigned to it, in order, with their
-authors and timestamps. Those assigned user Messages are the authoritative request; there
-is no separate stored question preview.
-Normal requests retain their existing context. After an actual provider context rejection,
-one bounded recovery can omit optional inventory and prior context while preserving current
-Messages, history access and completed Tool exchanges. Omitted observations must be retrieved
-again before they can support Findings.
-If the complete assigned request still cannot fit after one bounded recovery attempt, the
-Investigation is `failed` with a technical error. Its Messages remain stored. A capacity
-error does not mean human information is missing or that the request was answered.
-
-For example, “Why did checkout latency rise?” opens one Investigation. “Does the deploy
-at 09:42 explain it?” becomes a new Message and a new bounded Investigation in the same
-Conversation, retaining prior cited Findings without changing the first result.
-
-An Investigation can remain inconclusive when access, telemetry, time, or execution bounds
-prevent a defensible answer.
+In Slack, mention the app again in the same thread. Slack evidence reads stay in that thread, while other eligible connected systems can supply evidence. See [Slack access boundaries](/integrations/collaboration/slack#read-slack-as-evidence).
 
 ## Findings and citations
 
-A Finding is a factual statement supported by one or more numbered Tool Runs. Its kind
-is `cause`, `contributing_factor`, `observation`, or `ruled_out`. A causal Finding must
-explain the mechanism that produced impact. Conclusion status expresses assessment
-certainty; Findings do not carry a second confidence classification.
+Findings describe observations, causes, contributing factors, or explanations that the evidence ruled out. A causal finding explains how something produced the impact. An unconfirmed explanation remains a hypothesis, and limitations identify missing evidence or unresolved assumptions.
 
-Investigations represent other uncertainty as hypotheses or limitations instead.
+Each citation points to a Tool Run, a record of an attempted read from a connected source. Findings must cite successful reads. Failed reads can explain a limitation but cannot establish a finding.
 
-Final hypotheses are `supported`, `ruled_out`, or `unresolved`. An unconfirmed
-mechanism remains a hypothesis. Limitations name missing access, telemetry, contradictions,
-unresolved assumptions, or essential human input.
-
-Citations show what OpenCluster read, not that the source was complete or correct. Check
-source timestamps, bounded windows, contradictions, and truncation before accepting a
-Finding.
-
-Keep these time concepts separate when inspecting a Tool Run:
-
-| Time | Meaning |
-| --- | --- |
-| Investigation window | The accepted time bounds for the Investigation. |
-| Requested arguments | The query and times requested by the investigator. |
-| Effective bounds | The times the source adapter actually applied, when available. An instant Prometheus query has one evaluation time. |
-| `startedAt` and `finishedAt` | The Tool execution interval, preserving stored subsecond precision. `durationMs` is derived from this interval and can include fractional milliseconds. |
-
-Source limits indicate possible incompleteness; a full page does not prove more records
-exist. Content can also be clipped to the model's input budget, independently of source
-limits. Scope claims to the returned observations and visible content.
+Check the source, timestamps, requested interval, and incomplete-result indicators before relying on a finding. A citation shows what OpenCluster read, without guaranteeing that the source was complete or correct. Reused evidence keeps its original time and source reference.
 
 ## Inspect a cited observation
 
-An Editor or Admin can retrieve one Tool Run's retained observation with
-`GET /api/v1/investigations/{investigation}/runs/{ordinal}/observation`.
-Use the Investigation ID and one-based ordinal from the citation. A Viewer can still
-read summaries and Tool Run metadata, but this observation request returns `403`.
+Editors and Admins can inspect the retained source observation behind a citation using the [observation API](/api-reference/overview#investigation-observations). Viewers can read summaries and Tool Run metadata, but cannot retrieve these observation bodies.
 
-The response includes the requested arguments, outcome, source identifiers, execution
-timing, and current Integration name and type. A renamed Integration changes this display
-information; it does not rewrite the retained observation or its stable identifier.
-
-| Field | Interpretation |
-| --- | --- |
-| `observationText` | Exact bounded text prepared for the next model Tool result. `null` means unavailable, including older runs; an empty string means retained empty text. |
-| `truncated` | The source result may be incomplete. |
-| `modelClipped` | Content or arguments were omitted to fit the model or complete-observation budget, independently of source limits. |
-| `windowApplied` | `true` means the adapter supplied effective bounds; `false` means known fallback bounds; `null` means older bounds are unknown. |
-
-Preparation does not acknowledge remote provider delivery: cancellation or a provider
-failure can prevent submission. Ordinary Investigation detail, lists, and activity events
-omit observation bodies. Old observations are not reconstructed by rerunning queries.
-
-The model-content budget remains 16 KiB. A complete retained observation, including its
-headers and arguments, is limited to 64 KiB; oversized observations return explicit
-omission feedback. Thirty observations can add up to 1.875 MiB before database and backup
-overhead. Observations remain with their owning Investigation under existing deployment
-retention practices, with no independent observation expiry. They can contain sensitive
-operational information despite known-credential sanitization; protect access and backups.
-
-A Finding must cite successful reads. Failed or skipped reads can explain limitations,
-but cannot establish an observation or cause. A skipped duplicate refers to the original
-read rather than creating another observation. Prior citations must still resolve to
-available successful reads in the same Organization.
-
-The investigator may repeat a read to refresh changing infrastructure or retry a failed
-source within the execution limits. Identical reads requested together execute once;
-each Tool Run states whether the read executed or was skipped. A descriptive purpose is
-optional metadata and does not grant access.
-
-In API results, `runRefs` names Tool Run ordinals in the containing Investigation.
-Reused Findings use `evidenceRefs` pairs of `investigationId` and `toolRunOrdinal`;
-follow the referenced Investigation's detail and `runs` to resolve them. Two Investigations
-can each have Run 1, so the ordinal alone cannot identify reused evidence.
-Unavailable or unauthorized Investigations return the same `404`. If a cited Tool Run
-has been pruned, the Finding retains its reference and detail reports a `missing_telemetry`
-limitation; it does not substitute another run or claim fresh verification.
+Observations are bounded and may omit source content. Older observations can be unavailable. See [response details](/api-reference/overview#observation-response-details) for fields and [Security](/security/overview) for sensitivity and retention.
 
 ## Action Proposals
 
-An Action Proposal can describe mitigation, rollback, verification, a permanent fix, or
-monitoring. It states a rationale, verification procedure, and supporting Tool Runs.
-OpenCluster never executes it.
+An action proposal recommends mitigation, rollback, verification, a permanent fix, or monitoring. It explains the rationale, how to verify the result, and the supporting evidence. OpenCluster does not execute it.
 
-Accepted summaries and Action Proposals retain their complete text. Oversized output is
-returned for a bounded correction; if no valid Conclusion can be produced, the Investigation
-fails instead of silently shortening an operational recommendation.
-
-For example, a rollback proposal may cite a Kubernetes Event and a GitHub deployment,
-and explain how to verify latency and error rate afterward. The citations support the
-proposal; they do not execute or approve the change.
+For example, a rollback proposal may cite a workload event and a commit, then describe how to check latency and error rate afterward. Review the proposal and its evidence before making a production change.
 
 ## Postmortems
 
-A Postmortem belongs to one resolved Incident. A person triggers generation; OpenCluster
-does not create one automatically. The draft distinguishes system evidence from
-Conversation testimony and remains `draft` until reviewed.
+After an incident resolves, an Editor or Admin can request a draft postmortem through the [API surface](/api-reference/surface). It combines the incident's alerts, investigation findings, conversation testimony, and explicit human input. Generation is not automatic.
 
-Missing impact, resolution, owner, or deadline facts appear as `Needs human input.` rather
-than being invented. A correction creates a new revision, and review records the reviewer
-without turning testimony into system evidence. Postmortems remain nested under Incidents
-in OSS v0.1 and are not automatically published.
+Missing impact, resolution, owner, or deadline facts appear as `Needs human input.` You can correct and regenerate the draft before marking it reviewed. Review records the reviewer, and the postmortem is not automatically published. Human testimony remains distinct from system evidence.
 
-Use [Run your first investigation](/getting-started/run-your-first-investigation) for the
-end-to-end procedure.
+See [Run your first investigation](/getting-started/run-your-first-investigation) for the question-to-answer workflow and the [API reference](/api-reference/overview#conversation-windows-and-pagination) for time windows and turn pagination.
