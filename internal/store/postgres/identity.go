@@ -149,6 +149,9 @@ func (p *Database) UpdateMembership(
 ) (Member, error) {
 	return audited(ctx, p, principal, organization, audit.ActionMembershipChanged,
 		func(ctx context.Context, transaction pgx.Tx) (Member, audit.Target, audit.Detail, error) {
+			if err := lockOrganizationForMembershipChange(ctx, transaction, organization); err != nil {
+				return Member{}, audit.Target{}, nil, err
+			}
 			var currentRole string
 			err := transaction.QueryRow(ctx, `
 				SELECT role
@@ -206,6 +209,9 @@ func (p *Database) RemoveMembership(
 ) error {
 	_, err := audited(ctx, p, principal, organization, audit.ActionMembershipRevoked,
 		func(ctx context.Context, transaction pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
+			if err := lockOrganizationForMembershipChange(ctx, transaction, organization); err != nil {
+				return struct{}{}, audit.Target{}, nil, err
+			}
 			var held string
 			err := transaction.QueryRow(ctx, `
 				SELECT role FROM organization_membership
@@ -234,6 +240,22 @@ func (p *Database) RemoveMembership(
 				audit.Detail{"before": role}, nil
 		})
 	return err
+}
+
+// Serialize membership mutations that can affect the organization's last administrator.
+func lockOrganizationForMembershipChange(
+	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
+) error {
+	var locked int
+	err := transaction.QueryRow(ctx, `
+		SELECT 1 FROM organization WHERE org_id = $1 FOR UPDATE`, organization).Scan(&locked)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrUnknownOrganization
+	}
+	if err != nil {
+		return fmt.Errorf("locking organization membership changes: %w", err)
+	}
+	return nil
 }
 
 func refuseIfLastAdmin(

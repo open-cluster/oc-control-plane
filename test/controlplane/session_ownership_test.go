@@ -73,7 +73,7 @@ func assertSessionCookieCleared(t *testing.T, response answer) {
 	t.Fatalf("no session deletion cookie: %+v", response.cookies)
 }
 
-func TestLogoutReportsDatabaseFailureAndClearsCookie(t *testing.T) {
+func TestLogoutPreservesSessionForRetryOnDatabaseFailure(t *testing.T) {
 	plane := startIdentityPlane(t)
 	cookie := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin", "initial administrator password")
 	plane.database.closeGate()
@@ -82,7 +82,11 @@ func TestLogoutReportsDatabaseFailureAndClearsCookie(t *testing.T) {
 	if response.status != http.StatusServiceUnavailable {
 		t.Fatalf("logout during outage = %d: %s", response.status, response.body)
 	}
-	assertSessionCookieCleared(t, response)
+	for _, set := range response.cookies {
+		if set.Name == session.CookieName && set.MaxAge < 0 {
+			t.Fatal("failed logout cleared the cookie before revocation succeeded")
+		}
+	}
 	plane.database.openGate()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -94,5 +98,14 @@ func TestLogoutReportsDatabaseFailureAndClearsCookie(t *testing.T) {
 			t.Fatalf("session after database recovery = %d: %s", response.status, response.body)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+	retried := plane.call(t, http.MethodDelete, "http://"+plane.api+"/api/v1/session", nil, asSession(cookie))
+	if retried.status != http.StatusOK {
+		t.Fatalf("retry logout = %d: %s", retried.status, retried.body)
+	}
+	assertSessionCookieCleared(t, retried)
+	stale := plane.call(t, http.MethodGet, "http://"+plane.api+"/api/v1/session", nil, asSession(cookie))
+	if stale.status != http.StatusUnauthorized {
+		t.Fatalf("session survived successful retry = %d: %s", stale.status, stale.body)
 	}
 }
