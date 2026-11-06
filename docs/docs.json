@@ -62,7 +62,6 @@
           "index",
           "feature-availability",
           "getting-started/quickstart",
-          "getting-started/connect-your-tools",
           "getting-started/run-your-first-investigation"
         ]
       },
@@ -123,6 +122,7 @@
     ]
   },
   "redirects": [
+    { "source": "/getting-started/connect-your-tools", "destination": "/integrations/overview" },
     { "source": "/quickstart", "destination": "/getting-started/quickstart" },
     { "source": "/investigations/overview", "destination": "/concepts/investigations-and-conversations" },
     { "source": "/investigations/how-investigations-work", "destination": "/concepts/investigations-and-conversations" },

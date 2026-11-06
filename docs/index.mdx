@@ -1,22 +1,14 @@
 ---
 title: "OpenCluster"
-description: "Investigate incidents across the systems you already use, and review cited findings."
+description: "Ask operational questions and investigate production incidents with cited evidence."
 ---
 
-OpenCluster is an open-source AI SRE for operational questions and incident investigations. Connect metrics, logs, traces, infrastructure, source control, and collaboration services to understand what is happening and what changed.
+OpenCluster is an open-source AI SRE for answering operational questions and investigating production incidents. It brings together metrics, logs, traces, workload state, code changes, and team discussions from connected systems.
 
-Ask a question in a Conversation or investigate an Incident. Conclusions include cited Findings, recommended actions, and explicit limitations. OpenCluster recommends production changes for human review. It does not execute them.
+Ask “Why did checkout latency increase?” or “What changed before the errors started?” Use an installed [Slack app](/integrations/collaboration/slack#ask-in-slack) or the [Conversation API](/api-reference/overview#ask-a-question), then ask follow-up questions in the same conversation. An alert is not required. Optional alert sources can open incidents and start investigations automatically.
 
-The current self-hosted deployment is API-only. Start with the [Quickstart](/getting-started/quickstart) for the product workflow and links to supported setup. [Feature availability](/feature-availability) describes what ships.
+Results include findings with citations to the evidence OpenCluster read, recommended actions, and explicit limitations. Inspect the supporting observations to assess whether the explanation fits. OpenCluster proposes production changes for human review and does not execute them.
 
-<CardGroup cols={3}>
-  <Card title="Quickstart" icon="rocket" href="/getting-started/quickstart">
-    Ask a question or investigate an Incident.
-  </Card>
-  <Card title="Integrations" icon="plug" href="/integrations/overview">
-    Choose the sources that can answer your operational questions.
-  </Card>
-  <Card title="API reference" icon="code" href="/api-reference/overview">
-    Authenticate with your Organization and find every public operation.
-  </Card>
-</CardGroup>
+Start with the [Quickstart](/getting-started/quickstart), explore [Integrations](/integrations/overview), or learn how to [review results](/concepts/investigations-and-conversations).
+
+Administration and connection setup currently use the API. A web experience is under development and is not included in the self-hosted release. See [Feature availability](/feature-availability) for what ships.

@@ -1,20 +1,28 @@
 ---
 title: "Quickstart"
-description: "Choose a source, ask an operational question, and follow the evidence."
+description: "Connect a source, ask a question, and review the evidence."
 ---
 
-OpenCluster helps you understand workload health, errors, latency, deployments, and other operational questions. You can start a Conversation or investigate an Incident. An alert is not required.
+Start with an operational question. You do not need an alert or an incident.
 
-## Prepare access
+## 1. Prepare OpenCluster
 
-The current self-hosted deployment is API-only. A browser console is being developed. If you manage the deployment, follow [Docker Compose](/self-hosting/docker-compose) or [Helm](/self-hosting/helm). If OpenCluster is already running, use the [API authentication procedure](/api-reference/overview#authentication).
+For a new deployment, follow [Docker Compose setup](/self-hosting/docker-compose) or [Helm](/self-hosting/helm) and configure a model provider. If OpenCluster is already running, ask your administrator which sources are connected.
 
-## Choose relevant sources
+Administration currently uses the API. A web experience is under development. You can ask questions through an installed Slack app or the Conversation API.
 
-[Connect your tools](/getting-started/connect-your-tools) explains which sources can supply metrics, logs, traces, workload state, changes, and conversation context. Start with a source that can answer your question. Add an alert source if you want incoming alerts to create Incidents.
+## 2. Connect one relevant source
 
-## Ask and follow up
+Choose a source from the [Integration overview](/integrations/overview). For example, Kubernetes can report the health of a named workload, while Loki can read application logs. An Admin connects the source using its guide and the linked API procedure.
 
-Try “Why is checkout returning errors?” or “What changed in the checkout repository recently?” Include the service, namespace or repository, and relevant time interval.
+## 3. Ask a specific question
 
-[Run your first investigation](/getting-started/run-your-first-investigation) explains how to ask through a Conversation, investigate an Incident, review citations, and ask a follow-up question.
+Try “Is the checkout Deployment healthy in the payments namespace?” with Kubernetes, or “What errors appeared in checkout logs in the last 15 minutes?” with Loki. Include the workload, service, repository, or time interval you care about.
+
+In a channel with the installed Slack app, mention `@OpenCluster` with your question. It replies in a thread. Alternatively, use the [Conversation API example](/api-reference/overview#ask-a-question), which covers sending a question and retrieving the answer. API questions require Editor or Admin access.
+
+## 4. Review and follow up
+
+Read the answer's findings, citations, and limitations. Missing evidence may leave a question unanswered. Ask a follow-up, such as “Did the deployment happen before the errors started?” In Slack, mention the app again in the same thread.
+
+Continue with [Run your first investigation](/getting-started/run-your-first-investigation) for guidance on useful questions and reviewing results.

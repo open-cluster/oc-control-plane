@@ -135,3 +135,5 @@ to apply the shipped controls.
 ## Manage Integrations
 
 Store one-time webhook secrets securely. When an Admin rotates a secret, update the sender promptly because the old secret stops working immediately. Editors and Admins can disable an Integration to stop new use while preserving history. Only Admins can delete Integrations. Deletion is refused while retained records depend on the Integration.
+
+A retained observation is limited to 64 KiB, including its headers and arguments. Content prepared for the model has a separate 16 KiB budget. Retained observations may therefore contain more source content than the model received. Protect observation access and backups accordingly.

@@ -21,7 +21,7 @@ The comma-separated namespace list narrows Relay access. An empty list leaves th
 
 ## After connection
 
-The API-only setup requires an explicit [verification request](/api-reference/overview#verify-an-integration) to check Relay connectivity and supported reads. An Investigation can inspect a named Deployment, StatefulSet or DaemonSet and its pods, list Events in one namespace, or read a named container's logs. Local Relay limits and Kubernetes retention can shorten results. OpenCluster does not read Secret data.
+The API-only setup requires an explicit [verification request](/api-reference/overview#verify-an-integration) to check Relay connectivity and advertised capabilities. Verification can succeed with only some capabilities and does not test Kubernetes RBAC. An Investigation can inspect a named Deployment, StatefulSet or DaemonSet and its pods, list Events in one namespace, or read a named container's logs. Name the workload and namespace in your question, such as “Is the checkout Deployment healthy in payments?” General resource discovery and historical workload state are unavailable. Local Relay limits and Kubernetes retention can shorten results. OpenCluster does not read Secret data.
 
 ## Troubleshooting
 

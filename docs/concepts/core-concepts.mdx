@@ -1,37 +1,30 @@
 ---
 title: "Core concepts"
-description: "Understand the records OpenCluster uses to isolate access and explain investigations."
+description: "Understand conversations, investigations, incidents, and connected evidence."
 ---
 
-An Organization is the tenant boundary. A User holds at most one current Membership,
-with an Admin, Editor, or Viewer Role. Authentication resolves that Membership rather
-than accepting an Organization during sign-in.
+A Conversation is where you ask operational questions and follow up on answers. Start one through Slack or the Conversation API, with or without an incident.
 
-An Integration is one configured source. It currently offers bounded observation/read Tools or accepts
-authenticated Alert Events. A Relay performs closed Kubernetes reads from inside the
-customer boundary and opens an outbound session to the control plane.
+An Investigation gathers evidence to answer a question or explain an incident. OpenCluster reads connected systems, reports findings with citations, and identifies what remains unknown. Follow-ups start new investigations while retaining useful context from earlier answers.
+
+## Connected sources
+
+An Integration gives OpenCluster access to a configured system. Some provide evidence, some accept alerts, and Slack also provides conversational interaction. Provider permissions determine what OpenCluster can read.
+
+For Kubernetes, Relay performs reads inside your environment. Cluster credentials remain there. See [Integrations](/integrations/overview) to choose sources.
 
 ## How the records relate
 
-An Alert Event is one normalized alert occurrence. Redelivery is idempotent, and the
-source timestamp remains distinct from receipt time. Alert Events create or update a
-provisional Incident using the alert source's grouping identity. The Incident remains
-firing while any grouped Alert Event is firing and resolves when none are firing.
+An Alert Event is an alert received from a connected sender. Firing and resolved alerts create or update an Incident using the sender's grouping identity. An incident resolves when none of its grouped alerts are firing.
 
-Grouping is not a causal claim. Three Alert Events with one Alertmanager grouping key can
-belong to one Incident even when they have different causes. Review grouping before
-treating the Incident as one causal episode.
+Grouping does not establish a shared cause. Several alerts can belong to one incident even when they have different causes. An investigation checks the evidence for an explanation.
 
-A person investigates an Incident inside a Conversation. Each Message opens one bounded,
-immutable Investigation. Its numbered Tool Runs support cited Findings and Action
-Proposals. After the Incident resolves, a person may generate and review its draft
-Postmortem.
+For example, an Alertmanager delivery can open an incident about checkout errors. OpenCluster can read Kubernetes workload state and GitHub changes to investigate it. You can also ask about checkout directly, without waiting for an alert.
 
-For example, an Alertmanager delivery creates an Alert Event and Incident. A Kubernetes
-Integration supplies evidence through Relay; GitHub supplies change evidence. OpenCluster
-cites those reads but does not execute the proposed rollback.
+## Results and access
 
-Organization membership limits every product record and Tool. Provider permissions,
-source time windows, budgets, truncation, and missing telemetry limit what an
-Investigation can conclude. Continue with [Investigations and results](/concepts/investigations-and-conversations)
-or [connect your tools](/getting-started/connect-your-tools).
+A Finding states what the evidence supports. Citations identify the reads behind it. An Action Proposal recommends a next step for human review. After an incident resolves, you can generate and review a draft Postmortem.
+
+Your Organization controls access to OpenCluster data through Admin, Editor, and Viewer roles. Provider access adds its own limits. Missing telemetry, incomplete results, and old observations can limit an answer even when a source is connected.
+
+Continue with [Investigations and results](/concepts/investigations-and-conversations) to assess an answer.

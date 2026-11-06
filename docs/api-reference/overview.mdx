@@ -19,7 +19,7 @@ Use `GET /api/v1/investigations/{investigation}/runs/{ordinal}/observation` to i
 one cited Tool Run as an Editor or Admin. The response returns bounded prepared text and
 source context. Older unavailable observations are `null`. Viewer access returns `403`.
 Ordinary Investigation detail, lists, and events omit these bodies. See
-[Inspect a cited observation](/concepts/investigations-and-conversations#inspect-a-cited-observation)
+[Observation response details](#observation-response-details)
 for clipping, timing, sensitivity, and retention semantics.
 
 ## Integration catalog
@@ -27,7 +27,7 @@ for clipping, timing, sensitivity, and retention semantics.
 Use `GET /api/v1/integration-types` to discover registered types, their Tools, setup
 capabilities, and configured counts. An omitted `tools` list means no query Tools.
 `receivesWebhooks` identifies alert intake. Per-Integration `toolAvailability` reports
-which Tools are currently usable.
+which operations are eligible under the last verification and recorded grants. This is not a live health check.
 
 The configuration examples below describe credential inputs. Secret inputs
 are accepted during setup and never returned in configuration reads.
@@ -369,3 +369,69 @@ curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
 ```
 
 Read `GET /api/v1/investigations/{investigation}` or follow the event stream. Progress moves from `queued` to `running`, then `concluded`, `failed`, or `cancelled`. A concluded run can remain inconclusive.
+
+## Conversation windows and pagination
+
+To ask about a specific interval, send both `windowFrom` and `windowUntil` when posting
+a Message, or when creating a Conversation with its first Message. Use RFC3339 timestamps
+with an offset. The start is inclusive and the end exclusive. The end cannot be in the
+future. Values are normalized to UTC microseconds and echoed on the accepted Message and
+Investigation. Invalid windows return `400` before accepting the request.
+
+Without explicit bounds, ordinary questions cover at least the preceding 24 hours.
+Incident questions retain their Incident-derived window. The first queued Message fixes
+the next batch's window. Later Messages inherit it, or may supply the same normalized
+bounds. Different bounds return `409`. Resend after that batch opens. Waiting or restarting
+does not move an accepted window.
+
+The Conversation API returns its first 50 turns as execution metadata, in ascending turn
+order. Replies live in the ordered Message transcript. To read more,
+pass `turnsNext` as `cursor` to `GET /api/v1/conversations/{conversation}/turns`.
+That endpoint accepts `limit` from 1 to 200 (default 50) and returns `turns` and `next`.
+Continue until `next` is null. Cursors belong to the same Organization and Conversation.
+Search and selectable sorting are not supported. The recent Message tail is separate.
+
+
+## Observation response details
+
+An Editor or Admin can retrieve one Tool Run's retained observation with
+`GET /api/v1/investigations/{investigation}/runs/{ordinal}/observation`.
+Use the Investigation ID and one-based ordinal from the citation. A Viewer can still
+read summaries and Tool Run metadata, but this observation request returns `403`.
+
+The response includes the requested arguments, outcome, source identifiers, execution
+timing, and current Integration name and type. A renamed Integration changes this display
+information. It does not rewrite the retained observation or its stable identifier.
+
+| Field | Interpretation |
+| --- | --- |
+| `observationText` | Exact bounded text prepared for the next model Tool result. `null` means unavailable, including older runs. An empty string means retained empty text. |
+| `truncated` | The source result may be incomplete. |
+| `modelClipped` | Content or arguments were omitted to fit the model or complete-observation budget, independently of source limits. |
+| `windowApplied` | `true` means the adapter supplied effective bounds. `false` means known fallback bounds. `null` means older bounds are unknown. |
+
+Preparation does not acknowledge remote provider delivery: cancellation or a provider
+failure can prevent submission. Ordinary Investigation detail, lists, and activity events
+omit observation bodies. Old observations are not reconstructed by rerunning queries.
+
+
+## Citation references
+
+In API results, `runRefs` names Tool Run ordinals in the containing Investigation.
+Reused Findings use `evidenceRefs` pairs of `investigationId` and `toolRunOrdinal`.
+Follow the referenced Investigation's detail and `runs` to resolve them. Two Investigations
+can each have Run 1, so the ordinal alone cannot identify reused evidence.
+Unavailable or unauthorized Investigations return the same `404`. If a cited Tool Run
+has been pruned, the Finding retains its reference and detail reports a `missing_telemetry`
+limitation. It does not substitute another run or claim fresh verification.
+
+
+## Interpret integration availability
+
+`status` and `verifiedAt` describe a recorded check. `toolAvailability` combines that check, recorded grants, and the disabled flag. Provider access or Relay connectivity can change afterward.
+
+Kubernetes verification records advertised Relay capabilities. A partial set can still return `verified`, including when no query operation is available. It does not test Kubernetes RBAC. GitHub verification checks installation and repository access, not every operation's permissions. An installation with no selected repositories can still verify.
+
+Slack's `inbound.available` currently indicates a configured signing secret and provider installation. It can remain true for a disabled integration, which ignores incoming mentions. Check enabled state, event delivery, granted scopes, and model-provider configuration when diagnosing replies. `verificationNote` is transient response guidance and is not reconstructed on ordinary reads.
+
+Investigation lifecycle is separate from assessment certainty. `queued` means waiting and `running` means assigned for execution, including interrupted work awaiting recovery. Terminal states are `concluded`, `failed`, and `cancelled`. Read `conclusionStatus`, `limitations`, `stoppedBy`, and `error` to interpret the outcome. The concluded event's payload `status` describes the assessment. Historical results may retain `verified_cause`. `concludedAt` records any terminal transition.
