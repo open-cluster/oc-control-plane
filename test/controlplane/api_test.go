@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -230,35 +228,6 @@ func TestRequestCannotSelectAnotherOrganization(t *testing.T) {
 	}); status != http.StatusBadRequest {
 		t.Errorf("Organization body was accepted: status %d", status)
 	}
-}
-
-func environment(t *testing.T, overrides map[string]string) func(string) (string, bool) {
-	t.Helper()
-	dsn := secretFile(t, "dsn", "postgres://user:password@127.0.0.1:5432/controlplane")
-
-	return func(key string) (string, bool) {
-		if value, ok := overrides[key]; ok {
-			return value, true
-		}
-		switch key {
-		case config.EnvHTTPAddress:
-			return "127.0.0.1:8081", true
-		case config.EnvDatabaseDSNFile:
-			return dsn, true
-		default:
-			return "", false
-		}
-	}
-}
-
-func secretFile(t *testing.T, name, contents string) string {
-	t.Helper()
-
-	path := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
-		t.Fatalf("writing %s: %v", name, err)
-	}
-	return path
 }
 
 func apiRequest(t *testing.T, method, url, token string) (int, string) {
