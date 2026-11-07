@@ -80,7 +80,6 @@ func TestConversationTurnsPaginateAndRejectInvalidQueries(t *testing.T) {
 	address := freeAddress(t)
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = address
-		cfg.SetupEnabled = true
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "openrouter", "z-ai/glm-4.7", "scripted-model-key"
 	}, app.Options{Completer: concludingModel{}})
 	plane := &integrationPlane{controlPlane: running, api: address, intake: address}

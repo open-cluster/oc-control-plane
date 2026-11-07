@@ -42,7 +42,6 @@ func startCompletionProcess(t *testing.T, cfg config.Config) (string, func()) {
 	t.Helper()
 	cfg.HTTPListenAddress = freeAddress(t)
 	cfg.PublicURL = "http://" + cfg.HTTPListenAddress
-	cfg.SetupEnabled = false
 	cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "openrouter", "z-ai/glm-4.7", "scripted-model-key"
 	contents, err := json.Marshal(cfg)
 	if err != nil {
@@ -82,7 +81,6 @@ func TestCompletionSurvivesProcessInterruption(t *testing.T) {
 	address := freeAddress(t)
 	running := startControlPlaneRunning(t, func(value *config.Config) {
 		value.HTTPListenAddress = address
-		value.SetupEnabled = true
 		cfg = *value
 	}, app.Options{})
 	plane := &integrationPlane{controlPlane: running, api: address, intake: address}

@@ -25,7 +25,6 @@ func TestApplicationAPI(t *testing.T) {
 		cfg.RelayListenAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
 		cfg.HTTPListenAddress = apiAddress
-		cfg.SetupEnabled = true
 		databaseDSN = cfg.DatabaseDSN
 	})
 	token := plane.sessionCookie
@@ -191,7 +190,6 @@ func TestApplicationAPI(t *testing.T) {
 
 func TestRequestCannotSelectAnotherOrganization(t *testing.T) {
 	plane := startControlPlane(t, func(cfg *config.Config) {
-		cfg.SetupEnabled = true
 	})
 	call := func(t *testing.T, method, path, body string, mutate func(*http.Request)) int {
 		t.Helper()

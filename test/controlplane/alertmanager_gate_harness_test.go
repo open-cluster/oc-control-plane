@@ -68,7 +68,6 @@ func startAlertmanagerGate(t *testing.T) *alertmanagerGate {
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = apiAddress
 		cfg.HTTPListenAddress = intakeAddress
-		cfg.SetupEnabled = true
 		cfg.ModelProvider = "openrouter"
 		cfg.ModelName = "z-ai/glm-4.7"
 		cfg.ModelAPIKey = "scripted-model-key"
