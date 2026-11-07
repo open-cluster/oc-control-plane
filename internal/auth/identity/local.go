@@ -47,10 +47,6 @@ type memberCreationRequest struct {
 }
 
 func (h Handlers) bootstrapLocalAdmin(writer http.ResponseWriter, request *http.Request) {
-	if !h.SetupEnabled {
-		writeJSON(writer, http.StatusForbidden, errorView{Error: "initial signup requires private setup access"})
-		return
-	}
 	if !authz.CookieOriginAllowed(request, h.PublicURL) {
 		writeJSON(writer, http.StatusForbidden, errorView{Error: "request origin is not allowed"})
 		return

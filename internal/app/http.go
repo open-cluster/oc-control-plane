@@ -189,7 +189,6 @@ func authHandlers(process assembled) (identity.Handlers, error) {
 		OIDCClientID:     cfg.OIDCClientID,
 		OIDCClientSecret: cfg.OIDCClientSecret,
 		PublicURL:        cfg.PublicURL,
-		SetupEnabled:     cfg.SetupEnabled,
 		SessionLifetime:  cfg.SessionLifetime,
 	}
 

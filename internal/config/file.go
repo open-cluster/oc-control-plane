@@ -57,7 +57,6 @@ type fileConfiguration struct {
 		PrivateKeyFile *string `yaml:"privateKeyFile"`
 	} `yaml:"github"`
 	Security struct {
-		SetupEnabled      *bool   `yaml:"setupEnabled"`
 		EncryptionKeyFile *string `yaml:"encryptionKeyFile"`
 	} `yaml:"security"`
 }
@@ -141,9 +140,6 @@ func (document fileConfiguration) environment(directory string) map[string]strin
 
 	set(EnvHTTPAddress, document.Server.Address)
 	set(EnvPublicURL, document.Server.PublicURL)
-	if document.Security.SetupEnabled != nil {
-		values[EnvSetupEnabled] = strconv.FormatBool(*document.Security.SetupEnabled)
-	}
 	set(EnvLogLevel, document.Telemetry.LogLevel)
 	set(EnvOTLPEndpoint, document.Telemetry.OTLPEndpoint)
 	if document.Session.Lifetime != nil {

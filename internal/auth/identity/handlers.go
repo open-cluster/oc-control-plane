@@ -29,7 +29,6 @@ type Handlers struct {
 	OIDCClientID     string
 	OIDCClientSecret string
 	PublicURL        string
-	SetupEnabled     bool
 	SessionLifetime  time.Duration
 }
 

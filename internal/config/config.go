@@ -31,7 +31,6 @@ var SupportedEnvironmentKeys = []string{
 	EnvOTLPEndpoint,
 
 	EnvSessionLifetimeSeconds,
-	EnvSetupEnabled,
 	EnvSealingKey,
 	EnvSealingKeyFile,
 	EnvOIDCIssuer,
@@ -70,7 +69,6 @@ const (
 	EnvLogLevel                               = "OC_LOG_LEVEL"
 	EnvOTLPEndpoint                           = "OC_OTLP_ENDPOINT"
 	EnvSessionLifetimeSeconds                 = "OC_SESSION_LIFETIME_SECONDS"
-	EnvSetupEnabled                           = "OC_SETUP_ENABLED"
 	EnvSealingKey                             = "OC_ENCRYPTION_KEY"
 	EnvSealingKeyFile                         = "OC_ENCRYPTION_KEY_FILE"
 	EnvOIDCIssuer                             = "OC_OIDC_ISSUER"
@@ -106,8 +104,7 @@ type Config struct {
 
 	DatabaseDSN string
 
-	SetupEnabled bool
-	SealingKey   []byte
+	SealingKey []byte
 
 	RelaySPKIPins []string
 
@@ -170,11 +167,6 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	}
 	if cfg.RelaySPKIPins, err = relaySPKIPins(lookup, cfg.RelayListenAddress); err != nil {
 		return Config{}, err
-	}
-	if raw, ok := lookup(EnvSetupEnabled); ok {
-		if cfg.SetupEnabled, err = strconv.ParseBool(strings.TrimSpace(raw)); err != nil {
-			return Config{}, fmt.Errorf("%s must be true or false", EnvSetupEnabled)
-		}
 	}
 	if cfg.PublicURL, err = optionalBrowserURL(lookup, EnvPublicURL); err != nil {
 		return Config{}, err
