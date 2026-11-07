@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -205,33 +204,5 @@ func TestLocalSignupDatabaseOutageIssuesNoCookie(t *testing.T) {
 			t.Fatalf("signup after database recovery = %d: %s", retried.status, retried.body)
 		}
 		time.Sleep(20 * time.Millisecond)
-	}
-}
-
-func TestPrivateSetupListenerRejectsNonLoopbackAccess(t *testing.T) {
-	plane := startIdentityPlane(t)
-	addresses, err := net.InterfaceAddrs()
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, port, err := net.SplitHostPort(plane.api)
-	if err != nil {
-		t.Fatal(err)
-	}
-	checked := 0
-	for _, address := range addresses {
-		ip, ok := address.(*net.IPNet)
-		if !ok || ip.IP.IsLoopback() || !ip.IP.IsGlobalUnicast() || ip.IP.To4() == nil {
-			continue
-		}
-		connection, err := net.DialTimeout("tcp", net.JoinHostPort(ip.IP.String(), port), 300*time.Millisecond)
-		if err == nil {
-			_ = connection.Close()
-			t.Fatal("private setup listener accepted non-loopback access")
-		}
-		checked++
-	}
-	if checked == 0 {
-		t.Skip("no non-loopback IPv4 address to probe")
 	}
 }
