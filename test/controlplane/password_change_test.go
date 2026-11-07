@@ -102,7 +102,6 @@ func TestRecoveryCLIAfterBootstrapRetirement(t *testing.T) {
 	}
 	restarted := startIdentityPlane(t, func(cfg *config.Config) {
 		cfg.DatabaseDSN = plane.dsn
-		cfg.SetupEnabled = false
 	})
 	base := "http://" + restarted.api + "/api/v1"
 	stale := restarted.call(t, http.MethodGet, base+"/session", nil, asSession(cookie))
@@ -118,7 +117,7 @@ func TestRecoveryCLIAfterBootstrapRetirement(t *testing.T) {
 	bootstrap := restarted.call(t, http.MethodPost, base+"/auth/local/bootstrap", map[string]any{
 		"organizationName": "Operations", "email": "another@example.test", "password": recoveredPassword,
 	})
-	if bootstrap.status != http.StatusForbidden {
+	if bootstrap.status != http.StatusConflict {
 		t.Fatalf("retired bootstrap = %d: %s", bootstrap.status, bootstrap.body)
 	}
 }

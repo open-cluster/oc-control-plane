@@ -213,7 +213,6 @@ func startIdentityPlane(t *testing.T, configure ...func(*config.Config)) *identi
 	var dsn string
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = apiAddress
-		cfg.SetupEnabled = true
 		cfg.PublicURL = "http://" + apiAddress
 		cfg.SealingKey = make([]byte, 32)
 		for index := range cfg.SealingKey {

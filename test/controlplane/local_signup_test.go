@@ -30,7 +30,6 @@ func TestTokenlessSignupThroughSameOriginProxyIssuesUsableCookie(t *testing.T) {
 	t.Cleanup(frontend.Close)
 	plane := startIdentityPlane(t, func(cfg *config.Config) {
 		cfg.PublicURL = frontend.URL
-		cfg.SetupEnabled = true
 	})
 	backend, err := url.Parse("http://" + plane.api)
 	if err != nil {
@@ -82,7 +81,7 @@ func TestTokenlessSignupThroughSameOriginProxyIssuesUsableCookie(t *testing.T) {
 }
 
 func TestLocalSignupRequiresConfiguredOrigin(t *testing.T) {
-	plane := startIdentityPlane(t, func(cfg *config.Config) { cfg.SetupEnabled = true })
+	plane := startIdentityPlane(t)
 	for _, origin := range []string{"", "null", "https://untrusted.example.test"} {
 		response := plane.call(t, http.MethodPost, "http://"+plane.api+"/api/v1/auth/local/bootstrap",
 			json.RawMessage(signupBody), func(request *http.Request) {

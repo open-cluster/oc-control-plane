@@ -296,7 +296,7 @@ func startControlPlaneRunning(
 		database: gate,
 	}
 	t.Cleanup(plane.shutdown)
-	if cfg.SetupEnabled && (len(initialize) == 0 || initialize[0]) {
+	if len(initialize) == 0 || initialize[0] {
 		plane.bootstrapAdmin(t, surfaceOrg,
 			cfg.PublicURL, cfg.DatabaseDSN)
 	}
