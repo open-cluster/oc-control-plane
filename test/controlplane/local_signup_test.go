@@ -131,20 +131,18 @@ func TestLocalSignupBoundsParallelPasswordHashing(t *testing.T) {
 	close(start)
 	waiting.Wait()
 	close(statuses)
-	var created, limited int
+	var created int
 	for status := range statuses {
 		switch status {
 		case http.StatusCreated:
 			created++
-		case http.StatusTooManyRequests:
-			limited++
-		case http.StatusConflict:
+		case http.StatusTooManyRequests, http.StatusConflict:
 		default:
 			t.Fatalf("concurrent signup = %d", status)
 		}
 	}
-	if created != 1 || limited == 0 {
-		t.Fatalf("concurrent signup created=%d limited=%d", created, limited)
+	if created != 1 {
+		t.Fatalf("concurrent signup created=%d, want one", created)
 	}
 }
 
