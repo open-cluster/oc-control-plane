@@ -9,7 +9,10 @@ Start with an operational question. You do not need an alert or an incident.
 
 For a new deployment, follow [Docker Compose setup](/self-hosting/docker-compose) or [Helm](/self-hosting/helm) and configure a model provider. If OpenCluster is already running, ask your administrator which sources are connected.
 
-Administration currently uses the API. A web experience is under development. You can ask questions through an installed Slack app or the Conversation API.
+Administration currently uses the API. A web experience is under development. A compatible
+frontend can create the first account at `/setup` over trusted private access using the
+[browser signup contract](/api-reference/overview#initial-local-signup-in-a-browser).
+Disable setup before public access. You can ask questions through an installed Slack app or the Conversation API.
 
 ## 2. Connect one relevant source
 

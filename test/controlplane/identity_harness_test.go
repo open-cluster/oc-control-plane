@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 )
@@ -26,7 +27,6 @@ import (
 const (
 	identityOrg       = "11111111-1111-4111-8111-111111111111"
 	identityNeighbour = "22222222-2222-4222-8222-222222222222"
-	identityToken     = "an-operator-bootstrap-token-long-enough"
 )
 
 type mockIssuer struct {
@@ -211,10 +211,9 @@ func startIdentityPlane(t *testing.T, configure ...func(*config.Config)) *identi
 
 	apiAddress := freeAddress(t)
 	var dsn string
-	plane := startControlPlane(t, func(cfg *config.Config) {
+	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = apiAddress
-		digest := sha256.Sum256([]byte(identityToken))
-		cfg.BootstrapTokenDigest = digest[:]
+		cfg.SetupEnabled = true
 		cfg.PublicURL = "http://" + apiAddress
 		cfg.SealingKey = make([]byte, 32)
 		for index := range cfg.SealingKey {
@@ -224,7 +223,7 @@ func startIdentityPlane(t *testing.T, configure ...func(*config.Config)) *identi
 		for _, apply := range configure {
 			apply(cfg)
 		}
-	})
+	}, app.Options{}, false)
 	identity := &identityPlane{controlPlane: plane, api: apiAddress, dsn: dsn}
 	identity.waitForAPISurface(t)
 	return identity
@@ -310,10 +309,6 @@ func (p *identityPlane) call(
 		cookies:  response.Cookies(),
 		location: response.Header.Get("Location"),
 	}
-}
-
-func asBootstrap(request *http.Request) {
-	request.Header.Set("Authorization", "Bearer "+identityToken)
 }
 
 func asSession(token string) func(*http.Request) {

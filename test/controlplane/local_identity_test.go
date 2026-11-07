@@ -47,7 +47,7 @@ func bootstrapIdentityAdmin(
 		"http://"+plane.api+"/api/v1/auth/local/bootstrap", map[string]any{
 			"organizationName": "Operations", "email": email,
 			"displayName": displayName, "password": password,
-		}, asBootstrap)
+		})
 	if bootstrapped.status != http.StatusCreated {
 		t.Fatalf("bootstrap = %d: %s", bootstrapped.status, bootstrapped.body)
 	}
@@ -65,7 +65,7 @@ func TestLocalBootstrapCreatesOrganizationAndAdmin(t *testing.T) {
 			"email":            "ada@example.test",
 			"displayName":      "Ada Lovelace",
 			"password":         "correct horse battery staple",
-		}, asBootstrap)
+		})
 	if created.status != http.StatusCreated {
 		t.Fatalf("bootstrap = %d: %s", created.status, created.body)
 	}
@@ -86,7 +86,7 @@ func TestSessionLifetimeIsReadOnlyDeploymentPolicy(t *testing.T) {
 			"organizationName": "Operations",
 			"email":            "admin@example.test", "displayName": "Admin",
 			"password": "initial administrator password",
-		}, asBootstrap)
+		})
 	token := sessionCookie(t, created)
 	var expires time.Time
 	for _, cookie := range created.cookies {
@@ -128,7 +128,7 @@ func TestAdminCreatesLocalUserWithoutIdentityProviderChoice(t *testing.T) {
 			"organizationName": "Operations",
 			"email":            "admin@example.test", "displayName": "Admin",
 			"password": "initial administrator password",
-		}, asBootstrap)
+		})
 	admin := sessionCookie(t, bootstrapped)
 	seedTestOrganization(t, plane.dsn, identityOrg, "admin@example.test")
 
@@ -157,7 +157,7 @@ func TestMembershipIsTheOrganizationUserRelation(t *testing.T) {
 			"organizationName": "Operations",
 			"email":            "admin@example.test", "displayName": "Admin",
 			"password": "initial administrator password",
-		}, asBootstrap)
+		})
 	admin := sessionCookie(t, bootstrapped)
 	seedTestOrganization(t, plane.dsn, identityOrg, "admin@example.test")
 	created := plane.call(t, http.MethodPost,
@@ -242,7 +242,7 @@ func TestSessionListsOrganizationMetadataAndRole(t *testing.T) {
 		"http://"+plane.api+"/api/v1/auth/local/bootstrap", map[string]any{
 			"organizationName": "Operations",
 			"email":            "admin@example.test", "password": "initial administrator password",
-		}, asBootstrap)
+		})
 	admin := sessionCookie(t, bootstrapped)
 	seedTestOrganization(t, plane.dsn, identityOrg, "admin@example.test")
 
@@ -259,16 +259,11 @@ func TestLocalAuthenticationBootstrapsOneAdminAndSignsIn(t *testing.T) {
 		"email":            "ada@example.test",
 		"displayName":      "Ada Lovelace",
 		"password":         "correct horse battery staple",
-	}, asBootstrap)
+	})
 	if created.status != http.StatusCreated {
 		t.Fatalf("bootstrap = %d: %s", created.status, created.body)
 	}
 	bootstrapCookie := sessionCookie(t, created)
-	retiredBootstrap := plane.call(t, http.MethodGet,
-		"http://"+plane.api+"/api/v1/members", nil, asBootstrap)
-	if retiredBootstrap.status != http.StatusUnauthorized {
-		t.Fatalf("bootstrap token after first Admin = %d: %s", retiredBootstrap.status, retiredBootstrap.body)
-	}
 
 	who := readSession(t, plane, bootstrapCookie)
 	if who.User.DisplayName != "Ada Lovelace" || who.Organization.Role != "admin" {
@@ -281,7 +276,7 @@ func TestLocalAuthenticationBootstrapsOneAdminAndSignsIn(t *testing.T) {
 		"email":            "grace@example.test",
 		"displayName":      "Grace Hopper",
 		"password":         "another correct horse battery staple",
-	}, asBootstrap)
+	})
 	if again.status != http.StatusConflict || !strings.Contains(again.body, "already") {
 		t.Fatalf("second bootstrap = %d: %s", again.status, again.body)
 	}
@@ -397,14 +392,19 @@ func TestSessionDescribesIdentity(t *testing.T) {
 	}
 }
 
-func TestLocalBootstrapRefusesWhenCredentialIsRetired(t *testing.T) {
-	plane := startIdentityPlane(t, func(cfg *config.Config) { cfg.BootstrapTokenDigest = nil })
+func TestLocalBootstrapRefusesWhenSetupIsDisabled(t *testing.T) {
+	plane := startIdentityPlane(t, func(cfg *config.Config) { cfg.SetupEnabled = false })
 	answer := plane.call(t, http.MethodPost, "http://"+plane.api+"/api/v1/auth/local/bootstrap", map[string]any{
 		"organizationName": "Operations",
 		"email":            "viewer@example.test", "displayName": "Viewer",
 		"password": "correct horse battery staple",
-	}, asBootstrap)
-	if answer.status != http.StatusUnauthorized {
+	}, func(request *http.Request) {
+		request.Host = "localhost"
+		request.Header.Set("X-Forwarded-For", "127.0.0.1")
+		request.Header.Set("X-Forwarded-Host", "localhost")
+		request.Header.Set("Authorization", "Bearer retired-administrator-credential")
+	})
+	if answer.status != http.StatusForbidden || len(answer.cookies) != 0 {
 		t.Fatalf("disabled bootstrap = %d: %s", answer.status, answer.body)
 	}
 }

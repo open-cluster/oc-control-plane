@@ -40,9 +40,9 @@ vendor references remain in the integration guides.
 
 ## Authentication
 
-Use the session cookie issued by local sign-in or OIDC. Bootstrap uses its one-time deployment token. Webhooks use separate credentials.
+Use the session cookie issued by initial local signup, local sign-in, or OIDC. Webhooks use separate credentials.
 
-If you completed [Docker Compose setup](/self-hosting/docker-compose), reuse its cookie jar:
+For command-line access with an existing account, choose your deployment URL and a private cookie-jar path:
 
 ```bash
 export OPENCLUSTER_URL="http://localhost:8081"
@@ -65,6 +65,48 @@ export OPENCLUSTER_COOKIE="$PWD/opencluster.cookies"
 ```
 
 Treat the cookie jar as a credential. Unsafe product requests such as POST and PATCH must include `Origin` matching the configured public origin. Add the header when copying generated examples.
+
+### Initial local signup in a browser
+
+For a new installation, open `/setup` in a compatible frontend over the deployment owner's
+trusted private connection. Follow [Compose](/self-hosting/docker-compose) or
+[Helm](/self-hosting/helm) to enable private setup first. This repository supplies the API;
+it does not serve a browser console or the `/setup` page.
+
+The form shows **Create your OpenCluster account** and submits Organization name, email,
+optional display name, and password to `POST /api/v1/auth/local/bootstrap` as JSON:
+
+```json
+{
+  "organizationName": "Platform Team",
+  "email": "admin@example.com",
+  "displayName": "Admin",
+  "password": "<user-chosen-strong-password>"
+}
+```
+
+The browser-facing origin must equal `OC_PUBLIC_URL`. Route `/api/` through the frontend's
+same-origin proxy to the backend. Preserve the browser's `Origin` and forward `Set-Cookie`
+without rewriting its name, Domain, Path, Secure, or HttpOnly attributes. Use HTTPS, or a
+browser-supported trustworthy localhost origin for local setup. Do not use a plain HTTP LAN
+address or configure the backend URL as the browser origin when the frontend uses another port.
+
+On **Create account**:
+
+1. Send the signup JSON with `Content-Type: application/json` using same-origin fetch.
+2. On `201 Created`, let the browser store `__Host-oc_session` automatically.
+3. Fetch `GET /api/v1/session` with the same browser session, update authentication state,
+   and navigate client-side to the dashboard. Retry session retrieval if it temporarily fails.
+
+There is no second sign-in request, manual cookie handling, or full page reload.
+Refresh server-rendered session-dependent content only if the frontend needs it.
+Signup returns `403` when setup is disabled or Origin is refused, and `409` when already
+initialized. A lost signup response may require normal sign-in with the account just submitted.
+
+Normal visits call `GET /api/v1/session`: render the application on success and sign-in on
+`401`. Show an availability error for a server failure. Do not automatically redirect to signup
+or probe bootstrap to discover setup state. Other Users are created by an Admin through the
+existing local-user API. Disable private setup before enabling public access.
 
 ## Verify an Integration
 

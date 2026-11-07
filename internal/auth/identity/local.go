@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -47,13 +47,23 @@ type memberCreationRequest struct {
 }
 
 func (h Handlers) bootstrapLocalAdmin(writer http.ResponseWriter, request *http.Request) {
-	var body localBootstrapRequest
-	if !decode(writer, request, &body) {
+	if !h.SetupEnabled {
+		writeJSON(writer, http.StatusForbidden, errorView{Error: "initial signup requires private setup access"})
 		return
 	}
-	presented, present := bearerToken(request.Header.Get("Authorization"))
-	if !present || !h.Bootstrap.accepts(presented) {
-		writeJSON(writer, http.StatusUnauthorized, errorView{Error: "credential rejected"})
+	if !authz.CookieOriginAllowed(request, h.PublicURL) {
+		writeJSON(writer, http.StatusForbidden, errorView{Error: "request origin is not allowed"})
+		return
+	}
+	var body localBootstrapRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, maxRequestBody))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: "the body is not valid JSON"})
+		return
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: "the body must contain one bounded JSON object"})
 		return
 	}
 	email, ok := localEmail(writer, body.Email)
@@ -73,6 +83,13 @@ func (h Handlers) bootstrapLocalAdmin(writer http.ResponseWriter, request *http.
 	if organizationName == "" || len(organizationName) > 256 {
 		writeJSON(writer, http.StatusBadRequest,
 			errorView{Error: "organizationName must be between 1 and 256 characters"})
+		return
+	}
+	select {
+	case passwordCheckSlots <- struct{}{}:
+		defer func() { <-passwordCheckSlots }()
+	default:
+		writeJSON(writer, http.StatusTooManyRequests, errorView{Error: "password check capacity reached"})
 		return
 	}
 	encoded, err := hashPassword(body.Password)
@@ -215,14 +232,6 @@ func localEmail(writer http.ResponseWriter, raw string) (string, bool) {
 		return "", false
 	}
 	return normalized, true
-}
-
-func (b Bootstrap) accepts(presented string) bool {
-	if !b.Configured() {
-		return false
-	}
-	digest := sha256.Sum256([]byte(presented))
-	return subtle.ConstantTimeCompare(digest[:], b.Digest) == 1
 }
 
 const (

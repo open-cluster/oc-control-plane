@@ -1,0 +1,6 @@
+# Use only while the browser and API are reachable through trusted private access.
+# Recreate the service without this override before configuring public access.
+services:
+  control-plane:
+    environment:
+      OC_SETUP_ENABLED: "true"
