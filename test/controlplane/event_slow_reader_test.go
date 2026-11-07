@@ -29,7 +29,6 @@ func TestEventStreamBoundsSlowReaders(t *testing.T) {
 			var dsn string
 			running := startControlPlaneRunning(t, func(cfg *config.Config) {
 				cfg.HTTPListenAddress = address
-				cfg.SetupEnabled = true
 				dsn = cfg.DatabaseDSN
 			}, app.Options{Agent: &blockingAgentMain{}})
 			plane := &integrationPlane{controlPlane: running, api: address, intake: address}

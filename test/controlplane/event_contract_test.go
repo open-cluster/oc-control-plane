@@ -63,7 +63,6 @@ func assertModelEventSchema(t *testing.T, model *eventContractModel, want []stri
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
 		dsn = cfg.DatabaseDSN
 		cfg.HTTPListenAddress = address
-		cfg.SetupEnabled = true
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "openrouter", "z-ai/glm-4.7", "scripted-model-key"
 	}, app.Options{Completer: model, SlackAPIURL: vendor.URL})
 	plane := &integrationPlane{controlPlane: running, api: address, intake: address, dsn: dsn}

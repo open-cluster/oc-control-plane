@@ -44,7 +44,6 @@ func agentPlane(t *testing.T, agent investigation.Agent) (*integrationPlane, *ve
 		cfg.HTTPListenAddress = apiAddress
 		cfg.InvestigationWorkers = 1
 		cfg.MaxPendingInvestigations = 1
-		cfg.SetupEnabled = true
 	}, app.Options{Agent: agent, SlackAPIURL: vendor.URL})
 	return &integrationPlane{controlPlane: plane, api: apiAddress, intake: apiAddress, dsn: dsn}, vendor
 }

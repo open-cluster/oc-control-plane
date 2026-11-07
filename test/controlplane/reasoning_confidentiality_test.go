@@ -53,7 +53,6 @@ func TestPrivateModelReasoningNeverCrossesTheProviderBoundary(t *testing.T) {
 	var dsn string
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = apiAddress
-		cfg.SetupEnabled = true
 		cfg.ModelProvider = "openrouter"
 		cfg.ModelName = "z-ai/glm-4.7"
 		cfg.ModelAPIKey = "test-provider-key"

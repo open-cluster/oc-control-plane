@@ -53,7 +53,6 @@ func startIntegrationPlaneWithOptions(t *testing.T, options app.Options) *integr
 		cfg.HTTPListenAddress = intakeAddress
 		cfg.RelayListenAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
-		cfg.SetupEnabled = true
 		dsn = cfg.DatabaseDSN
 	}, options)
 

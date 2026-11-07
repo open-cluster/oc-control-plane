@@ -34,7 +34,6 @@ func startIncidents(t *testing.T) *incidentPlane {
 	plane := startControlPlane(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = "127.0.0.1:0"
 		cfg.HTTPListenAddress = apiAddress
-		cfg.SetupEnabled = true
 		dsn = cfg.DatabaseDSN
 	})
 
