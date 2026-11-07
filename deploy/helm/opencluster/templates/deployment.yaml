@@ -1,6 +1,3 @@
-{{- if and .Values.setup.enabled (ne .Values.service.type "ClusterIP") }}
-{{- fail "setup.enabled requires service.type=ClusterIP and private port-forward access" }}
-{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -34,9 +31,7 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             - name: OC_SERVER_ADDRESS
-              value: "{{ if .Values.setup.enabled }}127.0.0.1{{ end }}:{{ .Values.service.httpPort }}"
-            - name: OC_SETUP_ENABLED
-              value: {{ .Values.setup.enabled | quote }}
+              value: ":{{ .Values.service.httpPort }}"
             - name: OC_PUBLIC_URL
               value: {{ required "server.publicURL must be set to the public origin" .Values.server.publicURL | quote }}
             - name: OC_DATABASE_DSN_FILE
@@ -75,25 +70,13 @@ spec:
               containerPort: {{ .Values.relay.internalPort }}
             {{- end }}
           readinessProbe:
-            {{- if .Values.setup.enabled }}
-            exec:
-              command: ["/bin/busybox", "wget", "-q", "-Y", "off", "-T", "2", "-O", "/dev/null", "http://127.0.0.1:{{ .Values.service.httpPort }}/readyz"]
-            timeoutSeconds: 3
-            {{- else }}
             httpGet:
               path: /readyz
               port: http
-            {{- end }}
           livenessProbe:
-            {{- if .Values.setup.enabled }}
-            exec:
-              command: ["/bin/busybox", "wget", "-q", "-Y", "off", "-T", "2", "-O", "/dev/null", "http://127.0.0.1:{{ .Values.service.httpPort }}/healthz"]
-            timeoutSeconds: 3
-            {{- else }}
             httpGet:
               path: /healthz
               port: http
-            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
