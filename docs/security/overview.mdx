@@ -51,10 +51,12 @@ Sessions belong to the User and store no Organization or Role. Each request reso
 User's one current Membership, so Role changes take effect immediately and Membership
 removal prevents authentication without deleting identity history.
 
-Logout clears the browser cookie and deletes the current session even without a membership.
-Expired sessions are cleaned up automatically. Audit records follow the audit retention policy.
+Logout deletes the current authorized session and clears the browser cookie. If a
+membership has been removed, the now-unusable cookie can still be cleared and the
+orphaned session expires through normal cleanup. Audit records follow the retention policy.
 An absent or expired cookie can be cleared again. Logout still requires the configured
-Origin. A storage failure returns an error because durable sign-out was not confirmed.
+Origin. When session revocation fails, logout returns an error and leaves the valid cookie
+intact so the user can retry.
 
 ## Trust boundaries
 

@@ -201,7 +201,6 @@ func (h Handlers) protectSignOut(origin string) http.Handler {
 			writeJSON(writer, http.StatusForbidden, errorView{Error: "request origin is not allowed"})
 			return
 		}
-		session.Clear(writer)
 		principal, err := h.Resolve(request)
 		if errors.Is(err, authz.ErrNoCredential) || errors.Is(err, authz.ErrCredentialRejected) {
 			h.signOut(writer, request, authz.Principal{})

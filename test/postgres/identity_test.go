@@ -93,6 +93,83 @@ func TestMembershipIsUniqueByUserAndRemovalKeepsTheUser(t *testing.T) {
 	}
 }
 
+func TestConcurrentAdminChangesPreserveLastAdmin(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	dsn := postgresDSN(t)
+	database := openDatabaseForTest(t, dsn)
+	if _, err := database.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	user, issued, err := database.BootstrapLocalUser(ctx,
+		"Operations", "admin@example.test", "Admin", "encoded password with sufficient length",
+		session.Session{ExpiresAt: time.Now().UTC().Add(time.Hour)}, make([]byte, 32), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connection.Close(context.Background()) }()
+
+	var organization, other uuid.UUID
+	if err = connection.QueryRow(ctx, `SELECT org_id FROM organization_membership
+		WHERE user_id = $1`, user.ID).Scan(&organization); err != nil {
+		t.Fatal(err)
+	}
+	if err = connection.QueryRow(ctx, `INSERT INTO app_user (issuer,subject,email,display_name)
+		VALUES ($1,$2,$2,'Second') RETURNING user_id`,
+		storage.LocalIssuer, "second@example.test").Scan(&other); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = connection.Exec(ctx, `INSERT INTO organization_membership (org_id,user_id,role)
+		VALUES ($1,$2,'admin')`, organization, other); err != nil {
+		t.Fatal(err)
+	}
+	principal, err := authz.NewPrincipal(user.ID, issued.ID, "Admin", user.Email,
+		authz.Membership{Organization: organization, DisplayName: "Operations", Role: authz.Admin})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	outcomes := make(chan error, 2)
+	go func() {
+		<-start
+		_, changeErr := database.UpdateMembership(ctx, principal, organization, user.ID, authz.Editor)
+		outcomes <- changeErr
+	}()
+	go func() {
+		<-start
+		outcomes <- database.RemoveMembership(ctx, principal, organization, other)
+	}()
+	close(start)
+
+	var succeeded, refused int
+	for range 2 {
+		switch changeErr := <-outcomes; {
+		case changeErr == nil:
+			succeeded++
+		case errors.Is(changeErr, storage.ErrLastAdmin):
+			refused++
+		default:
+			t.Fatalf("unexpected concurrent membership error: %v", changeErr)
+		}
+	}
+	if succeeded != 1 || refused != 1 {
+		t.Fatalf("successes=%d last-admin refusals=%d, want one each", succeeded, refused)
+	}
+	var administrators int
+	if err = connection.QueryRow(ctx, `SELECT count(*) FROM organization_membership
+		WHERE org_id=$1 AND role='admin'`, organization).Scan(&administrators); err != nil {
+		t.Fatal(err)
+	}
+	if administrators != 1 {
+		t.Fatalf("concurrent changes left %d administrators, want 1", administrators)
+	}
+}
+
 func TestAUserWithLocalCredentialsCannotBeDeletedByCascade(t *testing.T) {
 	ctx := context.Background()
 	dsn := postgresDSN(t)
