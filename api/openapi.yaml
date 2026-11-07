@@ -73,7 +73,7 @@ paths:
       <<: *public-write
       operationId: bootstrapLocalAdmin
       summary: Create the initial local account
-      description: Available only when private setup is explicitly enabled. Atomically creates the initial Organization, Admin User, password verifier, Membership, session, and audit event. Requires Origin matching OC_PUBLIC_URL even without a cookie. Success issues the secure HttpOnly __Host-oc_session cookie; call GET /api/v1/session next without signing in again. Existing Organizations or Users permanently close signup for supported account lifecycle operations.
+      description: Available only before the deployment has any Organization or User. Protect an uninitialized installation with trusted private network access, because the first caller can claim Admin ownership. Atomically creates the initial Organization, Admin User, password verifier, Membership, session, and audit event. Requires Origin matching OC_PUBLIC_URL even without a cookie. Success issues the secure HttpOnly __Host-oc_session cookie; call GET /api/v1/session next without signing in again. Existing Organizations or Users close signup for supported account lifecycle operations.
       tags: [Authentication]
       x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       requestBody:
