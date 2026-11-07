@@ -130,7 +130,6 @@ func startSlackPlaneWithOptions(
 	options.SlackAPIURL = vendor.URL
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = apiAddress
-		cfg.SetupEnabled = true
 		dsn = cfg.DatabaseDSN
 	}, options)
 	return &integrationPlane{controlPlane: plane, api: apiAddress, dsn: dsn}
@@ -414,7 +413,6 @@ func TestRunRefusesACredentialCatalogWithoutASealingKey(t *testing.T) {
 	cfg := config.Config{
 		DatabaseDSN:       freshDatabase(t),
 		HTTPListenAddress: freeAddress(t),
-		SetupEnabled:      true,
 		SealingKey:        nil,
 	}
 

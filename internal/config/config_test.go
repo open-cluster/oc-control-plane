@@ -31,39 +31,6 @@ func essentialEnvironment(t *testing.T) map[string]string {
 	}
 }
 
-func TestSetupMustBeExplicitlyEnabled(t *testing.T) {
-	values := essentialEnvironment(t)
-	values["OC_SETUP_ENABLED"] = "true"
-	cfg, err := Load(lookup(values))
-	if err != nil || !cfg.SetupEnabled {
-		t.Fatalf("explicit setup enablement = %v: %v", cfg.SetupEnabled, err)
-	}
-	values["OC_SETUP_ENABLED"] = "false"
-	cfg, err = Load(lookup(values))
-	if err != nil || cfg.SetupEnabled {
-		t.Fatalf("disabled setup = %v: %v", cfg.SetupEnabled, err)
-	}
-	delete(values, "OC_SETUP_ENABLED")
-	cfg, err = Load(lookup(values))
-	if err != nil || cfg.SetupEnabled {
-		t.Fatalf("default setup = %v: %v", cfg.SetupEnabled, err)
-	}
-	values["OC_SETUP_ENABLED"] = "invalid-private-value"
-	if _, err = Load(lookup(values)); err == nil || strings.Contains(err.Error(), "invalid-private-value") {
-		t.Fatalf("invalid setup flag was not safely rejected: %v", err)
-	}
-}
-
-func TestRetiredAdministratorTokenInputsCannotEnableSetup(t *testing.T) {
-	values := essentialEnvironment(t)
-	values["OC_BOOTSTRAP_TOKEN"] = "retired administrator credential"
-	values["OC_BOOTSTRAP_TOKEN_FILE"] = "missing-retired-secret-file"
-	cfg, err := Load(lookup(values))
-	if err != nil || cfg.SetupEnabled {
-		t.Fatalf("retired token inputs affected startup or setup: %v", err)
-	}
-}
-
 func TestMissingSecretsNameDirectAndFileInputs(t *testing.T) {
 	t.Run("database", func(t *testing.T) {
 		values := essentialEnvironment(t)
@@ -159,17 +126,16 @@ func TestLoadPublicBrowserOrigins(t *testing.T) {
 
 func TestLoadEnvironmentOverridesYAMLAndKeepsPublicOriginIndependent(t *testing.T) {
 	values := essentialEnvironment(t)
-	values[EnvConfigFile] = secretFile(t, "server:\n  address: '127.0.0.1:9091'\n  publicURL: 'https://console.example.com'\nai:\n  apiKeyFile: 'missing-key'\nsecurity:\n  setupEnabled: true\n")
+	values[EnvConfigFile] = secretFile(t, "server:\n  address: '127.0.0.1:9091'\n  publicURL: 'https://console.example.com'\nai:\n  apiKeyFile: 'missing-key'\n")
 	delete(values, EnvModelKeyFile)
 	values[EnvModelKey] = "environment-key"
 	cfg, err := Load(lookup(values))
-	if err != nil || cfg.HTTPListenAddress != "127.0.0.1:9091" || cfg.PublicURL != "https://console.example.com" || cfg.ModelAPIKey != "environment-key" || !cfg.SetupEnabled {
+	if err != nil || cfg.HTTPListenAddress != "127.0.0.1:9091" || cfg.PublicURL != "https://console.example.com" || cfg.ModelAPIKey != "environment-key" {
 		t.Fatalf("YAML fallback or direct-secret override failed: %v", err)
 	}
 	values[EnvHTTPAddress] = "127.0.0.1:9092"
-	values[EnvSetupEnabled] = "false"
 	cfg, err = Load(lookup(values))
-	if err != nil || cfg.HTTPListenAddress != "127.0.0.1:9092" || cfg.PublicURL != "https://console.example.com" || cfg.SetupEnabled {
+	if err != nil || cfg.HTTPListenAddress != "127.0.0.1:9092" || cfg.PublicURL != "https://console.example.com" {
 		t.Fatalf("listener override changed the public origin: %v", err)
 	}
 }

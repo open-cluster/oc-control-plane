@@ -392,23 +392,6 @@ func TestSessionDescribesIdentity(t *testing.T) {
 	}
 }
 
-func TestLocalBootstrapRefusesWhenSetupIsDisabled(t *testing.T) {
-	plane := startIdentityPlane(t, func(cfg *config.Config) { cfg.SetupEnabled = false })
-	answer := plane.call(t, http.MethodPost, "http://"+plane.api+"/api/v1/auth/local/bootstrap", map[string]any{
-		"organizationName": "Operations",
-		"email":            "viewer@example.test", "displayName": "Viewer",
-		"password": "correct horse battery staple",
-	}, func(request *http.Request) {
-		request.Host = "localhost"
-		request.Header.Set("X-Forwarded-For", "127.0.0.1")
-		request.Header.Set("X-Forwarded-Host", "localhost")
-		request.Header.Set("Authorization", "Bearer retired-administrator-credential")
-	})
-	if answer.status != http.StatusForbidden || len(answer.cookies) != 0 {
-		t.Fatalf("disabled bootstrap = %d: %s", answer.status, answer.body)
-	}
-}
-
 func TestLocalSignInBoundsParallelPasswordChecks(t *testing.T) {
 	plane := startIdentityPlane(t)
 	const attempts = 24
