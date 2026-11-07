@@ -11,12 +11,9 @@ a browser console. Visiting `/` returns `404`.
 
 You need Git, Docker Compose, curl, OpenSSL, port `8081`, and outbound HTTPS access to Anthropic or OpenRouter. Have a provider API key and a Tool-calling model identifier ready. The commands below use a POSIX shell. The repository does not publish qualified minimum hardware requirements.
 
-Use a currently patched Docker Engine **28.0.0 or newer**. Older releases can expose
-localhost-published ports to other hosts on the same network segment; see
-[Docker's port-publishing security guidance](https://docs.docker.com/engine/network/port-publishing/).
-Use ordinary bridge networking without remote direct routing. During setup, trust other
-containers on that network and local host processes, and keep both frontend and API private.
-Do not put a public reverse proxy in front of the setup-enabled API.
+Use a patched Docker Engine with localhost-port isolation. During initial signup,
+keep the backend private from other hosts, untrusted containers, and public proxies.
+A fresh or reset database allows its first caller to claim the administrator account.
 
 ## 1. Create local secret files
 
@@ -53,66 +50,54 @@ satisfies OpenCluster's zero-retention policy. See [model configuration](/self-h
 Docker Desktop users without `id` can set both runtime values to an available numeric
 non-root ID such as `1000`.
 
-## 2. Start OpenCluster
+## 2. Start OpenCluster privately
 
-For a fresh installation, use the explicit private setup override. With a compatible
-frontend listening privately on `http://localhost:8080`, configure its same-origin `/api/`
-proxy to `http://127.0.0.1:8081` and set the browser-facing origin before starting:
-
-```bash
-export OPENCLUSTER_PUBLIC_URL=http://localhost:8080
-docker compose -f deploy/compose/compose.yaml -f deploy/compose/setup.yaml up --build -d
-```
-
-Wait until PostgreSQL is healthy and the `control-plane` service remains
-running:
+The control-plane API is published at `127.0.0.1:8081`. Keep this listener and any
+frontend proxy inaccessible to untrusted callers until the first Admin exists. Start
+Compose using its single base file:
 
 ```bash
+docker compose -f deploy/compose/compose.yaml up --build -d
 docker compose -f deploy/compose/compose.yaml ps
 curl --fail http://localhost:8081/healthz
 curl --fail http://localhost:8081/readyz
 ```
 
-The service table should show `postgres` as `healthy` and `control-plane` as running.
-Both probe commands must exit successfully before you continue. The root URL returns
-`404` because this deployment has no browser console. If a service exits, run
-`docker compose -f deploy/compose/compose.yaml logs <service>` and check the mounted file
-paths before retrying.
+PostgreSQL should be healthy and the control plane running. The backend does not
+ship a browser console. If a container exits, inspect its Compose logs.
 
 ## 3. Create the first User and Organization
 
-Open `http://localhost:8080/setup` in the separately supplied frontend over the trusted
-private connection. Enter Organization name, email, optional display name, and a strong
-password, then select **Create account**. The API atomically creates the Organization,
-Admin account, password, Membership, audit record, and session. The browser stores the
-secure cookie; the frontend fetches the current session and opens the dashboard immediately.
+With a compatible, privately served frontend, open `/setup` and submit Organization
+name, email, optional display name, and password. Ensure `OPENCLUSTER_PUBLIC_URL`
+matches the browser-facing origin of its same-origin API proxy.
 
-This repository does not ship the frontend. A compatible frontend must implement the
-[browser signup contract](/api-reference/overview#initial-local-signup-in-a-browser).
-The browser origin and `OPENCLUSTER_PUBLIC_URL` must agree; a public proxy is not a
-trusted setup connection. Signup needs no administrator token, setup code, second login,
-or page reload. An initialized deployment refuses subsequent signup.
-
-## 4. Disable setup before public access
-
-Recreate the control plane using only the base Compose file. If you will publish the
-application, first set `OPENCLUSTER_PUBLIC_URL` to its final HTTPS browser origin:
+For the shipped API-only deployment, you can also initialize directly on localhost:
 
 ```bash
-docker compose -f deploy/compose/compose.yaml up -d --force-recreate control-plane
-docker compose -f deploy/compose/compose.yaml exec control-plane /bin/sh -c 'test "$OC_SETUP_ENABLED" = false'
+umask 077
+curl --fail-with-body --request POST http://localhost:8081/api/v1/auth/local/bootstrap \\
+  --header 'Origin: http://localhost:8081' \\
+  --header 'Content-Type: application/json' \\
+  --cookie-jar .secrets/session-cookie \\
+  --data '{"organizationName":"Platform Team","email":"admin@example.com","password":"<STRONG_PASSWORD>"}'
+curl --fail --cookie .secrets/session-cookie http://localhost:8081/api/v1/session
 ```
 
-Do not enable public ingress or proxy forwarding until this check succeeds. Remove the
-setup override from deployment scripts and automation as well. The base file explicitly
-disables signup, so an accidentally recreated empty database cannot reopen public Admin
-registration. To initialize a replacement database intentionally, restore trusted private
-access before using the setup override again.
+Keep passwords and the cookie jar private. Browser signup issues the same secure session
+cookie and does not need a second sign-in. The first successful request initializes the
+Organization and Admin atomically. Further signup requests return `409`.
 
-Keep the host publication on loopback behind your HTTPS proxy. The proxy must preserve
-Origin and cookie attributes, and serve frontend and API on the configured same origin.
-Changing from localhost to a public hostname requires normal sign-in on that hostname;
-the local browser cookie does not transfer across origins.
+## 4. Public deployment
+
+Do not expose an empty database to the internet or other untrusted workloads. Once the
+Admin is created, configure `OPENCLUSTER_PUBLIC_URL` for the final HTTPS browser origin,
+recreate the backend with the same Compose file, and enable a trusted reverse proxy.
+Keep the host API port loopback-bound and preserve Origin and cookie attributes.
+
+If the database is lost or replaced, restore its backup privately before exposing the
+application again. An empty database reopens first-user signup. A localhost cookie does
+not transfer to a different public hostname, so sign in again at the final origin.
 
 ## Persistence and shutdown
 
@@ -131,9 +116,8 @@ same key, sealed integration credentials cannot be opened.
 
 Stop every old control-plane replica and back up PostgreSQL before replacing the image.
 Remove the obsolete administrator token inputs and any `security.bootstrapTokenFile` YAML
-setting. Retain the database and encryption key, and use the base Compose file with setup
-disabled. Existing accounts and sessions remain valid; no signup migration or database reset
-is required. Relay enrollment credentials are unchanged.
+setting. Retain the database and encryption key. Existing accounts and sessions remain
+valid, and no signup migration or database reset is required. Relay enrollment credentials are unchanged.
 
 Do not run mixed versions against one database. The current ledgered baseline migrates in
 place only when retained user Message attribution agrees with each Conversation source and
