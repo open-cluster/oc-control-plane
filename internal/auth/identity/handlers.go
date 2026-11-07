@@ -21,10 +21,6 @@ const (
 
 var scopes = []string{"openid", "email", "profile"}
 
-type Bootstrap struct{ Digest []byte }
-
-func (b Bootstrap) Configured() bool { return len(b.Digest) > 0 }
-
 type Handlers struct {
 	Database         *storage.Database
 	Logger           *slog.Logger
@@ -33,7 +29,6 @@ type Handlers struct {
 	OIDCClientID     string
 	OIDCClientSecret string
 	PublicURL        string
-	Bootstrap        Bootstrap
 	SessionLifetime  time.Duration
 }
 
@@ -76,15 +71,6 @@ func (h Handlers) fromSession(
 		return authz.Principal{}, authz.ErrCredentialRejected
 	}
 	return principal, nil
-}
-
-func bearerToken(header string) (string, bool) {
-	const prefix = "Bearer "
-	if len(header) <= len(prefix) || !strings.EqualFold(header[:len(prefix)], prefix) {
-		return "", false
-	}
-	token := strings.TrimSpace(header[len(prefix):])
-	return token, token != ""
 }
 
 func displayNameOf(user storage.User) string {

@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -16,8 +15,6 @@ func TestAssignedMessageBeyondPreviewReachesModel(t *testing.T) {
 	prompts := make(chan modelagent.Prompt, 4)
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = address
-		digest := sha256.Sum256([]byte(surfaceToken))
-		cfg.BootstrapTokenDigest = digest[:]
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "openrouter", "z-ai/glm-4.7", "scripted-model-key"
 	}, app.Options{Completer: concludingModel{prompts: prompts}})
 	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
@@ -43,8 +40,6 @@ func TestLargeAssignedInputReachesModelIntact(t *testing.T) {
 	prompts := make(chan modelagent.Prompt, 4)
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = address
-		digest := sha256.Sum256([]byte(surfaceToken))
-		cfg.BootstrapTokenDigest = digest[:]
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "openrouter", "z-ai/glm-4.7", "scripted-model-key"
 		cfg.ModelMaxOutputTokens = 32000
 	}, app.Options{Completer: concludingModel{prompts: prompts}})

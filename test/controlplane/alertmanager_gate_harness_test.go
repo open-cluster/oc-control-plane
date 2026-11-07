@@ -3,7 +3,6 @@ package controlplane
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -69,8 +68,6 @@ func startAlertmanagerGate(t *testing.T) *alertmanagerGate {
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = apiAddress
 		cfg.HTTPListenAddress = intakeAddress
-		digest := sha256.Sum256([]byte(surfaceToken))
-		cfg.BootstrapTokenDigest = digest[:]
 		cfg.ModelProvider = "openrouter"
 		cfg.ModelName = "z-ai/glm-4.7"
 		cfg.ModelAPIKey = "scripted-model-key"

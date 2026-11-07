@@ -18,7 +18,7 @@ func TestLogoutDeletesTheCurrentSessionAndClearsCookie(t *testing.T) {
 		"organizationName": "Operations",
 		"email":            "admin@example.test", "displayName": "Admin",
 		"password": "initial administrator password",
-	}, asBootstrap)
+	})
 	if created.status != http.StatusCreated {
 		t.Fatalf("bootstrap = %d: %s", created.status, created.body)
 	}

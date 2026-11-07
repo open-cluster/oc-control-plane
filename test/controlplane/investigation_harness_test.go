@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -45,8 +44,6 @@ func agentPlane(t *testing.T, agent investigation.Agent) (*integrationPlane, *ve
 		cfg.HTTPListenAddress = apiAddress
 		cfg.InvestigationWorkers = 1
 		cfg.MaxPendingInvestigations = 1
-		digest := sha256.Sum256([]byte(surfaceToken))
-		cfg.BootstrapTokenDigest = digest[:]
 	}, app.Options{Agent: agent, SlackAPIURL: vendor.URL})
 	return &integrationPlane{controlPlane: plane, api: apiAddress, intake: apiAddress, dsn: dsn}, vendor
 }

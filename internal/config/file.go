@@ -57,8 +57,7 @@ type fileConfiguration struct {
 		PrivateKeyFile *string `yaml:"privateKeyFile"`
 	} `yaml:"github"`
 	Security struct {
-		EncryptionKeyFile  *string `yaml:"encryptionKeyFile"`
-		BootstrapTokenFile *string `yaml:"bootstrapTokenFile"`
+		EncryptionKeyFile *string `yaml:"encryptionKeyFile"`
 	} `yaml:"security"`
 }
 
@@ -172,6 +171,5 @@ func (document fileConfiguration) environment(directory string) map[string]strin
 	secretFile(EnvDatabaseDSNFile, document.Database.DSNFile)
 	secretFile(EnvGitHubAppKeyFile, document.GitHub.PrivateKeyFile)
 	secretFile(EnvSealingKeyFile, document.Security.EncryptionKeyFile)
-	secretFile(EnvBootstrapTokenFile, document.Security.BootstrapTokenFile)
 	return values
 }

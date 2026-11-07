@@ -36,10 +36,6 @@ spec:
               value: {{ required "server.publicURL must be set to the public origin" .Values.server.publicURL | quote }}
             - name: OC_DATABASE_DSN_FILE
               value: "/run/opencluster/secrets/{{ .Values.database.dsnKey }}"
-            {{- with .Values.credentials.bootstrapTokenKey }}
-            - name: OC_BOOTSTRAP_TOKEN_FILE
-              value: "/run/opencluster/credentials/{{ . }}"
-            {{- end }}
             - name: OC_ENCRYPTION_KEY_FILE
               value: "/run/opencluster/credentials/{{ .Values.credentials.sealingKey }}"
             - name: OC_AI_API_KEY_FILE

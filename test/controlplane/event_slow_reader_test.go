@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"crypto/sha256"
 	"io"
 	"net"
 	"net/http"
@@ -30,8 +29,6 @@ func TestEventStreamBoundsSlowReaders(t *testing.T) {
 			var dsn string
 			running := startControlPlaneRunning(t, func(cfg *config.Config) {
 				cfg.HTTPListenAddress = address
-				digest := sha256.Sum256([]byte(surfaceToken))
-				cfg.BootstrapTokenDigest = digest[:]
 				dsn = cfg.DatabaseDSN
 			}, app.Options{Agent: &blockingAgentMain{}})
 			plane := &integrationPlane{controlPlane: running, api: address, intake: address}

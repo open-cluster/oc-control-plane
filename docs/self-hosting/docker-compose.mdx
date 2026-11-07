@@ -9,13 +9,19 @@ a browser console. Visiting `/` returns `404`.
 
 ## Prerequisites
 
-You need Git, Docker Compose, curl, OpenSSL, port `8081`, and outbound HTTPS access to Anthropic or OpenRouter. Have a provider API key and a Tool-calling model identifier ready. The commands below use a POSIX shell. The repository does not publish qualified minimum hardware or Docker versions.
+You need Git, Docker Compose, curl, OpenSSL, port `8081`, and outbound HTTPS access to Anthropic or OpenRouter. Have a provider API key and a Tool-calling model identifier ready. The commands below use a POSIX shell. The repository does not publish qualified minimum hardware requirements.
+
+Use a patched Docker Engine 28.0.0 or newer for the
+[localhost-port isolation fixes](https://docs.docker.com/engine/network/port-publishing/#publishing-ports).
+During initial signup,
+keep the backend private from other hosts, untrusted containers, and public proxies.
+A fresh or reset database allows its first caller to claim the administrator account.
 
 ## 1. Create local secret files
 
 From a checkout of the release you intend to deploy, create private files outside version control for the PostgreSQL
-password, PostgreSQL DSN, one-time bootstrap token, 32-byte encryption key, and model
-provider credential. The five `*_FILE` variables below name credential files. The remaining variables
+password, PostgreSQL DSN, 32-byte encryption key, and model
+provider credential. The four `*_FILE` variables below name credential files. The remaining variables
 select the provider, model, and container user.
 
 On Linux or macOS, create the files and export the Compose inputs. Replace the obvious
@@ -26,14 +32,12 @@ password file.
 install -d -m 700 .secrets
 printf '%s' '<POSTGRES_PASSWORD>' > .secrets/postgres-password
 printf '%s' 'postgresql://opencluster:<URL_ENCODED_PASSWORD>@postgres:5432/opencluster?sslmode=disable' > .secrets/postgres-dsn
-openssl rand -hex 32 > .secrets/bootstrap-token
 openssl rand -out .secrets/encryption-key 32
 printf '%s' '<MODEL_API_KEY>' > .secrets/model-key
 chmod 600 .secrets/*
 
 export OPENCLUSTER_POSTGRES_PASSWORD_FILE="$PWD/.secrets/postgres-password"
 export OPENCLUSTER_DATABASE_DSN_FILE="$PWD/.secrets/postgres-dsn"
-export OPENCLUSTER_BOOTSTRAP_TOKEN_FILE="$PWD/.secrets/bootstrap-token"
 export OPENCLUSTER_ENCRYPTION_KEY_FILE="$PWD/.secrets/encryption-key"
 export OPENCLUSTER_AI_API_KEY_FILE="$PWD/.secrets/model-key"
 export OPENCLUSTER_AI_PROVIDER=anthropic
@@ -48,62 +52,55 @@ satisfies OpenCluster's zero-retention policy. See [model configuration](/self-h
 Docker Desktop users without `id` can set both runtime values to an available numeric
 non-root ID such as `1000`.
 
-## 2. Start OpenCluster
+## 2. Start OpenCluster privately
 
-In the same shell, start the stack in the background:
+The control-plane API is published at `127.0.0.1:8081`. Keep this listener and any
+frontend proxy inaccessible to untrusted callers until the first Admin exists. For
+the API-only procedure below, use the default `OPENCLUSTER_PUBLIC_URL=http://localhost:8081`.
+Start Compose using its single base file:
 
 ```bash
 docker compose -f deploy/compose/compose.yaml up --build -d
-```
-
-Wait until PostgreSQL is healthy and the `control-plane` service remains
-running:
-
-```bash
 docker compose -f deploy/compose/compose.yaml ps
 curl --fail http://localhost:8081/healthz
 curl --fail http://localhost:8081/readyz
 ```
 
-The service table should show `postgres` as `healthy` and `control-plane` as running.
-Both probe commands must exit successfully before you continue. The root URL returns
-`404` because this deployment has no browser console. If a service exits, run
-`docker compose -f deploy/compose/compose.yaml logs <service>` and check the mounted file
-paths before retrying.
+PostgreSQL should be healthy and the control plane running. The backend does not
+ship a browser console. If a container exits, inspect its Compose logs.
 
 ## 3. Create the first User and Organization
 
-Bootstrap atomically creates the Organization, first User, **Admin** Membership,
-password, and session. It is deployment-wide and works only once. Replace the sample
-identity and password before running:
+With a compatible, privately served frontend, open `/setup` and submit Organization
+name, email, optional display name, and password. Ensure `OPENCLUSTER_PUBLIC_URL`
+matches the browser-facing origin of its same-origin API proxy.
+
+For the shipped API-only deployment, you can also initialize directly on localhost:
 
 ```bash
 umask 077
-printf 'Authorization: Bearer %s\n' "$(tr -d '\r\n' < "$OPENCLUSTER_BOOTSTRAP_TOKEN_FILE")" > .secrets/bootstrap-header
 curl --fail-with-body --request POST http://localhost:8081/api/v1/auth/local/bootstrap \
-  --header @.secrets/bootstrap-header \
   --header 'Origin: http://localhost:8081' \
   --header 'Content-Type: application/json' \
   --cookie-jar .secrets/session-cookie \
-  --data '{"organizationName":"Platform Team","email":"admin@example.com","displayName":"On-call","password":"<STRONG_PASSWORD>"}'
-rm .secrets/bootstrap-header
-```
-
-The successful response returns `{"bootstrapped":true}` and saves your session cookie.
-Verify the User, Organization, and **Admin** Role with:
-
-```bash
+  --data '{"organizationName":"Platform Team","email":"admin@example.com","password":"<STRONG_PASSWORD>"}'
 curl --fail --cookie .secrets/session-cookie http://localhost:8081/api/v1/session
 ```
 
-Treat the cookie file as a credential. If bootstrap rejects the input, correct it and retry.
-If the response is lost, try [signing in](/api-reference/overview#authentication) with the
-account you submitted before retrying bootstrap.
+Keep passwords and the cookie jar private. Browser signup issues the same secure session
+cookie and does not need a second sign-in. The first successful request initializes the
+Organization and Admin atomically. Further signup requests return `409`.
 
-The bootstrap token is deployment-wide and accepted only for the first local User. Keep
-it out of command history and remove access to the file after bootstrap succeeds. An
-invalid token is refused, a reused token returns a conflict, and an unsafe cookie-backed
-request without the configured `Origin` is refused.
+## 4. Public deployment
+
+Do not expose an empty database to the internet or other untrusted workloads. Once the
+Admin is created, configure `OPENCLUSTER_PUBLIC_URL` for the final HTTPS browser origin,
+recreate the backend with the same Compose file, and enable a trusted reverse proxy.
+Keep the host API port loopback-bound and preserve Origin and cookie attributes.
+
+If the database is lost or replaced, restore its backup privately before exposing the
+application again. An empty database reopens first-user signup. A localhost cookie does
+not transfer to a different public hostname, so sign in again at the final origin.
 
 ## Persistence and shutdown
 
@@ -121,6 +118,10 @@ same key, sealed integration credentials cannot be opened.
 ## Replace an older pre-release deployment
 
 Stop every old control-plane replica and back up PostgreSQL before replacing the image.
+Remove the obsolete administrator token inputs and any `security.bootstrapTokenFile` YAML
+setting. Retain the database and encryption key. Existing accounts and sessions remain
+valid, and no signup migration or database reset is required. Relay enrollment credentials are unchanged.
+
 Do not run mixed versions against one database. The current ledgered baseline migrates in
 place only when retained user Message attribution agrees with each Conversation source and
 every retained nonempty Investigation question has assigned user Messages. Any nonempty

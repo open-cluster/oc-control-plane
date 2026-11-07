@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -21,8 +20,6 @@ func startSlackInstallPlane(t *testing.T, vendor *vendorFake, console string) *i
 	var dsn string
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = apiAddress
-		digest := sha256.Sum256([]byte(surfaceToken))
-		cfg.BootstrapTokenDigest = digest[:]
 		cfg.SlackClientID = "4444.5555"
 		cfg.SlackClientSecret = "the-slack-client-secret"
 		cfg.SlackSigningSecret = "the-slack-signing-secret"

@@ -164,10 +164,12 @@ The fastest way to run OpenCluster locally is with Docker Compose:
 docker compose -f deploy/compose/compose.yaml up --build
 ```
 
-A local deployment requires PostgreSQL, an administrator bootstrap token, an encryption
-key, and a supported model provider.
+A local deployment requires PostgreSQL, an encryption key, and a supported model provider.
 
-Follow [Docker Compose setup](https://docs.open-cluster.io/self-hosting/docker-compose) for installation and bootstrap.
+Follow [Docker Compose setup](https://docs.open-cluster.io/self-hosting/docker-compose) for installation and private initial signup.
+With a compatible frontend, open `/setup` over a trusted private connection to create
+the first account. Signup issues the existing session cookie. Keep the deployment private
+until the first Admin is created. A fresh or reset database allows the first caller to claim Admin.
 The standalone backend uses port `8081`. Its default local public origin is
 `http://localhost:8081`. A separately deployed frontend must provide its own verified routing.
 Helm requires `server.publicURL` to be set to the deployment's actual public origin.

@@ -11,9 +11,11 @@ containing sensitive details.
 
 ## Authentication and authorization
 
-The one-time local bootstrap atomically creates the first Organization, its Admin User
-and Membership, the local password, and an opaque cookie session. Protect and retire the
-file-backed bootstrap token after that use.
+Initial local signup atomically creates the first Organization, its Admin User and
+Membership, local password, audit record, and an opaque cookie session. The deployment
+owner opens `/setup` in a compatible frontend over trusted private access. Signup requires
+the configured same Origin even before a cookie exists. The Origin check protects browser
+requests, but does not establish deployment ownership.
 
 Normal product routes use the opaque `__Host-oc_session` cookie. General bearer API
 tokens are not shipped in OSS v0.1. Unsafe cookie requests require the configured
@@ -42,10 +44,24 @@ refused. One trailing line ending is accepted. Recovery changes the password, de
 the User's sessions and records the action atomically. Unknown and OIDC-only accounts are
 refused. Recovery does not create Users or reactivate bootstrap.
 
-After initial setup, remove the bootstrap credential file and configuration before restart.
-An omitted bootstrap credential disables initialization without preventing normal startup.
-Initialization stays retired even if the initial User is later deleted. Retained
-installations acquire this protection through a forward migration.
+Tokenless signup is available whenever both Organization and User records are absent.
+The first caller who reaches an empty deployment can create the Admin. Protect the entire
+backend from untrusted network access until that Admin exists. An Origin header, Host
+header, forwarded address, or localhost-looking request is not proof of ownership.
+
+Compose publishes the API on host loopback. Use a patched Docker Engine 28.0.0 or newer with standard
+bridge networking and no remote direct routing or public proxy forwarding during setup.
+Trust local host processes and containers on that Docker network. Helm uses a ClusterIP
+Service by default, which is **not** isolation from other Pods. Apply appropriate network
+restrictions and perform first signup through a trusted connection, such as an authorized
+loopback-bound port-forward, before enabling public ingress. An accidentally reset or
+replaced database reopens signup and must also be initialized privately.
+
+Retained Organizations and Users close signup across restarts, upgrades, Membership
+removal, disabled accounts, and ordinary account removal. Concurrent signup is serialized
+in PostgreSQL. Remove obsolete administrator token inputs and
+`security.bootstrapTokenFile` from old YAML before upgrading. No signup-specific schema
+migration is needed. Relay enrollment credentials remain separate and unchanged.
 
 Sessions belong to the User and store no Organization or Role. Each request resolves the
 User's one current Membership, so Role changes take effect immediately and Membership

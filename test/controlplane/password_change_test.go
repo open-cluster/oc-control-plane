@@ -87,7 +87,7 @@ func TestRecoveryCLIAfterBootstrapRetirement(t *testing.T) {
 	defer cancel()
 	command := exec.CommandContext(ctx, "go", "run", "../../cmd/controlplane", "recover-local-password", "--user", who.User.ID)
 	command.Env = append(os.Environ(),
-		config.EnvDatabaseDSN+"=", config.EnvBootstrapTokenFile+"=",
+		config.EnvDatabaseDSN+"=",
 		config.EnvDatabaseDSNFile+"="+writeSecret("dsn", plane.dsn),
 		config.EnvSealingKeyFile+"=", config.EnvModelProvider+"=anthropic",
 		config.EnvModelName+"=", config.EnvModelKeyFile+"=")
@@ -102,7 +102,6 @@ func TestRecoveryCLIAfterBootstrapRetirement(t *testing.T) {
 	}
 	restarted := startIdentityPlane(t, func(cfg *config.Config) {
 		cfg.DatabaseDSN = plane.dsn
-		cfg.BootstrapTokenDigest = nil
 	})
 	base := "http://" + restarted.api + "/api/v1"
 	stale := restarted.call(t, http.MethodGet, base+"/session", nil, asSession(cookie))
@@ -117,8 +116,8 @@ func TestRecoveryCLIAfterBootstrapRetirement(t *testing.T) {
 	}
 	bootstrap := restarted.call(t, http.MethodPost, base+"/auth/local/bootstrap", map[string]any{
 		"organizationName": "Operations", "email": "another@example.test", "password": recoveredPassword,
-	}, asBootstrap)
-	if bootstrap.status != http.StatusUnauthorized {
+	})
+	if bootstrap.status != http.StatusConflict {
 		t.Fatalf("retired bootstrap = %d: %s", bootstrap.status, bootstrap.body)
 	}
 }

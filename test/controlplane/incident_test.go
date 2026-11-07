@@ -3,7 +3,6 @@ package controlplane
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,8 +34,6 @@ func startIncidents(t *testing.T) *incidentPlane {
 	plane := startControlPlane(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = "127.0.0.1:0"
 		cfg.HTTPListenAddress = apiAddress
-		digest := sha256.Sum256([]byte(surfaceToken))
-		cfg.BootstrapTokenDigest = digest[:]
 		dsn = cfg.DatabaseDSN
 	})
 

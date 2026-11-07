@@ -72,10 +72,10 @@ paths:
     post:
       <<: *public-write
       operationId: bootstrapLocalAdmin
-      summary: Bootstrap local admin
+      summary: Create the initial local account
+      description: Available only before the deployment has any Organization or User. Protect an uninitialized installation with trusted private network access, because the first caller can claim Admin ownership. Atomically creates the initial Organization, Admin User, password verifier, Membership, session, and audit event. Requires Origin matching OC_PUBLIC_URL even without a cookie. Success issues the secure HttpOnly __Host-oc_session cookie; call GET /api/v1/session next without signing in again. Existing Organizations or Users close signup for supported account lifecycle operations.
       tags: [Authentication]
-      security:
-        - BootstrapToken: []
+      x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
       requestBody:
         content:
           application/json:
@@ -84,9 +84,10 @@ paths:
       responses:
         "201": { $ref: "#/components/responses/BootstrapCreated" }
         "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
   /api/v1/auth/local/password:
     put:
       <<: *authenticated-write
@@ -830,10 +831,6 @@ components:
       type: apiKey
       in: cookie
       name: __Host-oc_session
-    BootstrapToken:
-      type: http
-      scheme: bearer
-      description: Deployment bootstrap credential; accepted only until bootstrap succeeds.
     WebhookToken:
       type: apiKey
       in: header

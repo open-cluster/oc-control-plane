@@ -24,23 +24,10 @@ func lookup(values map[string]string) func(string) (string, bool) {
 func essentialEnvironment(t *testing.T) map[string]string {
 	t.Helper()
 	return map[string]string{
-		EnvDatabaseDSNFile:    secretFile(t, "postgres://user:password@localhost/opencluster"),
-		EnvBootstrapTokenFile: secretFile(t, strings.Repeat("b", 32)),
-		EnvSealingKeyFile:     secretFile(t, strings.Repeat("k", 32)),
-		EnvModelProvider:      "anthropic", EnvModelName: "model",
+		EnvDatabaseDSNFile: secretFile(t, "postgres://user:password@localhost/opencluster"),
+		EnvSealingKeyFile:  secretFile(t, strings.Repeat("k", 32)),
+		EnvModelProvider:   "anthropic", EnvModelName: "model",
 		EnvModelKeyFile: secretFile(t, "model-key"),
-	}
-}
-
-func TestLoadWithoutBootstrapCredential(t *testing.T) {
-	values := essentialEnvironment(t)
-	delete(values, EnvBootstrapTokenFile)
-	cfg, err := Load(lookup(values))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cfg.BootstrapTokenDigest) != 0 {
-		t.Fatal("bootstrap was enabled without a credential")
 	}
 }
 

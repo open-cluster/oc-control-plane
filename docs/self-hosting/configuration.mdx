@@ -6,8 +6,8 @@ description: "Configure startup settings, direct or file secrets, and configurat
 OpenCluster uses safe defaults for server addresses, local authentication, logs,
 telemetry, investigation limits, concurrency, retention, retries, request timeouts, and
 shutdown. A normal installation supplies database and encryption credentials plus its
-public URL. Add AI credentials to enable Investigations. Supply the bootstrap credential
-only for initial setup, then remove it.
+public URL. Add AI credentials to enable Investigations. Keep uninitialized deployments
+private until the first administrator has been created.
 
 OpenCluster resolves configuration in this order:
 
@@ -22,7 +22,6 @@ invalid values, and additional YAML documents stop startup instead of being igno
 
 ```sh
 export OC_DATABASE_DSN_FILE=/run/secrets/postgres_dsn
-export OC_BOOTSTRAP_TOKEN_FILE=/run/secrets/bootstrap_token
 export OC_ENCRYPTION_KEY_FILE=/run/secrets/sealing_key
 export OC_PUBLIC_URL=http://localhost:8081
 export OC_AI_PROVIDER=anthropic
@@ -33,7 +32,7 @@ controlplane
 
 Direct alternatives are the same names without `_FILE`, for example `OC_AI_API_KEY`.
 Use direct values for local development and mounted files for production when practical.
-Never set both forms of one secret. Remove the bootstrap input after initial setup.
+Never set both forms of one secret.
 
 The standalone process does not automatically load `.env`. If using `.env.example`,
 copy it to `.env`, fill in the file paths, and export its values before starting:
@@ -52,7 +51,6 @@ for Compose rather than the standalone `.env.example`.
 | Requirement | When needed |
 | --- | --- |
 | Database DSN and encryption key | A running HTTP service. Retain the encryption key across restarts. Recovery commands need only the database DSN. |
-| Bootstrap token | Initial Organization and Admin creation only. |
 | AI provider, exact model, and API key | Together, to enable Investigations. Without them, the API remains available and Investigation requests report unavailability. |
 | OIDC issuer, client ID, and client secret | Together, when using OIDC. Local authentication remains available. |
 | GitHub App ID and private key | Together, when using GitHub App installation. |
@@ -77,6 +75,23 @@ A separately installed frontend may listen on `http://localhost:8080`. Set that 
 public origin only after verifying its same-origin proxy to backend `8081` for `/api/`
 (including SSE, authentication, and callbacks) and `/webhooks/`. This repository does
 not supply that frontend or proxy. Without it, access the backend directly on `8081`.
+
+## Initial signup
+
+Open `/setup` in a compatible frontend over a trusted private connection. For a standalone
+process, bind `OC_SERVER_ADDRESS` to `127.0.0.1:8081` and set `OC_PUBLIC_URL` to the
+frontend's local origin. The frontend must proxy `/api/` on that same origin without
+rewriting Origin or cookie attributes.
+
+A fresh or reset database allows the first caller to create an Admin. No setup flag or
+administrator bootstrap token protects this endpoint. Keep the API inaccessible to
+untrusted callers, including reverse proxies and other workloads, until signup completes.
+Existing Organization or User records prevent another initial signup.
+
+When upgrading, remove retired administrator bootstrap-token inputs and
+`security.bootstrapTokenFile` from old configuration. Environment token inputs are ignored,
+but the removed YAML field is rejected by strict parsing. Retain the database and encryption
+key. Existing identities and sessions remain valid.
 
 ## Configuration file
 
@@ -118,10 +133,9 @@ github:
   privateKeyFile: /run/secrets/github_private_key
 security:
   encryptionKeyFile: /run/secrets/encryption_key
-  bootstrapTokenFile: /run/secrets/bootstrap_token
 ```
 
-Omit optional sections that the deployment does not use. Values are strings except
+Omit optional sections that the deployment does not use. Other values are strings except
 `relay.spkiPins` (an array), `ai.maxOutputTokens`,
 `investigations.workers`, and `investigations.maxPendingPerOrganization` (integers).
 `session.lifetime` is a Go duration such as `12h`.
@@ -226,7 +240,6 @@ and training terms before production use.
 | `OC_PUBLIC_URL` | Browser and webhook origin. Default `http://localhost:8081`. |
 | `OC_DATABASE_DSN` / `OC_DATABASE_DSN_FILE` | PostgreSQL DSN file. Direct value or file. Do not set both. |
 | `OC_SESSION_LIFETIME_SECONDS` | Browser session lifetime in seconds. Default `43200`, range `300`–`2592000`. |
-| `OC_BOOTSTRAP_TOKEN` / `OC_BOOTSTRAP_TOKEN_FILE` | Optional one-time first-User bootstrap token file. Omit after setup to disable initialization. Direct value or file. Do not set both. |
 | `OC_OIDC_ISSUER` | HTTPS OIDC issuer. |
 | `OC_OIDC_CLIENT_ID` | OIDC client ID. |
 | `OC_OIDC_CLIENT_SECRET` / `OC_OIDC_CLIENT_SECRET_FILE` | OIDC client-secret file. Direct value or file. Do not set both. |

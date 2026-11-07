@@ -57,6 +57,9 @@ func TestComposePublishesOnlyTheControlPlaneAPI(t *testing.T) {
 	if len(configuration.Services["postgres"].Ports) != 0 {
 		t.Error("PostgreSQL must not publish a host port")
 	}
+	if strings.Contains(string(output), "BOOTSTRAP_TOKEN") {
+		t.Fatal("Compose must not require an administrator bootstrap credential")
+	}
 }
 
 func TestHelmRequiresAnExplicitPublicOrigin(t *testing.T) {
@@ -80,5 +83,8 @@ func TestHelmRequiresAnExplicitPublicOrigin(t *testing.T) {
 		if !strings.Contains(string(output), expected) {
 			t.Errorf("rendered deployment is missing %q", expected)
 		}
+	}
+	if !strings.Contains(string(output), "httpGet:") {
+		t.Fatal("Helm must retain HTTP readiness and liveness probes")
 	}
 }
