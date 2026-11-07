@@ -15,19 +15,21 @@ You need Kubernetes, Helm 3, a reachable PostgreSQL database, outbound HTTPS acc
 the selected model provider, and two Secrets:
 
 - `opencluster-database` with key `postgres-dsn`.
-- `opencluster-credentials` with keys `bootstrap-token`, `sealing-key`, and `model-key`.
+- `opencluster-credentials` with keys `sealing-key` and `model-key`.
 
-The shipped chart names these Secret keys `bootstrap-token` and `sealing-key`. They supply
-the administrator bootstrap token and 32-byte credential-encryption key respectively.
-The bootstrap token must be at least 32 characters and the encryption key exactly 32 bytes.
-Do not put their values in Helm values or command history.
+The encryption key must be exactly 32 bytes. Do not put credentials in Helm values or
+command history. Initial account signup uses private access rather than an administrator
+token. The chart defaults to setup disabled, including on upgrades.
 
 ## Install
 
-Create a values file with the public URL, released image, model provider, and model:
+For a new installation, create a private setup values file with the released image,
+model provider, and model:
 
-`server.publicURL` is required. Set it to the real public HTTPS origin used for
-sign-in, callbacks, and webhooks. The chart does not default it to a local address.
+`server.publicURL` is required and must match the browser origin. During setup, use a
+separately supplied frontend on workstation loopback with a same-origin `/api/` proxy to
+the port-forwarded backend. The example uses frontend `http://localhost:8080` and backend
+`http://127.0.0.1:8081`. Both must remain private.
 
 ```yaml
 image:
@@ -35,7 +37,9 @@ image:
   tag: VERSION
   pullPolicy: IfNotPresent
 server:
-  publicURL: https://opencluster.example.com
+  publicURL: http://localhost:8080
+setup:
+  enabled: true
 model:
   provider: anthropic
   name: MODEL_ID
@@ -52,6 +56,42 @@ helm upgrade --install opencluster ./deploy/helm/opencluster \
   --namespace opencluster --create-namespace --values values.yaml
 kubectl --namespace opencluster rollout status deployment/opencluster-opencluster
 ```
+
+## Create the first account privately
+
+With `setup.enabled=true`, the single HTTP listener binds to `127.0.0.1` inside the Pod.
+Service and ingress traffic to the Pod IP cannot reach it. The chart rejects NodePort
+and LoadBalancer Services during setup. Readiness and liveness remain enabled as
+localhost exec probes using BusyBox `wget` already present in the supplied image.
+
+Use Kubernetes-authenticated port-forwarding bound only to workstation loopback:
+
+```bash
+kubectl --namespace opencluster port-forward --address 127.0.0.1 deployment/opencluster-opencluster 8081:8081
+```
+
+Keep that connection running, start your compatible local frontend and its `/api/` proxy,
+and open `http://localhost:8080/setup`. Enter Organization name, email, optional display
+name, and password, then select **Create account**. The frontend receives the secure
+session cookie, fetches `GET /api/v1/session`, and opens the dashboard immediately.
+See the [browser signup contract](/api-reference/overview#initial-local-signup-in-a-browser).
+
+Trust Pod sidecars, node access, and Kubernetes principals allowed to exec or port-forward.
+Do not expose a proxy to the Pod's loopback listener publicly. No request header proves
+ownership. The chart does not supply a frontend or a public setup route.
+
+## Disable setup before public access
+
+Change the values file to `setup.enabled: false` and set `server.publicURL` to the final
+HTTPS browser origin. Upgrade the Deployment using the updated file before enabling
+public ingress. This restores the normal HTTP listener and HTTP probes and disables
+signup, even if a new empty database is accidentally attached. Do not retain setup
+enablement in deployment automation.
+
+Configure the public proxy so frontend and API share that origin, preserving Origin and
+cookie attributes. A localhost setup cookie does not transfer to the public hostname;
+use normal sign-in when moving to that hostname. Existing initialized data refuses
+signup even if setup is enabled again.
 
 ## Verify
 
@@ -83,7 +123,11 @@ image or chart tags. See [Feature availability](/feature-availability).
 
 Back up PostgreSQL, disable any autoscaler that could restart old replicas, scale the old
 Deployment to zero, and wait for every old Pod to terminate. Do not use a rolling upgrade
-or run mixed versions against one database. The current ledgered baseline migrates only
+or run mixed versions against one database. Remove obsolete administrator token inputs,
+`credentials.bootstrapTokenKey`, and any `security.bootstrapTokenFile` YAML setting.
+Keep setup disabled and retain the existing database, encryption key, and other credentials.
+Existing accounts and sessions need no signup-specific schema migration or reset. Relay
+credentials are unchanged. The current ledgered baseline migrates only
 when retained user Message attribution agrees with each Conversation source, every
 retained nonempty Investigation question has assigned user Messages, and any nonempty
 Postmortem reviewer is the UUID of an existing User. A failed check rolls back the migration
@@ -107,10 +151,5 @@ missing ingress or TLS routing.
 
 ## Next step
 
-After ingress and TLS routing are verified, follow the
-[bootstrap procedure](/self-hosting/docker-compose#3-create-the-first-user-and-organization).
-Replace `http://localhost:8081` with your public HTTPS origin in both request URLs and
-the Origin header. Set `OPENCLUSTER_BOOTSTRAP_TOKEN_FILE` to a protected local file
-containing the same bootstrap token supplied by your Helm Secret. Create the private
-`.secrets` directory before saving header and cookie files. Then
+After private signup, setup disablement, and public routing verification,
 [connect a source](/integrations/overview) and ask a question.

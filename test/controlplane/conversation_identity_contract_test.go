@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -19,8 +18,7 @@ func TestWebConversationExposesTrustedSourceAndUserAttribution(t *testing.T) {
 	address := freeAddress(t)
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = address
-		digest := sha256.Sum256([]byte(surfaceToken))
-		cfg.BootstrapTokenDigest = digest[:]
+		cfg.SetupEnabled = true
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "openrouter", "z-ai/glm-4.7", "scripted-model-key"
 	}, app.Options{Completer: concludingModel{}})
 	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
@@ -102,8 +100,7 @@ func TestConversationAIAdmissionRequiresAnAgentBeforeDurableMutation(t *testing.
 	var dsn string
 	controlPlane := startControlPlane(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = apiAddress
-		digest := sha256.Sum256([]byte(surfaceToken))
-		cfg.BootstrapTokenDigest = digest[:]
+		cfg.SetupEnabled = true
 		dsn = cfg.DatabaseDSN
 	})
 	plane := &integrationPlane{controlPlane: controlPlane, api: apiAddress}

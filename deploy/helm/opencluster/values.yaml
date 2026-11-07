@@ -11,9 +11,12 @@ database:
 
 credentials:
   existingSecret: opencluster-credentials
-  bootstrapTokenKey: bootstrap-token
   sealingKey: sealing-key
   modelKey: model-key
+
+setup:
+  # Enable only for private, loopback-only port-forwarded initial signup.
+  enabled: false
 
 server:
   # Required: the actual public HTTPS origin served by your deployment.

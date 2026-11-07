@@ -3,7 +3,6 @@ package controlplane
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
@@ -239,7 +238,7 @@ func startControlPlane(t *testing.T, adjust func(*config.Config)) *controlPlane 
 }
 
 func startControlPlaneRunning(
-	t *testing.T, adjust func(*config.Config), options app.Options,
+	t *testing.T, adjust func(*config.Config), options app.Options, initialize ...bool,
 ) *controlPlane {
 	t.Helper()
 	if testing.Short() {
@@ -297,16 +296,15 @@ func startControlPlaneRunning(
 		database: gate,
 	}
 	t.Cleanup(plane.shutdown)
-	surfaceDigest := sha256.Sum256([]byte(surfaceToken))
-	if bytes.Equal(cfg.BootstrapTokenDigest, surfaceDigest[:]) {
-		plane.bootstrapAdmin(t, surfaceOrg, surfaceToken,
+	if cfg.SetupEnabled && (len(initialize) == 0 || initialize[0]) {
+		plane.bootstrapAdmin(t, surfaceOrg,
 			cfg.PublicURL, cfg.DatabaseDSN)
 	}
 	return plane
 }
 
 func (c *controlPlane) bootstrapAdmin(
-	t *testing.T, organization, token, origin, dsn string,
+	t *testing.T, organization, origin, dsn string,
 ) {
 	t.Helper()
 	body, err := json.Marshal(map[string]string{
@@ -322,7 +320,6 @@ func (c *controlPlane) bootstrapAdmin(
 	if err != nil {
 		t.Fatalf("build bootstrap request: %v", err)
 	}
-	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Origin", origin)
 	response, err := http.DefaultClient.Do(request)

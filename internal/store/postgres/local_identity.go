@@ -42,11 +42,13 @@ func (p *Database) BootstrapLocalUser(
 	if _, err = transaction.Exec(ctx, `LOCK TABLE app_user IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 		return User{}, session.Session{}, fmt.Errorf("locking local bootstrap: %w", err)
 	}
-	var users int
-	if err = transaction.QueryRow(ctx, `SELECT count(*) FROM app_user`).Scan(&users); err != nil {
+	// Organizations survive account removal, so deleting a User cannot reopen signup.
+	var initialized bool
+	if err = transaction.QueryRow(ctx, `SELECT
+		EXISTS (SELECT 1 FROM app_user) OR EXISTS (SELECT 1 FROM organization)`).Scan(&initialized); err != nil {
 		return User{}, session.Session{}, fmt.Errorf("checking local bootstrap: %w", err)
 	}
-	if users != 0 {
+	if initialized {
 		return User{}, session.Session{}, ErrLocalBootstrapComplete
 	}
 	normalized := strings.ToLower(strings.TrimSpace(email))

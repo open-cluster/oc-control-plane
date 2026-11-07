@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -131,8 +130,7 @@ func startSlackPlaneWithOptions(
 	options.SlackAPIURL = vendor.URL
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = apiAddress
-		digest := sha256.Sum256([]byte(surfaceToken))
-		cfg.BootstrapTokenDigest = digest[:]
+		cfg.SetupEnabled = true
 		dsn = cfg.DatabaseDSN
 	}, options)
 	return &integrationPlane{controlPlane: plane, api: apiAddress, dsn: dsn}
@@ -413,12 +411,11 @@ func TestRunRefusesACredentialCatalogWithoutASealingKey(t *testing.T) {
 		t.Skip("integration test: requires a Docker daemon")
 	}
 
-	digest := sha256.Sum256([]byte(surfaceToken))
 	cfg := config.Config{
-		DatabaseDSN:          freshDatabase(t),
-		HTTPListenAddress:    freeAddress(t),
-		BootstrapTokenDigest: digest[:],
-		SealingKey:           nil,
+		DatabaseDSN:       freshDatabase(t),
+		HTTPListenAddress: freeAddress(t),
+		SetupEnabled:      true,
+		SealingKey:        nil,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

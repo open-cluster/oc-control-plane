@@ -46,8 +46,7 @@ func startSlackEventPlaneWithOptions(
 	options.SlackAPIURL = vendor.URL
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = apiAddress
-		digest := sha256.Sum256([]byte(surfaceToken))
-		cfg.BootstrapTokenDigest = digest[:]
+		cfg.SetupEnabled = true
 		cfg.SlackClientID = "4444.5555"
 		cfg.SlackClientSecret = "the-slack-client-secret"
 		cfg.SlackSigningSecret = slackSigningSecret

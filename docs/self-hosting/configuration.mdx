@@ -6,8 +6,8 @@ description: "Configure startup settings, direct or file secrets, and configurat
 OpenCluster uses safe defaults for server addresses, local authentication, logs,
 telemetry, investigation limits, concurrency, retention, retries, request timeouts, and
 shutdown. A normal installation supplies database and encryption credentials plus its
-public URL. Add AI credentials to enable Investigations. Supply the bootstrap credential
-only for initial setup, then remove it.
+public URL. Add AI credentials to enable Investigations. Enable initial signup only over
+trusted private access, then disable setup before configuring public access.
 
 OpenCluster resolves configuration in this order:
 
@@ -22,7 +22,6 @@ invalid values, and additional YAML documents stop startup instead of being igno
 
 ```sh
 export OC_DATABASE_DSN_FILE=/run/secrets/postgres_dsn
-export OC_BOOTSTRAP_TOKEN_FILE=/run/secrets/bootstrap_token
 export OC_ENCRYPTION_KEY_FILE=/run/secrets/sealing_key
 export OC_PUBLIC_URL=http://localhost:8081
 export OC_AI_PROVIDER=anthropic
@@ -33,7 +32,7 @@ controlplane
 
 Direct alternatives are the same names without `_FILE`, for example `OC_AI_API_KEY`.
 Use direct values for local development and mounted files for production when practical.
-Never set both forms of one secret. Remove the bootstrap input after initial setup.
+Never set both forms of one secret.
 
 The standalone process does not automatically load `.env`. If using `.env.example`,
 copy it to `.env`, fill in the file paths, and export its values before starting:
@@ -52,7 +51,7 @@ for Compose rather than the standalone `.env.example`.
 | Requirement | When needed |
 | --- | --- |
 | Database DSN and encryption key | A running HTTP service. Retain the encryption key across restarts. Recovery commands need only the database DSN. |
-| Bootstrap token | Initial Organization and Admin creation only. |
+| Private setup access | Enable `OC_SETUP_ENABLED=true` only for initial `/setup` over verified private access. Default `false`; disable before public access. |
 | AI provider, exact model, and API key | Together, to enable Investigations. Without them, the API remains available and Investigation requests report unavailability. |
 | OIDC issuer, client ID, and client secret | Together, when using OIDC. Local authentication remains available. |
 | GitHub App ID and private key | Together, when using GitHub App installation. |
@@ -77,6 +76,26 @@ A separately installed frontend may listen on `http://localhost:8080`. Set that 
 public origin only after verifying its same-origin proxy to backend `8081` for `/api/`
 (including SSE, authentication, and callbacks) and `/webhooks/`. This repository does
 not supply that frontend or proxy. Without it, access the backend directly on `8081`.
+
+## Private initial signup
+
+Use `/setup` in a compatible frontend only over the deployment owner's trusted private
+connection. For a standalone process, bind `OC_SERVER_ADDRESS` to `127.0.0.1:8081`, set
+`OC_PUBLIC_URL` to the frontend's actual local origin, and enable `OC_SETUP_ENABLED` only
+for that private setup deployment. The frontend must proxy `/api/` to the backend on
+the same browser origin and preserve Origin and cookie attributes. Do not publicly forward
+either listener during setup. The setting enables signup; it cannot verify your network isolation.
+
+After signup, set `OC_SETUP_ENABLED=false` and restart before enabling public access.
+An initialized database independently prevents another initial account. Keeping setup
+disabled also protects an accidentally replaced empty database. Use the dedicated
+[Compose](/self-hosting/docker-compose) override or [Helm](/self-hosting/helm) setup mode
+for those deployment types.
+
+When upgrading, remove the retired administrator bootstrap-token environment inputs and
+`security.bootstrapTokenFile` from old configuration. The environment inputs are no longer
+consumed; the removed YAML field is rejected by strict parsing. Retain the database and
+encryption key and keep setup disabled. Existing identities and sessions are retained.
 
 ## Configuration file
 
@@ -118,10 +137,11 @@ github:
   privateKeyFile: /run/secrets/github_private_key
 security:
   encryptionKeyFile: /run/secrets/encryption_key
-  bootstrapTokenFile: /run/secrets/bootstrap_token
+  setupEnabled: false
 ```
 
-Omit optional sections that the deployment does not use. Values are strings except
+Omit optional sections that the deployment does not use. `security.setupEnabled` is a boolean.
+Other values are strings except
 `relay.spkiPins` (an array), `ai.maxOutputTokens`,
 `investigations.workers`, and `investigations.maxPendingPerOrganization` (integers).
 `session.lifetime` is a Go duration such as `12h`.
@@ -226,7 +246,7 @@ and training terms before production use.
 | `OC_PUBLIC_URL` | Browser and webhook origin. Default `http://localhost:8081`. |
 | `OC_DATABASE_DSN` / `OC_DATABASE_DSN_FILE` | PostgreSQL DSN file. Direct value or file. Do not set both. |
 | `OC_SESSION_LIFETIME_SECONDS` | Browser session lifetime in seconds. Default `43200`, range `300`–`2592000`. |
-| `OC_BOOTSTRAP_TOKEN` / `OC_BOOTSTRAP_TOKEN_FILE` | Optional one-time first-User bootstrap token file. Omit after setup to disable initialization. Direct value or file. Do not set both. |
+| `OC_SETUP_ENABLED` | Initial local signup gate. Default `false`. Enable only with verified private access; disable before public access, including when the database might be recreated. |
 | `OC_OIDC_ISSUER` | HTTPS OIDC issuer. |
 | `OC_OIDC_CLIENT_ID` | OIDC client ID. |
 | `OC_OIDC_CLIENT_SECRET` / `OC_OIDC_CLIENT_SECRET_FILE` | OIDC client-secret file. Direct value or file. Do not set both. |

@@ -20,8 +20,6 @@ import (
 func TestApplicationAPI(t *testing.T) {
 	const organization = surfaceOrg
 
-	const bootstrapToken = surfaceToken
-
 	apiAddress := freeAddress(t)
 	relayAddress := freeAddress(t)
 	var databaseDSN string
@@ -29,8 +27,7 @@ func TestApplicationAPI(t *testing.T) {
 		cfg.RelayListenAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
 		cfg.HTTPListenAddress = apiAddress
-		digest := sha256.Sum256([]byte(bootstrapToken))
-		cfg.BootstrapTokenDigest = digest[:]
+		cfg.SetupEnabled = true
 		databaseDSN = cfg.DatabaseDSN
 	})
 	token := plane.sessionCookie
@@ -189,15 +186,14 @@ func TestApplicationAPI(t *testing.T) {
 
 	t.Run("the token reaches no log line", func(t *testing.T) {
 		if strings.Contains(plane.logs.String(), token) {
-			t.Error("the bootstrap token appears in the logs")
+			t.Error("the session credential appears in the logs")
 		}
 	})
 }
 
 func TestRequestCannotSelectAnotherOrganization(t *testing.T) {
 	plane := startControlPlane(t, func(cfg *config.Config) {
-		digest := sha256.Sum256([]byte(surfaceToken))
-		cfg.BootstrapTokenDigest = digest[:]
+		cfg.SetupEnabled = true
 	})
 	call := func(t *testing.T, method, path, body string, mutate func(*http.Request)) int {
 		t.Helper()
@@ -234,50 +230,6 @@ func TestRequestCannotSelectAnotherOrganization(t *testing.T) {
 	}); status != http.StatusBadRequest {
 		t.Errorf("Organization body was accepted: status %d", status)
 	}
-}
-
-func TestBootstrapTokenComesFromAFile(t *testing.T) {
-	t.Parallel()
-
-	address := "127.0.0.1:8081"
-
-	t.Run("omitting the token disables bootstrap", func(t *testing.T) {
-		t.Parallel()
-		cfg, err := config.Load(environment(t, map[string]string{
-			config.EnvHTTPAddress: address,
-		}))
-		if err != nil || len(cfg.BootstrapTokenDigest) != 0 {
-			t.Fatalf("bootstrap retirement failed: %v", err)
-		}
-	})
-
-	t.Run("a token too short to matter is refused", func(t *testing.T) {
-		t.Parallel()
-		_, err := config.Load(environment(t, map[string]string{
-			config.EnvHTTPAddress:        address,
-			config.EnvBootstrapTokenFile: secretFile(t, "token", "short"),
-		}))
-		if err == nil {
-			t.Fatal("a guessable token was accepted")
-		}
-	})
-
-	t.Run("the process keeps the digest and not the token", func(t *testing.T) {
-		t.Parallel()
-		const token = "a-token-long-enough-to-be-worth-something"
-
-		cfg, err := config.Load(environment(t, map[string]string{
-			config.EnvHTTPAddress:        address,
-			config.EnvBootstrapTokenFile: secretFile(t, "token", token),
-		}))
-		if err != nil {
-			t.Fatalf("loading: %v", err)
-		}
-		digest := sha256.Sum256([]byte(token))
-		if string(cfg.BootstrapTokenDigest) != string(digest[:]) {
-			t.Error("the configured digest does not match the token in the file")
-		}
-	})
 }
 
 func environment(t *testing.T, overrides map[string]string) func(string) (string, bool) {

@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -54,8 +53,7 @@ func TestPrivateModelReasoningNeverCrossesTheProviderBoundary(t *testing.T) {
 	var dsn string
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = apiAddress
-		digest := sha256.Sum256([]byte(surfaceToken))
-		cfg.BootstrapTokenDigest = digest[:]
+		cfg.SetupEnabled = true
 		cfg.ModelProvider = "openrouter"
 		cfg.ModelName = "z-ai/glm-4.7"
 		cfg.ModelAPIKey = "test-provider-key"

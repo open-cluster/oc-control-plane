@@ -22,7 +22,6 @@ import (
 )
 
 const (
-	surfaceToken   = "bootstrap-token-for-the-integration-surface"
 	surfaceOrg     = "11111111-1111-4111-8111-111111111111"
 	neighbourOrg   = "22222222-2222-4222-8222-222222222222"
 	alertmanagerAt = "2026-01-02T15:04:05Z"
@@ -54,8 +53,7 @@ func startIntegrationPlaneWithOptions(t *testing.T, options app.Options) *integr
 		cfg.HTTPListenAddress = intakeAddress
 		cfg.RelayListenAddress = relayAddress
 		cfg.RelaySPKIPins = []string{base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))}
-		digest := sha256.Sum256([]byte(surfaceToken))
-		cfg.BootstrapTokenDigest = digest[:]
+		cfg.SetupEnabled = true
 		dsn = cfg.DatabaseDSN
 	}, options)
 
