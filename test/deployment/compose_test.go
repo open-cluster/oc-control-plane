@@ -88,4 +88,3 @@ func TestHelmRequiresAnExplicitPublicOrigin(t *testing.T) {
 		t.Fatal("Helm must retain HTTP readiness and liveness probes")
 	}
 }
-
