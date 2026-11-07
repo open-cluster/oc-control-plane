@@ -87,6 +87,5 @@ func TestHelmRequiresAnExplicitPublicOrigin(t *testing.T) {
 	if !strings.Contains(string(output), "httpGet:") {
 		t.Fatal("Helm must retain HTTP readiness and liveness probes")
 	}
-
 }
 

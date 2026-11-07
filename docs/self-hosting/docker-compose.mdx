@@ -53,8 +53,9 @@ non-root ID such as `1000`.
 ## 2. Start OpenCluster privately
 
 The control-plane API is published at `127.0.0.1:8081`. Keep this listener and any
-frontend proxy inaccessible to untrusted callers until the first Admin exists. Start
-Compose using its single base file:
+frontend proxy inaccessible to untrusted callers until the first Admin exists. For
+the API-only procedure below, use the default `OPENCLUSTER_PUBLIC_URL=http://localhost:8081`.
+Start Compose using its single base file:
 
 ```bash
 docker compose -f deploy/compose/compose.yaml up --build -d
@@ -76,10 +77,10 @@ For the shipped API-only deployment, you can also initialize directly on localho
 
 ```bash
 umask 077
-curl --fail-with-body --request POST http://localhost:8081/api/v1/auth/local/bootstrap \\
-  --header 'Origin: http://localhost:8081' \\
-  --header 'Content-Type: application/json' \\
-  --cookie-jar .secrets/session-cookie \\
+curl --fail-with-body --request POST http://localhost:8081/api/v1/auth/local/bootstrap \
+  --header 'Origin: http://localhost:8081' \
+  --header 'Content-Type: application/json' \
+  --cookie-jar .secrets/session-cookie \
   --data '{"organizationName":"Platform Team","email":"admin@example.com","password":"<STRONG_PASSWORD>"}'
 curl --fail --cookie .secrets/session-cookie http://localhost:8081/api/v1/session
 ```

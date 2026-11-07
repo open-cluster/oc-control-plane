@@ -26,10 +26,9 @@ token. The first caller to reach an empty installation can claim its Admin accou
 For a new installation, create a values file with the released image, model provider,
 and model. Keep the deployment inaccessible to untrusted workloads until signup:
 
-`server.publicURL` is required and must match the browser origin. During setup, use a
-separately supplied frontend on workstation loopback with a same-origin `/api/` proxy to
-the port-forwarded backend. The example uses frontend `http://localhost:8080` and backend
-`http://127.0.0.1:8081`. Both must remain private.
+`server.publicURL` must match the browser-facing origin. This API-only example uses a
+private port-forward at `http://localhost:8081`. If using a separate local frontend,
+configure its same-origin API proxy and set this URL to the frontend origin instead.
 
 ```yaml
 image:
@@ -37,7 +36,7 @@ image:
   tag: VERSION
   pullPolicy: IfNotPresent
 server:
-  publicURL: http://localhost:8080
+  publicURL: http://localhost:8081
 model:
   provider: anthropic
   name: MODEL_ID
@@ -68,14 +67,12 @@ Use Kubernetes-authenticated port-forwarding bound to workstation loopback:
 kubectl --namespace opencluster port-forward --address 127.0.0.1 deployment/opencluster-opencluster 8081:8081
 ```
 
-With a compatible frontend and private same-origin `/api/` proxy, open
-`http://localhost:8080/setup` and create the initial Admin. This repository does
-not supply that frontend. The existing bootstrap API also supports a localhost
-request as documented in [Compose](/self-hosting/docker-compose#3-create-the-first-user-and-organization).
-
-Bootstrap creates the Organization, password, Membership, audit record, and secure
-session atomically. The frontend can call `GET /api/v1/session` immediately. No setup
-flag, token, additional login, or separate setup endpoint is required.
+Submit the initial account to `POST http://localhost:8081/api/v1/auth/local/bootstrap`
+with `Origin: http://localhost:8081`, using the API-only example in
+[Compose](/self-hosting/docker-compose#3-create-the-first-user-and-organization).
+With a compatible local frontend, use its private `/setup` form and same-origin proxy
+instead. The backend creates the Organization, password, Membership, audit record,
+and session atomically. No setup token, flag, or additional sign-in is required.
 
 ## Publish after initialization
 
