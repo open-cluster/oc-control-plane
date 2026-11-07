@@ -49,7 +49,7 @@ The first caller who reaches an empty deployment can create the Admin. Protect t
 backend from untrusted network access until that Admin exists. An Origin header, Host
 header, forwarded address, or localhost-looking request is not proof of ownership.
 
-Compose publishes the API on host loopback. Use a patched Docker Engine with standard
+Compose publishes the API on host loopback. Use a patched Docker Engine 28.0.0 or newer with standard
 bridge networking and no remote direct routing or public proxy forwarding during setup.
 Trust local host processes and containers on that Docker network. Helm uses a ClusterIP
 Service by default, which is **not** isolation from other Pods. Apply appropriate network

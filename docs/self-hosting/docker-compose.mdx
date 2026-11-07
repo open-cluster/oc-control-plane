@@ -11,7 +11,9 @@ a browser console. Visiting `/` returns `404`.
 
 You need Git, Docker Compose, curl, OpenSSL, port `8081`, and outbound HTTPS access to Anthropic or OpenRouter. Have a provider API key and a Tool-calling model identifier ready. The commands below use a POSIX shell. The repository does not publish qualified minimum hardware requirements.
 
-Use a patched Docker Engine with localhost-port isolation. During initial signup,
+Use a patched Docker Engine 28.0.0 or newer for the
+[localhost-port isolation fixes](https://docs.docker.com/engine/network/port-publishing/#publishing-ports).
+During initial signup,
 keep the backend private from other hosts, untrusted containers, and public proxies.
 A fresh or reset database allows its first caller to claim the administrator account.
 

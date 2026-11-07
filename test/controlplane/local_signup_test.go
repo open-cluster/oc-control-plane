@@ -182,7 +182,7 @@ func TestLocalSignupAuditFailureRollsBackAndCanBeRetried(t *testing.T) {
 	restarted := startIdentityPlane(t, func(cfg *config.Config) { cfg.DatabaseDSN = plane.dsn })
 	again := restarted.call(t, http.MethodPost, "http://"+restarted.api+"/api/v1/auth/local/bootstrap", json.RawMessage(signupBody))
 	if again.status != http.StatusConflict || len(again.cookies) != 0 {
-		t.Fatalf("signup after restart with setup enabled = %d: %s", again.status, again.body)
+		t.Fatalf("signup after restart = %d: %s", again.status, again.body)
 	}
 }
 
