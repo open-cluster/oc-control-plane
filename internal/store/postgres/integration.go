@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -279,8 +280,19 @@ func (p *Database) ReviseIntegration(
 		func(ctx context.Context, transaction pgx.Tx) (
 			integrations.Integration, audit.Target, audit.Detail, error,
 		) {
+			integration, err := scanIntegration(transaction.QueryRow(ctx,
+				`SELECT `+integrationColumns+` FROM integration WHERE integration_id = $1 AND org_id = $2 FOR UPDATE`, id, organization), organization.String())
+			if errors.Is(err, pgx.ErrNoRows) {
+				return integrations.Integration{}, audit.Target{}, nil, integrations.ErrUnknown
+			}
+			if err != nil {
+				return integrations.Integration{}, audit.Target{}, nil, err
+			}
+			configurationChanged := revision.Configuration != nil && !reflect.DeepEqual(integration.Configuration, revision.Configuration)
+			if configurationChanged && len(integration.CredentialSealed) > 0 {
+				return integrations.Integration{}, audit.Target{}, nil, integrations.ErrCredentialRequired
+			}
 			var configuration []byte
-			var err error
 			if revision.Configuration != nil {
 				configuration, err = json.Marshal(revision.Configuration)
 				if err != nil {
@@ -291,10 +303,13 @@ func (p *Database) ReviseIntegration(
 			row := transaction.QueryRow(ctx, `
 				UPDATE integration
 				   SET name          = coalesce($3, name),
-				       configuration = coalesce($4, configuration)
+				       configuration = coalesce($4, configuration),
+				       verification_status = CASE WHEN $5 THEN NULL ELSE verification_status END,
+				       verified_at = CASE WHEN $5 THEN NULL ELSE verified_at END,
+				       verification_grants = CASE WHEN $5 THEN '{}'::text[] ELSE verification_grants END
 				 WHERE integration_id = $1 AND org_id = $2
 				RETURNING `+integrationColumns,
-				id, organization, revision.Name, configuration)
+				id, organization, revision.Name, configuration, configurationChanged)
 
 			revised, err := scanIntegration(row, organization.String())
 			switch {
@@ -456,6 +471,9 @@ func (p *Database) ReplaceIntegrationCredential(
 						fmt.Errorf("encoding configuration: %w", err)
 				}
 			}
+			if err := checkIntegrationSnapshot(ctx, transaction, organization, id, verification.ExpectedIntegration); err != nil {
+				return integrations.Integration{}, audit.Target{}, nil, err
+			}
 			grants := verificationGrants(verification)
 			row := transaction.QueryRow(ctx, `
 				UPDATE integration
@@ -467,7 +485,6 @@ func (p *Database) ReplaceIntegrationCredential(
 				       verification_grants = $7
 				 WHERE integration_id = $1
 				   AND org_id = $2
-				   AND credential_sealed IS NOT NULL
 				RETURNING `+integrationColumns,
 				id, organization, revision.Name, configuration, sealed,
 				verification.Status.String(), grants)
@@ -503,6 +520,9 @@ func (p *Database) RecordIntegrationVerification(
 		func(ctx context.Context, transaction pgx.Tx) (
 			integrations.Integration, audit.Target, audit.Detail, error,
 		) {
+			if err := checkIntegrationSnapshot(ctx, transaction, organization, id, verification.ExpectedIntegration); err != nil {
+				return integrations.Integration{}, audit.Target{}, nil, err
+			}
 			grants := verificationGrants(verification)
 			row := transaction.QueryRow(ctx, `
 				UPDATE integration

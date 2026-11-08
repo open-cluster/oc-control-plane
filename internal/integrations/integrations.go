@@ -38,9 +38,10 @@ type Field struct {
 }
 
 type Verification struct {
-	Status Status
-	Note   string
-	Grants []string
+	ExpectedIntegration *Integration
+	Status              Status
+	Note                string
+	Grants              []string
 }
 type VerifyInput struct {
 	Integration          Integration

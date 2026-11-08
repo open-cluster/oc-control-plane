@@ -469,6 +469,15 @@ limitation. It does not substitute another run or claim fresh verification.
 
 ## Interpret integration availability
 
+Renaming an Integration does not require a new credential. Replacing its configuration
+changes the complete configuration. If it holds a credential, changed settings require
+an explicitly supplied replacement, checked before saving. A rejected update preserves
+the previous settings and credential. Access changes without a credential clear the old
+verification and grants; test the connection again.
+
+An update or verification can return `409` if access settings changed while its provider
+check was running. Reload the Integration before retrying.
+
 `status` and `verifiedAt` describe a recorded check. `toolAvailability` combines that check, recorded grants, and the disabled flag. Provider access or Relay connectivity can change afterward.
 
 Kubernetes verification records advertised Relay capabilities. A partial set can still return `verified`, including when no query operation is available. It does not test Kubernetes RBAC. GitHub verification checks installation and repository access, not every operation's permissions. An installation with no selected repositories can still verify.

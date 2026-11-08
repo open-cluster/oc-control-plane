@@ -284,6 +284,7 @@ func (h Handlers) reconnect(
 	verification := definition.Probe(ctx, ProbeInput{
 		Integration: existing, Credential: bound.Credential,
 	})
+	verification.ExpectedIntegration = &existing
 	if verification.Status == StatusFailed {
 		h.Logger.WarnContext(ctx, "a reconnected integration did not verify",
 			slog.String("org_id", organization.String()),

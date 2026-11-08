@@ -481,6 +481,7 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
       operationId: updateIntegration
       summary: Update integration
+      description: Name-only changes retain credentials. Changed credential-use settings require an explicitly supplied replacement credential, verified before saving. Configuration changes without a credential invalidate prior verification. Concurrent access changes can return 409; reload before retrying.
       tags:
         - Integrations
       requestBody:
@@ -560,6 +561,7 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
       operationId: verifyIntegration
       summary: Verify integration
+      description: Checks the current access settings. Returns 409 if those settings change before the result can be saved.
       tags:
         - Integrations
   /api/v1/integrations/{integration}/rotate-webhook-secret:
