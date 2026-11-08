@@ -35,7 +35,7 @@ The current self-hosted deployment uses an advanced API-only browser procedure u
 
 For an existing installation, pass its `providerInstallationId` as a query parameter when starting Connect. Obtain it from authorized Integration detail or GitHub installation settings. This starts fresh user authorization without reinstalling the app.
 
-Personal installations require the owning GitHub user. Organization installations require an active organization owner; repository collaborators cannot bind installation-wide access. No extra Members permission is requested.
+Personal installations require the owning GitHub user. Organization installations require proof of active organization ownership; repository collaborators cannot bind installation-wide access. If GitHub does not return that proof, OpenCluster refuses the connection.
 
 Use GitHub's installation settings to change the repository selection. Repeating setup for the same installation in the same Organization refreshes the Integration.
 
