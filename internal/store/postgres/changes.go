@@ -34,7 +34,8 @@ func (p *Database) OpenInventoryScopes(
 			   AND relay_id = $2
 			   -- 2 is the kubernetes integration type, the one kind a Relay watches.
 			   AND provider = 'kubernetes'
-			   AND NOT disabled
+			   AND NOT disconnected
+			 FOR SHARE
 		)
 		INSERT INTO change_scope
 			(integration_id, org_id, requested_interval_seconds, updated_at)
@@ -94,7 +95,7 @@ func (p *Database) RecordInventoryDelta(
 		 WHERE integration_id = $1
 		   AND org_id = $2
 		   AND relay_id = $3
-		   AND NOT disabled`,
+		   AND NOT disconnected FOR SHARE`,
 		delta.IntegrationID, organization, registrationID).Scan(&served)
 	if err == pgx.ErrNoRows {
 		return changes.Recorded{Refused: true}, nil

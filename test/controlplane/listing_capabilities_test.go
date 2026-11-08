@@ -23,8 +23,8 @@ func TestIntegrationListingAppliesDocumentedCapabilities(t *testing.T) {
 	if status != http.StatusCreated {
 		t.Fatalf("creating relay integration = %d: %s", status, body)
 	}
-	status, body = plane.call(t, http.MethodPost,
-		base+"/integrations/"+zulu.Integration.ID+"/disable", nil)
+	status, body = plane.call(t, http.MethodDelete,
+		base+"/integrations/"+zulu.Integration.ID, nil)
 	if status != http.StatusNoContent {
 		t.Fatalf("disabling integration = %d: %s", status, body)
 	}
@@ -53,9 +53,10 @@ func TestIntegrationListingAppliesDocumentedCapabilities(t *testing.T) {
 	if len(bound) != 1 || bound[0].RelayID != plane.relay.registration.String() {
 		t.Errorf("relay filter returned %+v", bound)
 	}
-	disabled := list("?disabled=true")
-	if len(disabled) != 1 || disabled[0].ID != zulu.Integration.ID {
-		t.Errorf("disabled filter returned %+v", disabled)
+	for _, integration := range list("") {
+		if integration.ID == zulu.Integration.ID {
+			t.Fatal("disconnected integration remained installed")
+		}
 	}
 
 	ascending := list("?sort=createdAt")

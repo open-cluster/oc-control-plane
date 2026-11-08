@@ -112,7 +112,7 @@ func (h *receiver) handleSlackEvents(writer http.ResponseWriter, request *http.R
 	}
 
 	switch {
-	case integration.Disabled:
+	case integration.Disconnected:
 		h.counters.countRequest(ctx, surfaceSlack, resultAccepted)
 		writeStatus(writer, http.StatusOK, "ignored")
 		return

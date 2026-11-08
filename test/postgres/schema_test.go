@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
@@ -25,6 +26,18 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 	org, conversationID, investigationID := uuid.New(), uuid.New(), uuid.New()
 	if _, err := connection.Exec(ctx, `INSERT INTO organization(org_id, display_name, created_by)
 		VALUES ($1, 'Organization', 'test')`, org); err != nil {
+		t.Fatal(err)
+	}
+	pausedIntegrationID, activeIntegrationID := uuid.New(), uuid.New()
+	if _, err := connection.Exec(ctx, `INSERT INTO integration
+		(integration_id, org_id, provider, name, disabled, credential_sealed, webhook_secret_digest,
+		 verification_status, verified_at, verification_grants)
+		VALUES ($2, $1, 'slack', 'Paused', true, decode('01','hex'), decode(repeat('01',32),'hex'), 'verified', now(), ARRAY['read']),
+		       ($3, $1, 'slack', 'Active', false, decode('01','hex'), decode(repeat('01',32),'hex'), 'verified', now(), ARRAY['read'])`, org, pausedIntegrationID, activeIntegrationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.Exec(ctx, `INSERT INTO integration_installation (org_id, integration_id, provider, installation_key)
+		VALUES ($1, $2, 'slack', ARRAY['paused-workspace']), ($1, $3, 'slack', ARRAY['active-workspace'])`, org, pausedIntegrationID, activeIntegrationID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := connection.Exec(ctx, `INSERT INTO conversation(conversation_id, org_id, surface, subject)
@@ -73,8 +86,17 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 		"0002_simplify_conversation_investigation_contracts",
 		"0003_cleanup_conversation_schema",
 		"0004_tool_run_observation",
+		"0006_disconnect_integrations",
 	}) {
 		t.Fatalf("applied migrations = %v", applied)
+	}
+	pausedIntegration, err := database.Integration(ctx, org, pausedIntegrationID)
+	if err != nil || !pausedIntegration.Disconnected || len(pausedIntegration.CredentialSealed) != 0 || len(pausedIntegration.WebhookSecretDigest) != 0 || pausedIntegration.Status != "" || !pausedIntegration.VerifiedAt.IsZero() || len(pausedIntegration.VerificationGrants) != 0 || pausedIntegration.Installation != nil {
+		t.Fatalf("paused integration conversion = %+v: %v", pausedIntegration, err)
+	}
+	activeIntegration, err := database.Integration(ctx, org, activeIntegrationID)
+	if err != nil || activeIntegration.Disconnected || len(activeIntegration.CredentialSealed) == 0 || len(activeIntegration.WebhookSecretDigest) == 0 || activeIntegration.Status != integrations.StatusVerified || activeIntegration.VerifiedAt.IsZero() || len(activeIntegration.VerificationGrants) != 1 || activeIntegration.Installation == nil {
+		t.Fatalf("active integration changed = %+v: %v", activeIntegration, err)
 	}
 
 	var source string
@@ -304,6 +326,7 @@ func TestCleanupMigrationValidatesAndConvertsPostmortemReviewers(t *testing.T) {
 		"0002_simplify_conversation_investigation_contracts",
 		"0003_cleanup_conversation_schema",
 		"0004_tool_run_observation",
+		"0006_disconnect_integrations",
 	}) {
 		t.Fatalf("repaired reviewer migration applied %v: %v", applied, err)
 	}
@@ -388,6 +411,7 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 		"0002_simplify_conversation_investigation_contracts",
 		"0003_cleanup_conversation_schema",
 		"0004_tool_run_observation",
+		"0006_disconnect_integrations",
 	}) {
 		t.Fatalf("fresh migration applied %v, want every schema migration", applied)
 	}
@@ -452,7 +476,7 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 		`SELECT array_agg(column_name::text ORDER BY ordinal_position) =
 			ARRAY['integration_id','org_id','provider','name','configuration','relay_id',
 			      'credential_sealed','webhook_secret_digest','verification_status','verified_at',
-			      'verification_grants','disabled','created_at']
+			      'verification_grants','disconnected','created_at']
 			FROM information_schema.columns WHERE table_schema='public' AND table_name='integration'`,
 		`SELECT array_agg(column_name::text ORDER BY ordinal_position) =
 			ARRAY['org_id','integration_id','provider','installation_key','provider_actor_id']

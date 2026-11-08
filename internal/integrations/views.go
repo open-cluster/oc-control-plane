@@ -85,7 +85,7 @@ type integrationView struct {
 	Type             string                   `json:"type"`
 	Name             string                   `json:"name"`
 	Status           *string                  `json:"status"`
-	Disabled         bool                     `json:"disabled"`
+	Disconnected     bool                     `json:"disconnected"`
 	Configuration    map[string]any           `json:"configuration"`
 	RelayID          string                   `json:"relayId,omitempty"`
 	Webhook          *webhookView             `json:"webhook,omitempty"`
@@ -118,45 +118,45 @@ type rotatedView struct {
 	Effect        string `json:"effect"`
 }
 
-func (h Handlers) viewOf(found Integration) integrationView {
+func (h Handlers) viewOf(integration Integration) integrationView {
 	typeKey := ""
 	availability := []toolAvailabilityView{}
 	var inbound *inboundAvailabilityView
-	if definition, known := h.Catalog.Lookup(found.Provider); known {
+	if definition, known := h.Catalog.Lookup(integration.Provider); known {
 		typeKey = string(definition.Key)
 		if definition.Inbound != nil {
-			reported := definition.Inbound(found)
+			reported := definition.Inbound(integration)
 			inbound = &inboundAvailabilityView{
 				Available: reported.Available, Reason: reported.Reason,
 			}
 		}
-		for _, one := range ToolAvailabilityFor(definition, found) {
-			availability = append(availability, toolAvailabilityView(one))
+		for _, toolAvailability := range ToolAvailabilityFor(definition, integration) {
+			availability = append(availability, toolAvailabilityView(toolAvailability))
 		}
 	}
 	view := integrationView{
-		ID:               found.ID.String(),
+		ID:               integration.ID.String(),
 		Type:             typeKey,
-		Name:             found.Name,
-		Disabled:         found.Disabled,
-		Configuration:    found.Configuration,
-		CreatedAt:        stamp(found.CreatedAt),
+		Name:             integration.Name,
+		Disconnected:     integration.Disconnected,
+		Configuration:    integration.Configuration,
+		CreatedAt:        stamp(integration.CreatedAt),
 		Inbound:          inbound,
 		ToolAvailability: availability,
 	}
-	if status := found.Status.String(); status != "" {
+	if status := integration.Status.String(); status != "" {
 		view.Status = &status
 	}
-	if found.RelayID != uuid.Nil {
-		view.RelayID = found.RelayID.String()
+	if integration.RelayID != uuid.Nil {
+		view.RelayID = integration.RelayID.String()
 	}
-	if !found.VerifiedAt.IsZero() {
-		view.VerifiedAt = stamp(found.VerifiedAt)
+	if !integration.VerifiedAt.IsZero() {
+		view.VerifiedAt = stamp(integration.VerifiedAt)
 	}
-	if len(found.WebhookSecretDigest) > 0 {
-		view.Webhook = &webhookView{URL: h.webhookURL(found.ID), Configured: true}
+	if len(integration.WebhookSecretDigest) > 0 {
+		view.Webhook = &webhookView{URL: h.webhookURL(integration.ID), Configured: true}
 	}
-	if len(found.CredentialSealed) > 0 {
+	if len(integration.CredentialSealed) > 0 {
 		view.Credential = &credentialView{Configured: true}
 	}
 	return view

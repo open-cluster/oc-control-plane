@@ -20,6 +20,7 @@ import (
 )
 
 type Store interface {
+	Integration(context.Context, uuid.UUID, uuid.UUID) (integrations.Integration, error)
 	InvestigationCandidates(context.Context, uuid.UUID) ([]integrations.Integration, error)
 	TriggerIncident(context.Context, uuid.UUID, uuid.UUID) (investigation.Trigger, error)
 	ConversationBrief(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, int) (investigation.Brief, error)
@@ -501,7 +502,7 @@ func (r *Agent) Run(
 				ordinal := len(state.runs) + 1
 				r.announceToolStarted(ctx, state, call, ordinal)
 				var executeErr error
-				run, executeErr = r.execute(ctx, opened, offered,
+				run, executeErr = r.execute(ctx, organization, opened, offered,
 					state.credentials, origin, call, ordinal)
 				if executeErr != nil {
 					terminalErr := failRun(failureReason(executeErr), state.usage)

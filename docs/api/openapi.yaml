@@ -444,7 +444,6 @@ paths:
         - $ref: '#/components/parameters/IntegrationSort'
         - $ref: '#/components/parameters/IntegrationTypeFilter'
         - $ref: '#/components/parameters/RelayFilter'
-        - $ref: '#/components/parameters/DisabledFilter'
     post:
       security:
         - SessionCookie: []
@@ -520,7 +519,7 @@ paths:
       x-opencluster-idempotency: not-supported
       responses:
         '204':
-          description: Integration deleted.
+          description: Integration permanently disconnected; history retained. Repeated requests are safe.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -528,43 +527,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
       operationId: deleteIntegration
-      summary: Delete integration
-      tags:
-        - Integrations
-  /api/v1/integrations/{integration}/enable:
-    parameters:
-      - $ref: '#/components/parameters/IntegrationID'
-    post:
-      security:
-        - SessionCookie: []
-      x-opencluster-access: privileged
-      x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
-      x-opencluster-idempotency: intrinsic
-      responses:
-        '204':
-          $ref: '#/components/responses/NoContent'
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-      operationId: enableIntegration
-      summary: Enable integration
-      tags:
-        - Integrations
-  /api/v1/integrations/{integration}/disable:
-    parameters:
-      - $ref: '#/components/parameters/IntegrationID'
-    post:
-      security:
-        - SessionCookie: []
-      x-opencluster-access: privileged
-      x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
-      x-opencluster-idempotency: intrinsic
-      responses:
-        '204':
-          $ref: '#/components/responses/NoContent'
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-      operationId: disableIntegration
-      summary: Disable integration
+      summary: Disconnect integration
       tags:
         - Integrations
   /api/v1/integrations/{integration}/verify:
@@ -1418,12 +1381,6 @@ components:
       required: false
       schema:
         $ref: '#/components/schemas/UUID'
-    DisabledFilter:
-      name: disabled
-      in: query
-      required: false
-      schema:
-        type: boolean
     RelayStateFilter:
       name: state
       in: query
@@ -2061,7 +2018,7 @@ components:
         - email
         - displayName
         - role
-        - disabled
+        - disconnected
         - createdAt
       properties:
         userId:
@@ -2080,7 +2037,7 @@ components:
             - admin
             - editor
             - viewer
-        disabled:
+        disconnected:
           type: boolean
         createdAt:
           $ref: '#/components/schemas/Timestamp'
@@ -2403,7 +2360,7 @@ components:
         - type
         - name
         - status
-        - disabled
+        - disconnected
         - configuration
         - toolAvailability
         - createdAt
@@ -2424,7 +2381,7 @@ components:
                 - verified
                 - failed
             - type: 'null'
-        disabled:
+        disconnected:
           type: boolean
         configuration:
           type: object
@@ -2474,7 +2431,7 @@ components:
         - type
         - name
         - status
-        - disabled
+        - disconnected
         - configuration
         - toolAvailability
         - createdAt
@@ -2495,7 +2452,7 @@ components:
                 - verified
                 - failed
             - type: 'null'
-        disabled:
+        disconnected:
           type: boolean
         configuration:
           type: object
@@ -2784,7 +2741,7 @@ components:
         - type
         - name
         - status
-        - disabled
+        - disconnected
       properties:
         id:
           $ref: '#/components/schemas/UUID'
@@ -2803,7 +2760,7 @@ components:
                 - verified
                 - failed
             - type: 'null'
-        disabled:
+        disconnected:
           type: boolean
     RelayIntegrationList:
       type: object

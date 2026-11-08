@@ -42,6 +42,6 @@ OpenCluster records labels, annotations, timing and generator URLs. A new Incide
 ## Troubleshooting
 
 - **No delivery.** Check the receiver route, Alertmanager logs and reachability.
-- **401.** Confirm the Integration is enabled and replace a rotated secret immediately.
+- **401.** Confirm the Integration is not disconnected and replace a rotated secret immediately.
 - **400 or 413.** Check that the version 4 webhook body is intact. Send no more than 2,048 alerts and stay within 1 MiB per request.
 - **503.** Honor `Retry-After` when provided. Review [webhook admission limits](/self-hosting/configuration#webhook-admission-limits) if failures recur.

@@ -160,7 +160,7 @@ type integrationBody struct {
 	Type          string         `json:"type"`
 	Name          string         `json:"name"`
 	Status        string         `json:"status"`
-	Disabled      bool           `json:"disabled"`
+	Disconnected  bool           `json:"disconnected"`
 	Configuration map[string]any `json:"configuration"`
 	RelayID       string         `json:"relayId"`
 	Webhook       *struct {
@@ -442,7 +442,7 @@ func TestIntegrationLifecycle(t *testing.T) {
 		}
 	})
 
-	t.Run("a fresh integration deletes; one with history is refused", func(t *testing.T) {
+	t.Run("disconnect preserves history and refuses future intake", func(t *testing.T) {
 		disposable := plane.createAlertmanager(t, "Created By Mistake")
 		status, body := plane.call(t, http.MethodDelete,
 			base+"/integrations/"+disposable.Integration.ID, nil)
@@ -457,9 +457,31 @@ func TestIntegrationLifecycle(t *testing.T) {
 		}
 		status, body = plane.call(t, http.MethodDelete,
 			base+"/integrations/"+delivered.Integration.ID, nil)
-		if status != http.StatusConflict {
-			t.Errorf("deleting an integration with alertEvents = %d, want 409 — the record of "+
-				"what a source produced must survive: %s", status, body)
+		if status != http.StatusNoContent {
+			t.Fatalf("disconnecting an integration with history = %d, want 204: %s", status, body)
+		}
+		status, body = plane.call(t, http.MethodDelete,
+			base+"/integrations/"+delivered.Integration.ID, nil)
+		if status != http.StatusNoContent {
+			t.Fatalf("repeated disconnect = %d: %s", status, body)
+		}
+		status, body = plane.call(t, http.MethodGet, base+"/integrations/"+delivered.Integration.ID, nil)
+		var retained struct {
+			Disconnected bool `json:"disconnected"`
+		}
+		decodeInto(t, body, &retained)
+		if status != http.StatusOK || !retained.Disconnected {
+			t.Fatalf("retained disconnected integration = %d: %s", status, body)
+		}
+		if status, _ := plane.call(t, http.MethodPost, base+"/integrations/"+delivered.Integration.ID+"/verify", nil); status != http.StatusConflict {
+			t.Fatalf("disconnected verification = %d, want 409", status)
+		}
+		if status, _ := plane.call(t, http.MethodPatch, base+"/integrations/"+delivered.Integration.ID, map[string]any{"name": "revive"}); status != http.StatusConflict {
+			t.Fatalf("disconnected revision = %d, want 409", status)
+		}
+		if status, _ := plane.deliver(t, delivered.Integration.ID, delivered.WebhookSecret,
+			alertmanagerPayload("after-disconnect", "after-disconnect")); status != http.StatusUnauthorized {
+			t.Fatalf("delivery after disconnect = %d, want 401", status)
 		}
 	})
 }
@@ -567,16 +589,16 @@ func TestAlertmanagerDeliveryEndToEnd(t *testing.T) {
 		}
 	})
 
-	t.Run("a disabled integration refuses deliveries", func(t *testing.T) {
+	t.Run("a disconnected integration refuses deliveries", func(t *testing.T) {
 		muted := plane.createAlertmanager(t, "Muted Alertmanager")
-		status, body := plane.call(t, http.MethodPost,
-			base+"/integrations/"+muted.Integration.ID+"/disable", nil)
+		status, body := plane.call(t, http.MethodDelete,
+			base+"/integrations/"+muted.Integration.ID, nil)
 		if status != http.StatusNoContent {
 			t.Fatalf("disabling = %d: %s", status, body)
 		}
 		if status, _ := plane.deliver(t, muted.Integration.ID, muted.WebhookSecret,
 			alertmanagerPayload("finger-4", "group-4")); status != http.StatusUnauthorized {
-			t.Errorf("a delivery to a disabled integration = %d, want 401 — an operator "+
+			t.Errorf("a delivery to a disconnected integration = %d, want 401 — an operator "+
 				"who turned it off wants deliveries refused, not merely recorded", status)
 		}
 	})

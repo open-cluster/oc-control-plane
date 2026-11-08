@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
-	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -117,14 +116,17 @@ WHERE org_id=$1 AND conversation_id=$2`, organization, reply.Conversation); err 
 	if retried.Integration != integration || retried.Stream.Channel != "C-ORIGINAL" || retried.Stream.Thread != "1700000001.1" {
 		t.Fatalf("retry changed destination: %+v", retried)
 	}
-	if err := database.CompleteSlackReply(ctx, organization, investigation, retried.ClaimToken); err != nil {
-		t.Fatal(err)
+	if err := database.DisconnectIntegration(ctx, ownerOf(t, organization), organization, integration); err != nil {
+		t.Fatalf("disconnect with historical Slack work failed: %v", err)
 	}
-	if err := database.DeleteIntegration(ctx, ownerOf(t, organization), organization, integration); !errors.Is(err, integrations.ErrInUse) {
-		t.Fatalf("outstanding Webhook Job did not prevent disconnection: %v", err)
+	if err := database.CompleteSlackReply(ctx, organization, investigation, retried.ClaimToken); !errors.Is(err, slack.ErrReplyClaimLost) {
+		t.Fatalf("retired reply claim completed: %v", err)
+	}
+	if replies, err := database.ClaimSlackReplies(ctx, 10, time.Minute); err != nil || len(replies) != 0 {
+		t.Fatalf("disconnected replies reclaimed: %v %v", replies, err)
 	}
 	if _, _, _, _, found, err := slackReplyStateForTest(database, ctx, organization, investigation); err != nil || !found {
-		t.Fatalf("refused disconnection removed reply state: found=%v, %v", found, err)
+		t.Fatalf("disconnect removed historical reply state: found=%v, %v", found, err)
 	}
 }
 

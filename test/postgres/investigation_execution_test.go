@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	conversationpkg "github.com/open-cluster/oc-control-plane/internal/conversation"
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -310,6 +311,10 @@ func TestEveryWorkerWriteRequiresItsOwnClaim(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	database, org := migratedDatabase(t)
+	integration, err := database.CreateIntegration(ctx, ownerOf(t, org), org, integrations.NewIntegration{Provider: "github", Name: "Historical source"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	aTurn(t, database, org)
 	aTurn(t, database, org)
 	_, first, took, err := database.ClaimInvestigation(ctx, aClaim("same-worker"))
@@ -322,7 +327,7 @@ func TestEveryWorkerWriteRequiresItsOwnClaim(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	observation, applied := "bounded prepared input", true
-	run := investigation.ToolRun{Ordinal: 1, Tool: "read", Purpose: "inspect", Outcome: investigation.RunSucceeded,
+	run := investigation.ToolRun{IntegrationID: integration.ID, Sources: []string{"https://github.com/controlled/repository/commit/evidence"}, Ordinal: 1, Tool: "read", Purpose: "inspect", Outcome: investigation.RunSucceeded,
 		WindowFrom: now.Add(-time.Hour), WindowUntil: now, StartedAt: now, FinishedAt: now,
 		ObservationText: &observation, WindowApplied: &applied, ModelClipped: true}
 	writes := map[string]func(uuid.UUID) error{
@@ -355,13 +360,16 @@ func TestEveryWorkerWriteRequiresItsOwnClaim(t *testing.T) {
 			t.Fatalf("valid %s: %v", name, err)
 		}
 	}
+	if err := database.DisconnectIntegration(ctx, ownerOf(t, org), org, integration.ID); err != nil {
+		t.Fatal(err)
+	}
 	retained, err := database.InvestigationToolRunObservation(ctx, org, first.ID, 1)
 	if err != nil || retained.ObservationText == nil || *retained.ObservationText != observation ||
 		!retained.ModelClipped || retained.Truncated || retained.WindowApplied == nil || !*retained.WindowApplied {
 		t.Fatalf("bounded observation metadata did not round trip: %v", err)
 	}
 	runs, err := database.InvestigationToolRuns(ctx, org, first.ID)
-	if err != nil || len(runs) != 1 || runs[0].ObservationText != nil {
+	if err != nil || len(runs) != 1 || runs[0].ObservationText != nil || runs[0].IntegrationID != integration.ID || len(runs[0].Sources) != 1 || runs[0].Sources[0] != run.Sources[0] {
 		t.Fatal("ordinary run reads loaded retained observation text")
 	}
 	tooLarge := strings.Repeat("x", investigation.MaxObservationBytes+1)

@@ -146,6 +146,8 @@ var (
 )
 
 var enumColumns = map[string]map[string][]int{
+	"integration.go": {"status": append(append(append([]int(nil), jobStatusValues...),
+		slackMessageStatusValues...), slackReplyValues...)},
 	"lease.go":  {"status": jobStatusValues},
 	"result.go": {"status": jobStatusValues},
 	"job.go": {"status": append(append([]int(nil), jobStatusValues...),

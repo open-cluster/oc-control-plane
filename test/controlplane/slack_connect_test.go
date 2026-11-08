@@ -208,6 +208,22 @@ func TestConnectingTheSameWorkspaceAgainDoesNotDuplicateIt(t *testing.T) {
 	if len(listed) != 1 {
 		t.Fatalf("connecting one workspace twice left %d integrations, want one", len(listed))
 	}
+	previousIntegrationID := listed[0].ID
+	if status, body := plane.call(t, http.MethodDelete, plane.base(surfaceOrg)+"/integrations/"+previousIntegrationID, nil); status != http.StatusNoContent {
+		t.Fatalf("disconnect = %d: %s", status, body)
+	}
+	if status, _ := connectSlack(t, plane, "a-code-from-somewhere-else"); status == http.StatusOK {
+		t.Fatal("reconnect accepted an invalid authorization code")
+	}
+	if integrations := plane.integrations(t, surfaceOrg); len(integrations) != 0 {
+		t.Fatalf("failed authorization restored an integration: %+v", integrations)
+	}
+	if status, body := connectSlack(t, plane, "the-authorization-code"); status != http.StatusOK {
+		t.Fatalf("fresh authorization = %d: %s", status, body)
+	}
+	if integrations := plane.integrations(t, surfaceOrg); len(integrations) != 1 || integrations[0].ID == previousIntegrationID {
+		t.Fatalf("reconnect did not create a new integration: %+v", integrations)
+	}
 }
 
 func TestAnUnexchangeableSlackCodeBindsNothing(t *testing.T) {

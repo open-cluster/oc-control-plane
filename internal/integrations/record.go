@@ -24,7 +24,7 @@ var (
 	ErrCredentialRequired = errors.New("changed credential-use settings require a replacement credential")
 	ErrUnknown            = errors.New("integration unknown")
 	ErrCrossTenant        = errors.New("integration names something outside its organization")
-	ErrInUse              = errors.New("integration has records depending on it; disable it instead")
+	ErrDisconnected       = errors.New("integration is disconnected; create a new integration to connect again")
 	ErrBadCursor          = errors.New("after is not a page position from a previous response")
 	ErrInstallationTaken  = errors.New(
 		"another integration in this deployment already owns that provider installation")
@@ -43,7 +43,7 @@ type Integration struct {
 	Status              Status
 	VerifiedAt          time.Time
 	VerificationGrants  []string
-	Disabled            bool
+	Disconnected        bool
 	CreatedAt           time.Time
 	Installation        *Installation
 }
@@ -93,7 +93,6 @@ type Query struct {
 	Provider   Provider
 	Relay      uuid.UUID
 	Search     string
-	Disabled   *bool
 }
 
 type List struct {

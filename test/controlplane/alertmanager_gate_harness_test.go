@@ -490,17 +490,11 @@ func (g *alertmanagerGate) countDeliveries(t *testing.T) int {
 	return counted
 }
 
-func (g *alertmanagerGate) setEnabled(t *testing.T, enabled bool) {
+func (g *alertmanagerGate) disconnect(t *testing.T) {
 	t.Helper()
-
-	operation := "disable"
-	if enabled {
-		operation = "enable"
-	}
-	status, body := g.call(t, http.MethodPost,
-		g.base(surfaceOrg)+"/integrations/"+g.integration+"/"+operation, nil)
+	status, body := g.call(t, http.MethodDelete, g.base(surfaceOrg)+"/integrations/"+g.integration, nil)
 	if status != http.StatusNoContent {
-		t.Fatalf("setting enabled=%v = %d: %s", enabled, status, body)
+		t.Fatalf("disconnecting = %d: %s", status, body)
 	}
 }
 

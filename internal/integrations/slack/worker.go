@@ -59,6 +59,7 @@ type Replies interface {
 		integration uuid.UUID, where string) error
 	Integration(ctx context.Context, org uuid.UUID,
 		id uuid.UUID) (integrations.Integration, error)
+	RecordCredentialUnseal(ctx context.Context, org uuid.UUID, id uuid.UUID, purpose string) error
 	UnnamedSlackAuthors(ctx context.Context, org uuid.UUID,
 		conversation uuid.UUID) ([]string, error)
 	NameSlackAuthor(ctx context.Context, org uuid.UUID, conversation uuid.UUID,
@@ -138,12 +139,6 @@ func (w Worker) pass(ctx context.Context, batch int) bool {
 }
 
 func (w Worker) answer(ctx context.Context, reply Reply) bool {
-	token, err := w.credential(ctx, reply)
-	if err != nil {
-		w.retry(ctx, reply, "this integration's credential could not be opened")
-		return false
-	}
-
 	events, err := w.Replies.Events(ctx, reply.Organization, reply.Investigation,
 		reply.LastSequence, 200)
 	if err != nil {
@@ -158,7 +153,7 @@ func (w Worker) answer(ctx context.Context, reply Reply) bool {
 				return false
 			}
 			if len(last) == 1 && last[0].Sequence == reply.LastSequence && Render(last).Done {
-				w.finish(ctx, token, reply)
+				w.finish(ctx, reply)
 				return true
 			}
 		}
@@ -176,6 +171,11 @@ func (w Worker) answer(ctx context.Context, reply Reply) bool {
 	}
 
 	if !reply.Stream.Held() {
+		token, err := w.credential(ctx, reply)
+		if err != nil {
+			w.retry(ctx, reply, "the integration is unavailable")
+			return false
+		}
 		stream, startErr := w.Client.StartStream(ctx, token,
 			reply.Stream.Channel, reply.Stream.Thread)
 		if startErr != nil {
@@ -190,10 +190,10 @@ func (w Worker) answer(ctx context.Context, reply Reply) bool {
 			return false
 		}
 		w.audit(ctx, reply)
-		w.name(ctx, token, reply)
+		w.name(ctx, reply)
 	}
 
-	if err := w.send(ctx, token, reply, rendered); err != nil {
+	if err := w.send(ctx, reply, rendered); err != nil {
 		w.retry(ctx, reply, "slack would not take the reply")
 		return false
 	}
@@ -205,14 +205,19 @@ func (w Worker) answer(ctx context.Context, reply Reply) bool {
 	}
 
 	if rendered.Done {
-		w.finish(ctx, token, reply)
+		w.finish(ctx, reply)
 	} else {
 		w.release(ctx, reply)
 	}
 	return true
 }
 
-func (w Worker) finish(ctx context.Context, token string, reply Reply) {
+func (w Worker) finish(ctx context.Context, reply Reply) {
+	token, err := w.credential(ctx, reply)
+	if err != nil {
+		w.retry(ctx, reply, "the integration is unavailable")
+		return
+	}
 	if err := w.Client.StopStream(ctx, token, reply.Stream); err != nil {
 		w.retry(ctx, reply, "slack would not close the reply")
 		return
@@ -231,8 +236,12 @@ func (w Worker) release(ctx context.Context, reply Reply) {
 }
 
 func (w Worker) send(
-	ctx context.Context, token string, reply Reply, rendered Rendered,
+	ctx context.Context, reply Reply, rendered Rendered,
 ) error {
+	token, err := w.credential(ctx, reply)
+	if err != nil {
+		return err
+	}
 	if reply.Stream.Native {
 		return w.Client.AppendStream(ctx, token, reply.Stream, visible(rendered, false))
 	}
@@ -243,6 +252,10 @@ func (w Worker) send(
 	}
 	allRendered := Render(all)
 	allRendered.Footer = rendered.Footer
+	token, err = w.credential(ctx, reply)
+	if err != nil {
+		return err
+	}
 	return w.Client.ReplaceStream(ctx, token, reply.Stream, visible(allRendered, true))
 }
 
@@ -289,17 +302,20 @@ func (w Worker) credential(ctx context.Context, reply Reply) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if integration.Disabled {
-		return "", errors.New("slack: this integration is disabled")
+	if integration.Disconnected {
+		return "", errors.New("slack: this integration is disconnected")
 	}
 	if len(integration.CredentialSealed) == 0 {
 		return "", errors.New("slack: this integration holds no credential")
+	}
+	if err := w.Replies.RecordCredentialUnseal(ctx, reply.Organization, integration.ID, "slack reply"); err != nil {
+		return "", errors.New("slack: credential access could not be audited")
 	}
 	return w.Sealer.Open(integration.CredentialSealed,
 		integrations.CredentialBinding(integration.ID))
 }
 
-func (w Worker) name(ctx context.Context, token string, reply Reply) {
+func (w Worker) name(ctx context.Context, reply Reply) {
 	if reply.Conversation == uuid.Nil {
 		return
 	}
@@ -310,6 +326,10 @@ func (w Worker) name(ctx context.Context, token string, reply Reply) {
 		return
 	}
 	for _, actor := range unnamed {
+		token, err := w.credential(ctx, reply)
+		if err != nil {
+			return
+		}
 		display := w.Client.UserName(ctx, token, actor)
 		if display == "" || display == actor {
 			continue

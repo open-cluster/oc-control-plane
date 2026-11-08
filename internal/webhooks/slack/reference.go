@@ -27,6 +27,9 @@ func (r SlackReferenceResolver) Resolve(ctx context.Context, work storage.SlackM
 	if err != nil {
 		return err
 	}
+	if integration.Disconnected {
+		return integrations.ErrDisconnected
+	}
 	if err = r.Database.RecordCredentialUnseal(ctx, work.Organization, work.IntegrationID,
 		"slack message source reference"); err != nil {
 		return errors.New("slack message provenance credential use could not be audited")

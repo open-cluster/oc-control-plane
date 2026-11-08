@@ -43,6 +43,9 @@ func (p *Database) RecordDelivery(
 		return DeliveryOutcome{}, fmt.Errorf("beginning delivery: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
+	if err := lockActiveIntegration(ctx, transaction, organization, delivery.Integration); err != nil {
+		return DeliveryOutcome{}, err
+	}
 
 	_, claimed, err := claimDelivery(ctx, transaction, organization, delivery)
 	if err != nil {

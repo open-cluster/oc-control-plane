@@ -44,6 +44,6 @@ An existing user token with `search:read` can search discussions visible to that
 ## Troubleshooting
 
 - **No messages.** Invite the app and verify the channel's history scope.
-- **No reply.** Check the installed app, signing secret, event subscription, channel membership and enabled state. Use the [API availability guidance](/api-reference/overview#interpret-integration-availability) for diagnosis.
+- **No reply.** Check the installed app, signing secret, event subscription, channel membership and connection state. Use the [API availability guidance](/api-reference/overview#interpret-integration-availability) for diagnosis.
 - **Token revoked.** Reconnect the app or replace a pasted token with a valid one. OpenCluster checks replacement credentials before saving them.
 - **Reply delivery failed.** An Admin can retry terminal failed work through the [API reference](/api-reference/surface). A retry can occasionally duplicate a message if the earlier send succeeded in Slack.

@@ -276,7 +276,7 @@ method/path entry in the navigation.
 
 ## Connect an Integration
 
-An Admin creates Integrations or starts provider authorization. Editors and Admins can update, enable, disable, and verify existing Integrations. Only Admins can delete them or rotate webhook secrets. Viewers can read permitted metadata. Investigation and Conversation permissions are separate.
+An Admin creates Integrations or starts provider authorization. Editors and Admins can update and test active Integrations. Only Admins can permanently disconnect them or rotate webhook secrets. Viewers can read permitted metadata. Investigation and Conversation permissions are separate.
 
 Use the [session and Origin setup](#authentication). Save the relevant JSON example below in a private file, then submit it with this shared command. Set `INTEGRATION_CONFIG` to that file's name. For GitHub or installed Slack apps, use the [browser authorization flow](#authorize-github-or-slack-in-a-browser).
 
@@ -471,10 +471,10 @@ limitation. It does not substitute another run or claim fresh verification.
 
 ## Interpret integration availability
 
-`status` and `verifiedAt` describe a recorded check. `toolAvailability` combines that check, recorded grants, and the disabled flag. Provider access or Relay connectivity can change afterward.
+`status` and `verifiedAt` describe a recorded check. `toolAvailability` combines that check, recorded grants, and `disconnected`. Provider access or Relay connectivity can change afterward. DELETE disconnects an Integration, clears its saved secrets and verification, and retains historical evidence. The Installed list excludes disconnected records. Authorized detail remains readable. Reconnect requires a new Integration with fresh credentials or authorization. Enable/Disable operations and the `disabled` filter are no longer supported.
 
 Kubernetes verification records advertised Relay capabilities. A partial set can still return `verified`, including when no query operation is available. It does not test Kubernetes RBAC. GitHub verification checks installation and repository access, not every operation's permissions. An installation with no selected repositories can still verify.
 
-Slack's `inbound.available` currently indicates a configured signing secret and provider installation. It can remain true for a disabled integration, which ignores incoming mentions. Check enabled state, event delivery, granted scopes, and model-provider configuration when diagnosing replies. `verificationNote` is transient response guidance and is not reconstructed on ordinary reads.
+Slack's `inbound.available` currently indicates a configured signing secret and provider installation. It does not prove delivery. Check `disconnected`, event delivery, granted scopes, and model-provider configuration when diagnosing replies. `verificationNote` is transient response guidance and is not reconstructed on ordinary reads.
 
 Investigation lifecycle is separate from assessment certainty. `queued` means waiting and `running` means assigned for execution, including interrupted work awaiting recovery. Terminal states are `concluded`, `failed`, and `cancelled`. Read `conclusionStatus`, `limitations`, `stoppedBy`, and `error` to interpret the outcome. The concluded event's payload `status` describes the assessment. Historical results may retain `verified_cause`. `concludedAt` records any terminal transition.

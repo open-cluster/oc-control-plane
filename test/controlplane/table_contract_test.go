@@ -121,7 +121,6 @@ func TestListFilterAndSortValuesAreStrict(t *testing.T) {
 	plane := startIntegrationPlane(t)
 	base := plane.base(surfaceOrg)
 	cases := map[string]string{
-		"integration boolean":    base + "/integrations?disabled=foo",
 		"integration type":       base + "/integrations?type=unknown",
 		"integration relay":      base + "/integrations?relay=bad",
 		"integration plus sort":  base + "/integrations?sort=%2BcreatedAt",

@@ -48,8 +48,6 @@ func (h Handlers) Routes() []authz.Route {
 		{Method: http.MethodGet, Pattern: base + "/integrations/{integration}", Permission: authz.IntegrationRead, Handler: http.HandlerFunc(h.read)},
 		{Method: http.MethodPatch, Pattern: base + "/integrations/{integration}", Permission: authz.IntegrationUpdate, Handler: http.HandlerFunc(h.update)},
 		{Method: http.MethodDelete, Pattern: base + "/integrations/{integration}", Permission: authz.IntegrationDelete, Handler: http.HandlerFunc(h.remove)},
-		{Method: http.MethodPost, Pattern: base + "/integrations/{integration}/enable", Permission: authz.IntegrationUpdate, Handler: http.HandlerFunc(h.enable)},
-		{Method: http.MethodPost, Pattern: base + "/integrations/{integration}/disable", Permission: authz.IntegrationUpdate, Handler: http.HandlerFunc(h.disable)},
 		{Method: http.MethodPost, Pattern: base + "/integrations/{integration}/verify", Permission: authz.IntegrationVerify, Handler: http.HandlerFunc(h.verify)},
 		{Method: http.MethodPost, Pattern: base + "/integrations/{integration}/rotate-webhook-secret", Permission: authz.IntegrationSecretRotate, Handler: http.HandlerFunc(h.rotateSecret)},
 	}
@@ -94,7 +92,7 @@ var listSpec = listing.Spec{
 	Searchable:  true,
 	Sortable:    []string{"createdAt"},
 	DefaultSort: listing.Sort{Field: "createdAt", Descending: true},
-	Filters:     []string{"type", "relay", "disabled"},
+	Filters:     []string{"type", "relay"},
 }
 
 func (h Handlers) list(writer http.ResponseWriter, request *http.Request) {
@@ -296,6 +294,10 @@ func (h Handlers) update(writer http.ResponseWriter, request *http.Request) {
 			h.fail(writer, request, err)
 			return
 		}
+		if integration.Disconnected {
+			h.fail(writer, request, ErrDisconnected)
+			return
+		}
 		definition, known := h.Catalog.Lookup(integration.Provider)
 		if !known {
 			h.fail(writer, request, fmt.Errorf(
@@ -379,34 +381,7 @@ func (h Handlers) remove(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	if err := h.Store.DeleteIntegration(ctx, principal, organization, id); err != nil {
-		h.fail(writer, request, err)
-		return
-	}
-	writer.WriteHeader(http.StatusNoContent)
-}
-
-func (h Handlers) enable(writer http.ResponseWriter, request *http.Request) {
-	h.setDisabled(writer, request, false)
-}
-
-func (h Handlers) disable(writer http.ResponseWriter, request *http.Request) {
-	h.setDisabled(writer, request, true)
-}
-
-func (h Handlers) setDisabled(
-	writer http.ResponseWriter, request *http.Request, disabled bool,
-) {
-	principal := h.caller(request)
-	organization, id, ok := h.addressed(writer, request)
-	if !ok {
-		return
-	}
-	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
-	defer cancel()
-
-	if err := h.Store.SetIntegrationDisabled(
-		ctx, principal, organization, id, disabled); err != nil {
+	if err := h.Store.DisconnectIntegration(ctx, principal, organization, id); err != nil {
 		h.fail(writer, request, err)
 		return
 	}
@@ -422,22 +397,26 @@ func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	found, err := h.Store.Integration(ctx, organization, id)
+	integration, err := h.Store.Integration(ctx, organization, id)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
-	definition, known := h.Catalog.Lookup(found.Provider)
+	if integration.Disconnected {
+		h.fail(writer, request, ErrDisconnected)
+		return
+	}
+	definition, known := h.Catalog.Lookup(integration.Provider)
 	if !known {
 		h.fail(writer, request, fmt.Errorf(
-			"integration %s has provider %q this build does not serve", id, found.Provider))
+			"integration %s has provider %q this build does not serve", id, integration.Provider))
 		return
 	}
 
 	if definition.Probe != nil {
-		outcome := h.probeExisting(ctx, organization, definition, found)
+		outcome := h.probeExisting(ctx, organization, definition, integration)
 		verified, probeErr := h.Store.RecordIntegrationVerification(
-			ctx, principal, organization, found, outcome)
+			ctx, principal, organization, integration, outcome)
 		if probeErr != nil {
 			h.fail(writer, request, probeErr)
 			return
@@ -448,9 +427,9 @@ func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	input := VerifyInput{Integration: found}
-	if found.RelayID != uuid.Nil {
-		status, statusErr := h.Store.IntegrationRelayStatus(ctx, organization, found.RelayID)
+	input := VerifyInput{Integration: integration}
+	if integration.RelayID != uuid.Nil {
+		status, statusErr := h.Store.IntegrationRelayStatus(ctx, organization, integration.RelayID)
 		if statusErr != nil {
 			h.fail(writer, request, statusErr)
 			return
@@ -468,7 +447,7 @@ func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
 
 	outcome := definition.Verify(input)
 	verified, err := h.Store.RecordIntegrationVerification(
-		ctx, principal, organization, found, outcome)
+		ctx, principal, organization, integration, outcome)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -641,15 +620,6 @@ func (h Handlers) listQuery(
 		}
 		query.Relay = relay
 	}
-	if named := parsed.Filter("disabled"); named != "" {
-		if named != "true" && named != "false" {
-			writeJSON(writer, http.StatusBadRequest,
-				errorView{Error: "disabled must be true or false"})
-			return Query{}, false
-		}
-		disabled := named == "true"
-		query.Disabled = &disabled
-	}
 	return query, true
 }
 
@@ -704,8 +674,8 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: ErrCredentialRequired.Error()})
 	case errors.Is(err, ErrConflict):
 		writeJSON(writer, http.StatusConflict, errorView{Error: ErrConflict.Error()})
-	case errors.Is(err, ErrInUse):
-		writeJSON(writer, http.StatusConflict, errorView{Error: ErrInUse.Error()})
+	case errors.Is(err, ErrDisconnected):
+		writeJSON(writer, http.StatusConflict, errorView{Error: ErrDisconnected.Error()})
 	case errors.Is(err, ErrBadCursor):
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: ErrBadCursor.Error()})
 	case errors.Is(err, seal.ErrNoKey):

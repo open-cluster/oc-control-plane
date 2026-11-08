@@ -220,7 +220,7 @@ func (p *intakePlane) scopes(t *testing.T) []recordedScope {
 	return recorded
 }
 
-func (p *intakePlane) setDisabled(t *testing.T, disabled bool) {
+func (p *intakePlane) setDisconnected(t *testing.T, disconnected bool) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -231,9 +231,9 @@ func (p *intakePlane) setDisabled(t *testing.T, disabled bool) {
 	defer func() { _ = database.Close(ctx) }()
 
 	if _, err = database.Exec(ctx,
-		`UPDATE integration SET disabled = $2 WHERE integration_id = $1`,
-		p.integration, disabled); err != nil {
-		t.Fatalf("setting the disabled state: %v", err)
+		`UPDATE integration SET disconnected = $2 WHERE integration_id = $1`,
+		p.integration, disconnected); err != nil {
+		t.Fatalf("setting the disconnected state: %v", err)
 	}
 }
 
@@ -769,21 +769,21 @@ func TestIntake_TwoIntegrationsOneTypeEachWithItsOwnSecret(t *testing.T) {
 	}
 }
 
-func TestIntake_ADisabledIntegrationRefusesDeliveries(t *testing.T) {
+func TestIntake_ADisconnectedIntegrationRefusesDeliveries(t *testing.T) {
 	plane := startIntake(t)
 
 	if status := plane.deliver(t, intakeSecret, firing("fp-before", time.Now().UTC())); status !=
 		http.StatusAccepted {
 		t.Fatalf("the delivery before disabling = %d, want 202", status)
 	}
-	plane.setDisabled(t, true)
+	plane.setDisconnected(t, true)
 
 	if status := plane.deliver(t, intakeSecret, firing("fp-after", time.Now().UTC())); status !=
 		http.StatusUnauthorized {
-		t.Errorf("a delivery to a disabled connection = %d, want 401", status)
+		t.Errorf("a delivery to a disconnected connection = %d, want 401", status)
 	}
 	if recorded := plane.alertEvents(t); len(recorded) != 1 {
-		t.Errorf("a disabled connection recorded %d alertEvents, want only the one from before",
+		t.Errorf("a disconnected connection recorded %d alertEvents, want only the one from before",
 			len(recorded))
 	}
 }

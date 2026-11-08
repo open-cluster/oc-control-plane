@@ -116,7 +116,7 @@ func droppedRun(opened investigation.Investigation, call toolCall, ordinal int, 
 }
 
 func (r *Agent) execute(
-	ctx context.Context, opened investigation.Investigation, selected []offeredSource,
+	ctx context.Context, organization uuid.UUID, opened investigation.Investigation, selected []offeredSource,
 	credentials *credentialCache, origin *investigation.ConversationOrigin,
 	call toolCall, ordinal int,
 ) (investigation.ToolRun, error) {
@@ -137,6 +137,31 @@ func (r *Agent) execute(
 		return run, nil
 	}
 	run.IntegrationID = source.Integration.ID
+	integration, err := r.Store.Integration(ctx, organization, source.Integration.ID)
+	if err != nil {
+		run.Outcome = investigation.RunFailed
+		run.Error = "the integration is no longer available"
+		run.FinishedAt = time.Now().UTC()
+		return run, nil
+	}
+	definition, known := r.Catalog.Lookup(integration.Provider)
+	eligible := false
+	if known {
+		for _, availableTool := range integrations.SupportedTools(definition, integration) {
+			if availableTool.Name == tool.Name {
+				eligible = true
+				tool = availableTool
+				break
+			}
+		}
+	}
+	if !eligible {
+		run.Outcome = investigation.RunFailed
+		run.Error = "the integration no longer authorizes this tool"
+		run.FinishedAt = time.Now().UTC()
+		return run, nil
+	}
+	source.Integration = integration
 
 	credential, err := credentials.open(ctx, source.Integration)
 	if err != nil {
@@ -233,7 +258,7 @@ func (r *Agent) announce(
 
 func prepareObservation(run *investigation.ToolRun, credentials *credentialCache) {
 	var secrets []string
-	for _, credential := range credentials.opened {
+	for _, credential := range credentials.knownCredentials {
 		if credential == "" {
 			continue
 		}
@@ -451,10 +476,12 @@ func toolNamed(selected []offeredSource, call toolCall) (offeredSource, integrat
 }
 
 type credentialCache struct {
-	sealer seal.Sealer
-	record func(ctx context.Context, id uuid.UUID) error
-	opened map[uuid.UUID]string
-	fail   map[uuid.UUID]error
+	sealer           seal.Sealer
+	record           func(ctx context.Context, id uuid.UUID) error
+	opened           map[uuid.UUID]string
+	fail             map[uuid.UUID]error
+	sealed           map[uuid.UUID]string
+	knownCredentials []string
 }
 
 func newCredentialCache(
@@ -465,12 +492,18 @@ func newCredentialCache(
 		record: record,
 		opened: map[uuid.UUID]string{},
 		fail:   map[uuid.UUID]error{},
+		sealed: map[uuid.UUID]string{},
 	}
 }
 
 func (c *credentialCache) open(
 	ctx context.Context, integration integrations.Integration,
 ) (string, error) {
+	if c.sealed[integration.ID] != string(integration.CredentialSealed) {
+		delete(c.opened, integration.ID)
+		delete(c.fail, integration.ID)
+		c.sealed[integration.ID] = string(integration.CredentialSealed)
+	}
 	if credential, held := c.opened[integration.ID]; held {
 		return credential, nil
 	}
@@ -493,5 +526,6 @@ func (c *credentialCache) open(
 		return "", err
 	}
 	c.opened[integration.ID] = credential
+	c.knownCredentials = append(c.knownCredentials, credential)
 	return credential, nil
 }

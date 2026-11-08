@@ -170,6 +170,10 @@ func (h *receiver) recordAlertDelivery(
 	organization uuid.UUID, requestID string, delivery storage.Delivery,
 ) {
 	outcome, err := h.Database.RecordDelivery(ctx, organization, delivery, h.AlertAdmission)
+	if errors.Is(err, integrations.ErrDisconnected) {
+		writeStatus(writer, http.StatusUnauthorized, "not authenticated")
+		return
+	}
 	var full storage.AlertCapacityError
 	if errors.As(err, &full) {
 		h.counters.countRequest(ctx, surfaceAlert, resultRateLimited)
@@ -258,8 +262,8 @@ func (h *receiver) authenticate(
 	if !adapter.Authenticate(request.Header, integration) {
 		return integration, adapter, fmt.Errorf("%w: credential does not match", errNotAuthenticated)
 	}
-	if integration.Disabled {
-		return integration, adapter, fmt.Errorf("%w: integration is disabled", errNotAuthenticated)
+	if integration.Disconnected {
+		return integration, adapter, fmt.Errorf("%w: integration is disconnected", errNotAuthenticated)
 	}
 	return integration, adapter, nil
 }

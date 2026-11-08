@@ -22,9 +22,7 @@ type Store interface {
 		org uuid.UUID) ([]ProviderCount, error)
 	UpdateIntegration(ctx context.Context, who authz.Principal, org uuid.UUID,
 		id uuid.UUID, update IntegrationUpdate) (Integration, error)
-	SetIntegrationDisabled(ctx context.Context, who authz.Principal, org uuid.UUID,
-		id uuid.UUID, disabled bool) error
-	DeleteIntegration(ctx context.Context, who authz.Principal, org uuid.UUID,
+	DisconnectIntegration(ctx context.Context, who authz.Principal, org uuid.UUID,
 		id uuid.UUID) error
 	RotateIntegrationWebhookSecret(ctx context.Context, who authz.Principal,
 		org uuid.UUID, id uuid.UUID, digest []byte) error

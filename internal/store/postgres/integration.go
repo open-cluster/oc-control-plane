@@ -22,7 +22,7 @@ var _ integrations.Store = (*Database)(nil)
 
 const integrationColumns = `integration_id, provider, name, configuration,
 	       webhook_secret_digest, credential_sealed, relay_id, verification_status,
-	       verified_at, verification_grants, disabled, created_at,
+	       verified_at, verification_grants, disconnected, created_at,
 	       (SELECT jsonb_build_object(
 	           'key', installed.installation_key,
 	           'providerActorId', installed.provider_actor_id)
@@ -164,10 +164,10 @@ func (p *Database) QueryIntegrations(
 	}
 
 	arguments := []any{organization}
-	where := []string{"org_id = $1"}
+	predicates := []string{"org_id = $1", "NOT disconnected"}
 	add := func(clause string, value any) {
 		arguments = append(arguments, value)
-		where = append(where, fmt.Sprintf(clause, len(arguments)))
+		predicates = append(predicates, fmt.Sprintf(clause, len(arguments)))
 	}
 
 	if query.Provider != "" {
@@ -179,20 +179,13 @@ func (p *Database) QueryIntegrations(
 	if query.Search != "" {
 		add("name ILIKE '%%' || $%d || '%%'", query.Search)
 	}
-	if query.Disabled != nil {
-		if *query.Disabled {
-			where = append(where, "disabled")
-		} else {
-			where = append(where, "NOT disabled")
-		}
-	}
 	if cursorID != nil {
 		arguments = append(arguments, *cursorAt, *cursorID)
 		comparison := ">"
 		if descending {
 			comparison = "<"
 		}
-		where = append(where, fmt.Sprintf(
+		predicates = append(predicates, fmt.Sprintf(
 			"(created_at, integration_id) %s ($%d, $%d)", comparison,
 			len(arguments)-1, len(arguments)))
 	}
@@ -208,7 +201,7 @@ func (p *Database) QueryIntegrations(
 		 WHERE %s
 		 ORDER BY created_at %s, integration_id %s
 		 LIMIT $%d`,
-		integrationColumns, strings.Join(where, "\n   AND "), direction, direction,
+		integrationColumns, strings.Join(predicates, "\n   AND "), direction, direction,
 		len(arguments)), arguments...)
 	if err != nil {
 		return integrations.List{}, fmt.Errorf("listing integrations: %w", err)
@@ -217,7 +210,7 @@ func (p *Database) QueryIntegrations(
 
 	list := integrations.List{Integrations: make([]integrations.Integration, 0, limit)}
 	for rows.Next() {
-		found, scanErr := scanIntegration(rows, organization.String())
+		integration, scanErr := scanIntegration(rows, organization.String())
 		if scanErr != nil {
 			return integrations.List{}, scanErr
 		}
@@ -226,7 +219,7 @@ func (p *Database) QueryIntegrations(
 			list.Next = encodeTimeSortCursor(scope, last.CreatedAt, last.ID)
 			break
 		}
-		list.Integrations = append(list.Integrations, found)
+		list.Integrations = append(list.Integrations, integration)
 	}
 	if err = rows.Err(); err != nil {
 		return integrations.List{}, fmt.Errorf("listing integrations: %w", err)
@@ -248,7 +241,7 @@ func (p *Database) CountIntegrationsByProvider(
 	rows, err := pool.Query(ctx, `
 		SELECT provider, count(*)
 		  FROM integration
-		 WHERE org_id = $1
+		 WHERE org_id = $1 AND NOT disconnected
 		 GROUP BY provider`, organization)
 	if err != nil {
 		return nil, fmt.Errorf("counting integrations: %w", err)
@@ -288,6 +281,9 @@ func (p *Database) UpdateIntegration(
 			}
 			if err != nil {
 				return integrations.Integration{}, audit.Target{}, nil, err
+			}
+			if integration.Disconnected {
+				return integrations.Integration{}, audit.Target{}, nil, integrations.ErrDisconnected
 			}
 			configurationChanged := update.Configuration != nil && !reflect.DeepEqual(integration.Configuration, update.Configuration)
 			if configurationChanged && len(integration.CredentialSealed) > 0 {
@@ -329,101 +325,60 @@ func (p *Database) UpdateIntegration(
 		})
 }
 
-func (p *Database) SetIntegrationDisabled(
-	ctx context.Context, principal authz.Principal, organization uuid.UUID,
-	id uuid.UUID, disabled bool,
+func (p *Database) DisconnectIntegration(
+	ctx context.Context, principal authz.Principal, organization uuid.UUID, id uuid.UUID,
 ) error {
-	_, err := audited(ctx, p, principal, organization, audit.ActionIntegrationEnabled,
+	_, err := audited(ctx, p, principal, organization, audit.ActionIntegrationDeleted,
 		func(ctx context.Context, transaction pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
-			var wasDisabled bool
+			var disconnected bool
 			err := transaction.QueryRow(ctx, `
-				SELECT disabled FROM integration
-				 WHERE integration_id = $1 AND org_id = $2
-				 FOR UPDATE`, id, organization).Scan(&wasDisabled)
+				SELECT disconnected FROM integration
+				WHERE integration_id = $1 AND org_id = $2 FOR UPDATE`, id, organization).Scan(&disconnected)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return struct{}{}, audit.Target{}, nil, integrations.ErrUnknown
 			}
 			if err != nil {
-				return struct{}{}, audit.Target{}, nil,
-					fmt.Errorf("changing an integration's disabled state: %w", err)
+				return struct{}{}, audit.Target{}, nil, err
 			}
-			if _, err := transaction.Exec(ctx, `
-				UPDATE integration SET disabled = $3
-				 WHERE integration_id = $1 AND org_id = $2`,
-				id, organization, disabled); err != nil {
-				return struct{}{}, audit.Target{}, nil,
-					fmt.Errorf("changing an integration's disabled state: %w", err)
+			target := audit.Target{Kind: audit.TargetIntegration, ID: id.String()}
+			if disconnected {
+				return struct{}{}, target, audit.Detail{"alreadyDisconnected": true}, nil
 			}
-			return struct{}{},
-				audit.Target{Kind: audit.TargetIntegration, ID: id.String()},
-				audit.Detail{"before": !wasDisabled, "after": !disabled}, nil
-		})
-	return err
-}
-
-func (p *Database) DeleteIntegration(
-	ctx context.Context, principal authz.Principal, organization uuid.UUID,
-	id uuid.UUID,
-) error {
-	_, err := audited(ctx, p, principal, organization, audit.ActionIntegrationDeleted,
-		func(ctx context.Context, transaction pgx.Tx) (struct{}, audit.Target, audit.Detail, error) {
-			var alertEvents, deliveries, jobs, changeEvents, investigations int
-			err := transaction.QueryRow(ctx, `
-				SELECT (SELECT count(*) FROM alert_event
-				         WHERE org_id = $2 AND integration_id = $1),
-				       (SELECT count(*) FROM webhook_delivery
-				         WHERE org_id = $2 AND integration_id = $1),
-				       (SELECT count(*) FROM relay_job
-				         WHERE org_id = $2 AND integration_id = $1),
-				       (SELECT count(*) FROM change_event
-				         WHERE org_id = $2 AND integration_id = $1),
-				       (SELECT count(*) FROM investigation_tool_run
-				           WHERE org_id = $2 AND integration_id = $1)`,
-				id, organization).Scan(
-				&alertEvents, &deliveries, &jobs, &changeEvents, &investigations)
-			if err != nil {
-				return struct{}{}, audit.Target{}, nil,
-					fmt.Errorf("counting an integration's dependents: %w", err)
+			if _, err = transaction.Exec(ctx, `
+				UPDATE integration SET disconnected = true,
+				credential_sealed = NULL, webhook_secret_digest = NULL, verification_status = NULL,
+				verified_at = NULL, verification_grants = '{}'::text[]
+				WHERE integration_id = $1 AND org_id = $2`, id, organization); err != nil {
+				return struct{}{}, audit.Target{}, nil, err
 			}
-			if alertEvents+deliveries+jobs+changeEvents+investigations > 0 {
-				return struct{}{}, audit.Target{}, nil, fmt.Errorf(
-					"%w: %d Alert Events, %d deliveries, %d jobs, %d change events, %d Investigation records",
-					integrations.ErrInUse, alertEvents, deliveries, jobs, changeEvents, investigations)
+			if _, err = transaction.Exec(ctx, `
+				DELETE FROM integration_installation
+				WHERE integration_id = $1 AND org_id = $2`, id, organization); err != nil {
+				return struct{}{}, audit.Target{}, nil, err
 			}
-
-			if _, err := transaction.Exec(ctx, `
-				DELETE FROM slack_reply r USING slack_conversation s
-				WHERE r.org_id = $2 AND s.org_id = r.org_id
-				  AND s.conversation_id = r.conversation_id AND s.integration_id = $1`,
-				id, organization); err != nil {
-				return struct{}{}, audit.Target{}, nil, fmt.Errorf("retiring integration replies: %w", err)
+			if _, err = transaction.Exec(ctx, `
+				UPDATE relay_job
+				SET status = CASE WHEN status = 0 THEN 4 ELSE status END,
+				terminal_at = CASE WHEN status = 0 THEN now() ELSE terminal_at END,
+				cancel_requested_at = coalesce(cancel_requested_at, now())
+				WHERE integration_id = $1 AND org_id = $2 AND status IN (0, 1)`, id, organization); err != nil {
+				return struct{}{}, audit.Target{}, nil, err
 			}
-			if _, err := transaction.Exec(ctx, `
-				DELETE FROM slack_conversation WHERE org_id = $2 AND integration_id = $1`,
-				id, organization); err != nil {
-				return struct{}{}, audit.Target{}, nil, fmt.Errorf("retiring integration conversations: %w", err)
+			if _, err = transaction.Exec(ctx, `
+				UPDATE slack_message_work
+				SET status = 4, lease_owner = '', lease_expires_at = NULL,
+				failure_class = 'integration-disconnected', failure_message = 'the integration is disconnected', updated_at = now()
+				WHERE integration_id = $1 AND org_id = $2 AND status IN (1, 2, 3)`, id, organization); err != nil {
+				return struct{}{}, audit.Target{}, nil, err
 			}
-			if _, err := transaction.Exec(ctx, `
-				DELETE FROM integration_installation WHERE org_id = $2 AND integration_id = $1`,
-				id, organization); err != nil {
-				return struct{}{}, audit.Target{}, nil, fmt.Errorf("retiring integration installation: %w", err)
+			if _, err = transaction.Exec(ctx, `
+				UPDATE slack_reply reply
+				SET status = 4, lease_owner = NULL, leased_until = NULL, note = 'the integration is disconnected', updated_at = now()
+				FROM slack_conversation conversation WHERE reply.org_id = $2 AND conversation.org_id = reply.org_id
+				AND conversation.conversation_id = reply.conversation_id AND conversation.integration_id = $1 AND reply.status IN (1, 2)`, id, organization); err != nil {
+				return struct{}{}, audit.Target{}, nil, err
 			}
-			tag, err := transaction.Exec(ctx, `
-				DELETE FROM integration
-				 WHERE integration_id = $1 AND org_id = $2`,
-				id, organization)
-			if err != nil {
-				if isForeignKeyViolation(err) {
-					return struct{}{}, audit.Target{}, nil, integrations.ErrInUse
-				}
-				return struct{}{}, audit.Target{}, nil,
-					fmt.Errorf("deleting an integration: %w", err)
-			}
-			if tag.RowsAffected() == 0 {
-				return struct{}{}, audit.Target{}, nil, integrations.ErrUnknown
-			}
-			return struct{}{},
-				audit.Target{Kind: audit.TargetIntegration, ID: id.String()}, nil, nil
+			return struct{}{}, target, audit.Detail{"disconnected": true}, nil
 		})
 	return err
 }
@@ -439,6 +394,7 @@ func (p *Database) RotateIntegrationWebhookSecret(
 				   SET webhook_secret_digest = $3
 				 WHERE integration_id = $1
 				   AND org_id = $2
+				   AND NOT disconnected
 				   AND webhook_secret_digest IS NOT NULL`,
 				id, organization, digest)
 			if err != nil {
@@ -646,7 +602,7 @@ func (n *nullableIntegration) destinations(found *integrations.Integration) []an
 	return []any{
 		&found.ID, &found.Provider, &found.Name, &n.configuration,
 		&found.WebhookSecretDigest, &found.CredentialSealed, &n.relay, &n.status,
-		&n.verifiedAt, &found.VerificationGrants, &found.Disabled, &found.CreatedAt,
+		&n.verifiedAt, &found.VerificationGrants, &found.Disconnected, &found.CreatedAt,
 		&n.installation,
 	}
 }
@@ -754,14 +710,34 @@ func checkExpectedIntegration(ctx context.Context, transaction pgx.Tx, organizat
 	if err != nil {
 		return err
 	}
+	if integration.Disconnected {
+		return integrations.ErrDisconnected
+	}
 	if integration.Status != expectedIntegration.Status || !integration.VerifiedAt.Equal(expectedIntegration.VerifiedAt) ||
 		!reflect.DeepEqual(integration.VerificationGrants, expectedIntegration.VerificationGrants) ||
 		!bytes.Equal(integration.WebhookSecretDigest, expectedIntegration.WebhookSecretDigest) ||
-		integration.Disabled != expectedIntegration.Disabled || integration.RelayID != expectedIntegration.RelayID ||
+		integration.Disconnected != expectedIntegration.Disconnected || integration.RelayID != expectedIntegration.RelayID ||
 		!bytes.Equal(integration.CredentialSealed, expectedIntegration.CredentialSealed) ||
 		!reflect.DeepEqual(integration.Configuration, expectedIntegration.Configuration) ||
 		!reflect.DeepEqual(integration.Installation, expectedIntegration.Installation) {
 		return integrations.ErrConflict
+	}
+	return nil
+}
+
+// Serialize database admission with Disconnect without retaining locks during provider calls.
+func lockActiveIntegration(ctx context.Context, transaction pgx.Tx, organization, id uuid.UUID) error {
+	var disconnected bool
+	err := transaction.QueryRow(ctx, `SELECT disconnected FROM integration
+		WHERE org_id = $1 AND integration_id = $2 FOR SHARE`, organization, id).Scan(&disconnected)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return integrations.ErrUnknown
+	}
+	if err != nil {
+		return err
+	}
+	if disconnected {
+		return integrations.ErrDisconnected
 	}
 	return nil
 }
