@@ -150,6 +150,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the complete design.
 - Connected content and Conversation Messages are treated as untrusted data.
 - Tools are available only through verified Integration capabilities.
 - Credentials are sealed or digested and are not exposed through product APIs.
+- GitHub connections require user authorization and proof of installation ownership.
 - Changing credential-use settings requires a verified replacement credential; renaming does not.
 - Material Findings cite supporting Tool Runs.
 - Current Action Proposals do not execute production changes.

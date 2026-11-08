@@ -275,11 +275,25 @@ paths:
       - { $ref: "#/components/parameters/IntegrationType" }
     post:
       <<: *privileged-write
+      parameters:
+        - { name: providerInstallationId, in: query, schema: { type: string }, description: Existing GitHub installation to authorize. Selection alone never proves ownership. }
       operationId: startIntegrationConnect
       summary: Start provider authorization
       tags: [Integration Types]
       responses:
         "200": { $ref: "#/components/responses/ConnectStarted" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/integration-types/github/setup:
+    get:
+      <<: *privileged-read
+      operationId: continueGitHubConnect
+      summary: Continue GitHub installation authorization
+      tags: [Integrations]
+      parameters:
+        - { name: state, in: query, required: true, schema: { type: string } }
+        - { name: installation_id, in: query, required: true, schema: { type: string, pattern: '^[1-9][0-9]*$' } }
+      responses:
+        "302": { description: Redirect to GitHub user authorization. }
         default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/integrations/connect/callback:
     get:
@@ -1290,6 +1304,7 @@ components:
         status: { oneOf: [{ type: string, enum: [verified, failed] }, { type: "null" }] }
         disabled: { type: boolean }
         configuration: { type: object, additionalProperties: true }
+        providerInstallationId: { type: string, description: Non-secret provider installation selection identifier. }
         relayId: { $ref: "#/components/schemas/UUID" }
         webhook: { $ref: "#/components/schemas/WebhookReference" }
         credential: { $ref: "#/components/schemas/SecretReference" }

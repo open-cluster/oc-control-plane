@@ -12,22 +12,24 @@ var ErrConnectFlowUnknown = errors.New("connect flow unknown")
 const connectFlowLifetime = 15 * time.Minute
 
 type ConnectFlow struct {
-	Organization string
-	Provider     Provider
-	Principal    string
-	ReturnTo     string
-	ExpiresAt    time.Time
+	ProviderInstallationID string
+	Organization           string
+	Provider               Provider
+	Principal              string
+	ReturnTo               string
+	ExpiresAt              time.Time
 }
 
 type Connect struct {
 	SealsCredential bool
-	Authorize       func(ctx context.Context, state, callback string) (string, error)
+	Authorize       func(ctx context.Context, state, callback, providerInstallationID string) (string, error)
 	Redeem          func(ctx context.Context, returned ConnectReturn) (ConnectBinding, error)
 }
 
 type ConnectReturn struct {
-	Query    url.Values
-	Callback string
+	ProviderInstallationID string
+	Query                  url.Values
+	Callback               string
 }
 
 type ConnectBinding struct {

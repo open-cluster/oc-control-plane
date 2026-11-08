@@ -372,10 +372,44 @@ paths:
           $ref: '#/components/responses/ConnectStarted'
         default:
           $ref: '#/components/responses/ErrorResponse'
+      parameters:
+        - name: providerInstallationId
+          in: query
+          schema:
+            type: string
+          description: Existing GitHub installation to authorize. Selection alone never proves ownership.
       operationId: startIntegrationConnect
       summary: Start provider authorization
       tags:
         - Integration Types
+  /api/v1/integration-types/github/setup:
+    get:
+      security:
+        - SessionCookie: []
+      x-opencluster-access: privileged
+      x-opencluster-cookie-csrf: not-required
+      x-opencluster-idempotency: not-applicable
+      responses:
+        '302':
+          description: Redirect to GitHub user authorization.
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+      operationId: continueGitHubConnect
+      summary: Continue GitHub installation authorization
+      tags:
+        - Integrations
+      parameters:
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: installation_id
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: ^[1-9][0-9]*$
   /api/v1/integrations/connect/callback:
     get:
       security:
@@ -2406,6 +2440,9 @@ components:
         configuration:
           type: object
           additionalProperties: true
+        providerInstallationId:
+          type: string
+          description: Non-secret provider installation selection identifier.
         relayId:
           $ref: '#/components/schemas/UUID'
         webhook:
@@ -2477,6 +2514,9 @@ components:
         configuration:
           type: object
           additionalProperties: true
+        providerInstallationId:
+          type: string
+          description: Non-secret provider installation selection identifier.
         relayId:
           $ref: '#/components/schemas/UUID'
         webhook:

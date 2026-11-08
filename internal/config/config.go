@@ -55,12 +55,18 @@ var SupportedEnvironmentKeys = []string{
 	EnvSlackSigningSecret,
 	EnvSlackSigningSecretFile,
 
+	EnvGitHubClientID,
+	EnvGitHubClientSecret,
+	EnvGitHubClientSecretFile,
 	EnvGitHubAppID,
 	EnvGitHubAppKey,
 	EnvGitHubAppKeyFile,
 }
 
 const (
+	EnvGitHubClientID                         = "OC_GITHUB_CLIENT_ID"
+	EnvGitHubClientSecret                     = "OC_GITHUB_CLIENT_SECRET"
+	EnvGitHubClientSecretFile                 = "OC_GITHUB_CLIENT_SECRET_FILE"
 	EnvDatabaseDSN                            = "OC_DATABASE_DSN"
 	EnvDatabaseDSNFile                        = "OC_DATABASE_DSN_FILE"
 	EnvConfigFile                             = "OC_CONFIG_FILE"
@@ -116,6 +122,8 @@ type Config struct {
 	SlackClientSecret  string
 	SlackSigningSecret string
 
+	GitHubClientID      string
+	GitHubClientSecret  string
 	GitHubAppID         string
 	GitHubAppPrivateKey []byte
 
@@ -182,6 +190,14 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	}
 	if cfg.GitHubAppID, cfg.GitHubAppPrivateKey, err = gitHubApp(lookup); err != nil {
 		return Config{}, err
+	}
+	cfg.GitHubClientID, _ = lookup(EnvGitHubClientID)
+	cfg.GitHubClientID = strings.TrimSpace(cfg.GitHubClientID)
+	if cfg.GitHubClientSecret, err = readSecretText(lookup, EnvGitHubClientSecretFile); err != nil {
+		return Config{}, err
+	}
+	if (cfg.GitHubClientID == "") != (cfg.GitHubClientSecret == "") {
+		return Config{}, fmt.Errorf("%s and either %s or %s must be configured together", EnvGitHubClientID, EnvGitHubClientSecret, EnvGitHubClientSecretFile)
 	}
 	if err = slackApp(lookup, &cfg); err != nil {
 		return Config{}, err

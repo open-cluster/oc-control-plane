@@ -61,7 +61,7 @@ func connect(installer *Installer, client *Client) *integrations.Connect {
 	}
 	return &integrations.Connect{
 		SealsCredential: true,
-		Authorize: func(_ context.Context, state, callback string) (string, error) {
+		Authorize: func(_ context.Context, state, callback, _ string) (string, error) {
 			return installer.authorize(state, callback)
 		},
 		Redeem: func(ctx context.Context, returned integrations.ConnectReturn) (

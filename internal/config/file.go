@@ -53,8 +53,10 @@ type fileConfiguration struct {
 		SigningSecretFile *string `yaml:"signingSecretFile"`
 	} `yaml:"slack"`
 	GitHub struct {
-		AppID          *string `yaml:"appID"`
-		PrivateKeyFile *string `yaml:"privateKeyFile"`
+		ClientID         *string `yaml:"clientID"`
+		ClientSecretFile *string `yaml:"clientSecretFile"`
+		AppID            *string `yaml:"appID"`
+		PrivateKeyFile   *string `yaml:"privateKeyFile"`
 	} `yaml:"github"`
 	Security struct {
 		EncryptionKeyFile *string `yaml:"encryptionKeyFile"`
@@ -158,6 +160,8 @@ func (document fileConfiguration) environment(directory string) map[string]strin
 	integer(EnvInvestigationWorkers, document.Investigations.Workers)
 	integer(EnvInvestigationMaxPendingPerOrganization,
 		document.Investigations.MaxPendingPerOrganization)
+	set(EnvGitHubClientID, document.GitHub.ClientID)
+	secretFile(EnvGitHubClientSecretFile, document.GitHub.ClientSecretFile)
 	set(EnvGitHubAppID, document.GitHub.AppID)
 	set(EnvOIDCIssuer, document.OIDC.Issuer)
 	set(EnvOIDCClientID, document.OIDC.ClientID)

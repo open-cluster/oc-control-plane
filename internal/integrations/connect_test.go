@@ -42,7 +42,7 @@ func sealingDefinition(authorized *bool) Definition {
 		},
 		Connect: &Connect{
 			SealsCredential: true,
-			Authorize: func(_ context.Context, state, callback string) (string, error) {
+			Authorize: func(_ context.Context, state, callback, _ string) (string, error) {
 				*authorized = true
 				return "https://vendor.example/install?state=" + state, nil
 			},

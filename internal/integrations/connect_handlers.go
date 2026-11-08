@@ -96,18 +96,20 @@ func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	authorization, err := definition.Connect.Authorize(ctx, state, h.callbackURL())
+	providerInstallationID := request.URL.Query().Get("providerInstallationId")
+	authorization, err := definition.Connect.Authorize(ctx, state, h.callbackURL(), providerInstallationID)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
 
 	flow := ConnectFlow{
-		Organization: organization.String(),
-		Provider:     definition.Key,
-		Principal:    principal.UserID().String(),
-		ReturnTo:     returnTo,
-		ExpiresAt:    time.Now().Add(connectFlowLifetime),
+		ProviderInstallationID: providerInstallationID,
+		Organization:           organization.String(),
+		Provider:               definition.Key,
+		Principal:              principal.UserID().String(),
+		ReturnTo:               returnTo,
+		ExpiresAt:              time.Now().Add(connectFlowLifetime),
 	}
 	if err := h.Store.StartConnectFlow(ctx, organization, flow, state); err != nil {
 		h.fail(writer, request, err)
@@ -168,7 +170,7 @@ func (h Handlers) completeConnect(writer http.ResponseWriter, request *http.Requ
 	}
 
 	bound, err := definition.Connect.Redeem(ctx, ConnectReturn{
-		Query: request.URL.Query(), Callback: h.callbackURL(),
+		Query: request.URL.Query(), Callback: h.callbackURL(), ProviderInstallationID: flow.ProviderInstallationID,
 	})
 	if err != nil {
 		h.Logger.WarnContext(ctx, "an integration connect could not be proven",

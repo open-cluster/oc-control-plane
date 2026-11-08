@@ -53,7 +53,7 @@ for Compose rather than the standalone `.env.example`.
 | Database DSN and encryption key | A running HTTP service. Retain the encryption key across restarts. Recovery commands need only the database DSN. |
 | AI provider, exact model, and API key | Together, to enable Investigations. Without them, the API remains available and Investigation requests report unavailability. |
 | OIDC issuer, client ID, and client secret | Together, when using OIDC. Local authentication remains available. |
-| GitHub App ID and private key | Together, when using GitHub App installation. |
+| GitHub App ID and private key | Existing installation reads. New Connect also requires the OAuth client ID and client secret together. |
 | Slack App client ID and secret | Together, for Slack installation. Signed inbound events also require the signing secret. |
 | Relay listener and SPKI pins | When enabling Relay. Use the deployment's separate Relay TLS settings. |
 | Logs, telemetry, session lifetime, worker and model limits | Optional overrides with existing defaults. |
@@ -131,6 +131,8 @@ slack:
 github:
   appID: "12345"
   privateKeyFile: /run/secrets/github_private_key
+  clientID: your-github-oauth-client-id
+  clientSecretFile: /run/secrets/github_client_secret
 security:
   encryptionKeyFile: /run/secrets/encryption_key
 ```
@@ -257,6 +259,8 @@ and training terms before production use.
 | `OC_SLACK_CLIENT_ID` | Deployment Slack App client ID. |
 | `OC_SLACK_CLIENT_SECRET` / `OC_SLACK_CLIENT_SECRET_FILE` | Slack App client-secret file. Direct value or file. Do not set both. |
 | `OC_SLACK_SIGNING_SECRET` / `OC_SLACK_SIGNING_SECRET_FILE` | Slack request signing-secret file. Direct value or file. Do not set both. |
+| `OC_GITHUB_CLIENT_ID` | OAuth client ID for new GitHub authorization. |
+| `OC_GITHUB_CLIENT_SECRET` / `OC_GITHUB_CLIENT_SECRET_FILE` | OAuth client secret. Direct value or file; do not set both. |
 | `OC_GITHUB_APP_ID` | Deployment GitHub App ID. |
 | `OC_GITHUB_APP_PRIVATE_KEY` / `OC_GITHUB_APP_PRIVATE_KEY_FILE` | GitHub App private-key file. Direct value or file. Do not set both. |
 

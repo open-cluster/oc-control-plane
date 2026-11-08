@@ -19,7 +19,7 @@ const (
 	toolListReleases     = "github_list_releases"
 )
 
-func Definition(app *App, client *Client) integrations.Definition {
+func Definition(app *App, client *Client, clientID, clientSecret string) integrations.Definition {
 	where := deployment{app: app, client: client}
 	return integrations.Definition{
 		Key: "github", Name: "GitHub",
@@ -37,7 +37,7 @@ func Definition(app *App, client *Client) integrations.Definition {
 			}
 			return probe(ctx, where, installation)
 		},
-		Connect: connect(app, client),
+		Connect: connect(app, client, clientID, clientSecret),
 	}
 }
 

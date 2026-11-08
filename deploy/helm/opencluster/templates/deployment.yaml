@@ -56,6 +56,16 @@ spec:
               value: {{ .Values.sessionLifetimeSeconds | quote }}
             - name: OC_LOG_LEVEL
               value: {{ .Values.logLevel | default "info" | quote }}
+            {{- if .Values.github.appID }}
+            - name: OC_GITHUB_APP_ID
+              value: {{ .Values.github.appID | quote }}
+            - name: OC_GITHUB_CLIENT_ID
+              value: {{ required "github.clientID is required with github.appID" .Values.github.clientID | quote }}
+            - name: OC_GITHUB_APP_PRIVATE_KEY_FILE
+              value: "/run/opencluster/credentials/{{ .Values.github.privateKeyKey }}"
+            - name: OC_GITHUB_CLIENT_SECRET_FILE
+              value: "/run/opencluster/credentials/{{ .Values.github.clientSecretKey }}"
+            {{- end }}
             {{- if .Values.relay.enabled }}
             - name: OC_RELAY_ADDRESS
               value: ":{{ .Values.relay.internalPort }}"

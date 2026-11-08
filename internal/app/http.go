@@ -21,6 +21,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/alertmanager"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/genericwebhook"
+	"github.com/open-cluster/oc-control-plane/internal/integrations/github"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 	"github.com/open-cluster/oc-control-plane/internal/telemetry"
 	"github.com/open-cluster/oc-control-plane/internal/webhooks"
@@ -164,7 +165,7 @@ func apiRouter(process assembled) (http.Handler, error) {
 		InvestigationWindowLead: defaultInvestigationWindowLead,
 		MaxWaitingTurns:         cfg.MaxPendingInvestigations,
 		PublicURL:               cfg.PublicURL,
-	}.Router()
+	}.Router(github.SetupHandlers{Integrations: integrations.Handlers{Store: process.database, Catalog: process.catalog, Logger: process.logger, PublicURL: cfg.PublicURL}}.Routes()...)
 	if err != nil {
 		return nil, fmt.Errorf("assembling the API surface: %w", err)
 	}

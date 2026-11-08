@@ -9,7 +9,11 @@ Connect GitHub to answer operational questions about repositories, commits, pull
 
 You need the OpenCluster **Admin** role and permission to administer the GitHub App installation. Configure a GitHub App for the deployment. The App needs no webhook.
 
-Set its setup URL to the deployment's public HTTPS origin followed by `/api/v1/integrations/connect/callback` and enable redirect on update. Configure the App ID and a private-key file in [deployment configuration](/self-hosting/configuration#environment-reference). Keep the key on the deployment.
+Set the setup URL to your public HTTPS origin plus `/api/v1/integration-types/github/setup`, and the OAuth callback to the same origin plus `/api/v1/integrations/connect/callback`. Disable automatic OAuth during installation. Configure the App ID, private key, OAuth client ID and client secret through [deployment configuration](/self-hosting/configuration#environment-reference). Keep all app credentials on the deployment.
+
+For Compose, add the optional GitHub override to your normal deployment command: `docker compose -f deploy/compose/compose.yaml -f deploy/compose/github.yaml up -d`. Set `OPENCLUSTER_GITHUB_APP_ID`, `OPENCLUSTER_GITHUB_CLIENT_ID`, and the absolute file paths `OPENCLUSTER_GITHUB_APP_PRIVATE_KEY_FILE` and `OPENCLUSTER_GITHUB_CLIENT_SECRET_FILE`.
+
+For Helm, set `github.appID` and `github.clientID`. Put the private key and OAuth secret in the existing credentials Secret using `github.privateKeyKey` and `github.clientSecretKey`. Deployments without GitHub need none of these settings.
 
 ## GitHub App permissions
 
@@ -28,6 +32,10 @@ The current self-hosted deployment uses an advanced API-only browser procedure u
 1. Start the [browser authorization flow](/api-reference/overview#authorize-github-or-slack-in-a-browser) with type `github`.
 2. In GitHub, choose the account and select the repositories OpenCluster should read. Confirm the requested permissions.
 3. Return to OpenCluster in the same browser session. The [authorization reference](/api-reference/overview#authorize-github-or-slack-in-a-browser) explains how to confirm setup.
+
+For an existing installation, pass its `providerInstallationId` as a query parameter when starting Connect. Obtain it from authorized Integration detail or GitHub installation settings. This starts fresh user authorization without reinstalling the app.
+
+Personal installations require the owning GitHub user. Organization installations require an active organization owner; repository collaborators cannot bind installation-wide access. No extra Members permission is requested.
 
 Use GitHub's installation settings to change the repository selection. Repeating setup for the same installation in the same Organization refreshes the Integration.
 

@@ -81,20 +81,21 @@ type credentialView struct {
 }
 
 type integrationView struct {
-	ID               string                   `json:"id"`
-	Type             string                   `json:"type"`
-	Name             string                   `json:"name"`
-	Status           *string                  `json:"status"`
-	Disabled         bool                     `json:"disabled"`
-	Configuration    map[string]any           `json:"configuration"`
-	RelayID          string                   `json:"relayId,omitempty"`
-	Webhook          *webhookView             `json:"webhook,omitempty"`
-	Credential       *credentialView          `json:"credential,omitempty"`
-	VerifiedAt       string                   `json:"verifiedAt,omitempty"`
-	VerificationNote string                   `json:"verificationNote,omitempty"`
-	Inbound          *inboundAvailabilityView `json:"inbound,omitempty"`
-	ToolAvailability []toolAvailabilityView   `json:"toolAvailability"`
-	CreatedAt        string                   `json:"createdAt"`
+	ProviderInstallationID string                   `json:"providerInstallationId,omitempty"`
+	ID                     string                   `json:"id"`
+	Type                   string                   `json:"type"`
+	Name                   string                   `json:"name"`
+	Status                 *string                  `json:"status"`
+	Disabled               bool                     `json:"disabled"`
+	Configuration          map[string]any           `json:"configuration"`
+	RelayID                string                   `json:"relayId,omitempty"`
+	Webhook                *webhookView             `json:"webhook,omitempty"`
+	Credential             *credentialView          `json:"credential,omitempty"`
+	VerifiedAt             string                   `json:"verifiedAt,omitempty"`
+	VerificationNote       string                   `json:"verificationNote,omitempty"`
+	Inbound                *inboundAvailabilityView `json:"inbound,omitempty"`
+	ToolAvailability       []toolAvailabilityView   `json:"toolAvailability"`
+	CreatedAt              string                   `json:"createdAt"`
 }
 
 type toolAvailabilityView struct {
@@ -143,6 +144,9 @@ func (h Handlers) viewOf(found Integration) integrationView {
 		CreatedAt:        stamp(found.CreatedAt),
 		Inbound:          inbound,
 		ToolAvailability: availability,
+	}
+	if found.Installation != nil && len(found.Installation.Key) == 1 {
+		view.ProviderInstallationID = found.Installation.Key[0]
 	}
 	if status := found.Status.String(); status != "" {
 		view.Status = &status

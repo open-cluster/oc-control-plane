@@ -9,11 +9,61 @@ import (
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
+
+func TestConnectRequiresOAuthCredentials(t *testing.T) {
+	client := NewClient("")
+	app, err := NewApp("12345", pemPKCS1(testKey(t)), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if Definition(app, client, "", "").Connectable() {
+		t.Fatal("App key alone must not enable installation binding without user authorization")
+	}
+}
+
+func TestConnectVerifiesUserInstallationOwnership(t *testing.T) {
+	for _, scenario := range []struct {
+		name, installations, membership string
+		accepted                        bool
+	}{
+		{"organization owner", `{"installations":[{"id":7}]}`, `[{"state":"active","role":"admin","organization":{"id":99}}]`, true},
+		{"forged installation", `{"installations":[{"id":8}]}`, `[]`, false},
+		{"repository collaborator", `{"installations":[{"id":7}]}`, `[{"state":"active","role":"member","organization":{"id":99}}]`, false},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			vendor := newFakeGitHub(t)
+			vendor.answer("/login/oauth/access_token", `{"access_token":"user-token","token_type":"bearer"}`)
+			vendor.answer("/app/installations/7", `{"id":7,"account":{"id":99,"login":"controlled-org","type":"Organization"}}`)
+			vendor.answer("/user/installations", scenario.installations)
+			vendor.answer("/user", `{"id":42}`)
+			vendor.answer("/user/memberships/orgs", scenario.membership)
+			client := NewClient(vendor.URL)
+			app, err := NewApp("12345", pemPKCS1(testKey(t)), client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			authorization := Definition(app, client, "client-id", "client-secret").Connect
+			installation, err := authorization.Redeem(testContext(t), integrations.ConnectReturn{
+				ProviderInstallationID: "7", Callback: "https://control.example/callback",
+				Query: url.Values{"code": {"user-code"}, "installation_id": {"999"}},
+			})
+			if (err == nil) != scenario.accepted {
+				t.Fatalf("accepted = %v, want %v", err == nil, scenario.accepted)
+			}
+			if scenario.accepted && (installation.Installation == nil || installation.Installation.Key[0] != "7") {
+				t.Fatal("callback overrode the stored installation selection")
+			}
+		})
+	}
+}
 
 func testKey(t *testing.T) *rsa.PrivateKey {
 	t.Helper()
