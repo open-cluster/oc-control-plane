@@ -2018,7 +2018,7 @@ components:
         - email
         - displayName
         - role
-        - disconnected
+        - disabled
         - createdAt
       properties:
         userId:
@@ -2037,7 +2037,7 @@ components:
             - admin
             - editor
             - viewer
-        disconnected:
+        disabled:
           type: boolean
         createdAt:
           $ref: '#/components/schemas/Timestamp'

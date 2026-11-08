@@ -1132,13 +1132,13 @@ components:
     Member:
       type: object
       additionalProperties: false
-      required: [userId, email, displayName, role, disconnected, createdAt]
+      required: [userId, email, displayName, role, disabled, createdAt]
       properties:
         userId: { $ref: "#/components/schemas/UUID" }
         email: { type: string, format: email, maxLength: 254 }
         displayName: { type: string, minLength: 1, maxLength: 256 }
         role: { type: string, enum: [admin, editor, viewer] }
-        disconnected: { type: boolean }
+        disabled: { type: boolean }
         createdAt: { $ref: "#/components/schemas/Timestamp" }
     MemberList:
       type: object
