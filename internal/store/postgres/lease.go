@@ -153,7 +153,8 @@ func (p *Database) ReleaseStrandedLeases(
 	}
 	tag, err := pool.Exec(ctx, `
 		UPDATE relay_job
-		   SET status           = 0,
+		   SET status           = CASE WHEN cancel_requested_at IS NOT NULL THEN 4 ELSE 0 END,
+		       terminal_at      = CASE WHEN cancel_requested_at IS NOT NULL THEN now() END,
 		       lease_session    = NULL,
 		       lease_expires_at = NULL,
 		       -- Raised here rather than left for the next claim. Releasing a lease ends that
