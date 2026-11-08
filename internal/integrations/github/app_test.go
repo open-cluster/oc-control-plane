@@ -34,9 +34,12 @@ func TestConnectVerifiesUserInstallationOwnership(t *testing.T) {
 		name, installations, membership string
 		accepted                        bool
 	}{
-		{"organization owner", `{"installations":[{"id":7}]}`, `[{"state":"active","role":"admin","organization":{"id":99}}]`, true},
-		{"forged installation", `{"installations":[{"id":8}]}`, `[]`, false},
-		{"repository collaborator", `{"installations":[{"id":7}]}`, `[{"state":"active","role":"member","organization":{"id":99}}]`, false},
+		{"organization owner", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":99}}`, true},
+		{"forged installation", `{"installations":[{"id":8}]}`, `{}`, false},
+		{"repository collaborator", `{"installations":[{"id":7}]}`, `{"state":"active","role":"member","organization":{"id":99}}`, false},
+		{"another organization", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":100}}`, false},
+		{"pending membership", `{"installations":[{"id":7}]}`, `{"state":"pending","role":"admin","organization":{"id":99}}`, false},
+		{"unavailable membership proof", `{"installations":[{"id":7}]}`, `{}`, false},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			vendor := newFakeGitHub(t)
@@ -44,7 +47,7 @@ func TestConnectVerifiesUserInstallationOwnership(t *testing.T) {
 			vendor.answer("/app/installations/7", `{"id":7,"account":{"id":99,"login":"controlled-org","type":"Organization"}}`)
 			vendor.answer("/user/installations", scenario.installations)
 			vendor.answer("/user", `{"id":42}`)
-			vendor.answer("/user/memberships/orgs", scenario.membership)
+			vendor.answer("/user/memberships/orgs/controlled-org", scenario.membership)
 			client := NewClient(vendor.URL)
 			app, err := NewApp("12345", pemPKCS1(testKey(t)), client)
 			if err != nil {

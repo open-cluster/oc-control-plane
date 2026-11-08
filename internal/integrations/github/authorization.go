@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 )
 
@@ -71,29 +70,18 @@ func userOwnsInstallation(ctx context.Context, client *Client, userToken string,
 	if providerInstallation.AccountType == "User" {
 		return user.ID == providerInstallation.AccountID
 	}
-	if providerInstallation.AccountType != "Organization" {
+	if providerInstallation.AccountType != "Organization" || providerInstallation.Account == "" {
 		return false
 	}
-	for page := 1; page <= authorizationPageLimit; page++ {
-		var memberships []struct {
-			State        string `json:"state"`
-			Role         string `json:"role"`
-			Organization struct {
-				ID int64 `json:"id"`
-			} `json:"organization"`
-		}
-		header, err := client.call(ctx, userToken, http.MethodGet, "/user/memberships/orgs", url.Values{"per_page": {"100"}, "page": {strconv.Itoa(page)}, "state": {"active"}}, &memberships)
-		if err != nil {
-			return false
-		}
-		for _, membership := range memberships {
-			if membership.Organization.ID == providerInstallation.AccountID && membership.State == "active" && membership.Role == "admin" {
-				return true
-			}
-		}
-		if !hasNextPage(header) {
-			return false
-		}
+	var membership struct {
+		State        string `json:"state"`
+		Role         string `json:"role"`
+		Organization struct {
+			ID int64 `json:"id"`
+		} `json:"organization"`
 	}
-	return false
+	_, err := client.call(ctx, userToken, http.MethodGet,
+		"/user/memberships/orgs/"+url.PathEscape(providerInstallation.Account), nil, &membership)
+	return err == nil && membership.Organization.ID == providerInstallation.AccountID &&
+		membership.State == "active" && membership.Role == "admin"
 }

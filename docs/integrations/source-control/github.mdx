@@ -25,6 +25,8 @@ For Helm, set `github.appID` and `github.clientID`. Put the private key and OAut
 | Checks | Read |
 | Actions | Read |
 
+Also grant **Organization permissions → Members: Read-only** so OpenCluster can verify the connecting user's organization ownership. Existing installations must approve this added permission in GitHub before connecting again. Until approval, OpenCluster refuses connections whose ownership cannot be verified.
+
 ## Connect
 
 The current self-hosted deployment uses an advanced API-only browser procedure until the frontend ships.
