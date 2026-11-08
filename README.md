@@ -150,6 +150,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the complete design.
 - Connected content and Conversation Messages are treated as untrusted data.
 - Tools are available only through verified Integration capabilities.
 - Credentials are sealed or digested and are not exposed through product APIs.
+- Slack authorization requests the scopes used for reads, app mentions, and replies; no assistant scope is required.
 - Material Findings cite supporting Tool Runs.
 - Current Action Proposals do not execute production changes.
 
