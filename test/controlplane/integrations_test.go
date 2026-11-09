@@ -170,10 +170,9 @@ type integrationBody struct {
 	Credential *struct {
 		Configured bool `json:"configured"`
 	} `json:"credential"`
-	VerifiedAt             string                 `json:"verifiedAt"`
-	VerificationNote       string                 `json:"verificationNote"`
-	ToolAvailability       []toolAvailabilityBody `json:"toolAvailability"`
-	ProviderInstallationID string                 `json:"providerInstallationId"`
+	VerifiedAt       string                 `json:"verifiedAt"`
+	VerificationNote string                 `json:"verificationNote"`
+	ToolAvailability []toolAvailabilityBody `json:"toolAvailability"`
 }
 
 type toolAvailabilityBody struct {
