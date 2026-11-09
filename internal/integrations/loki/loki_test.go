@@ -138,6 +138,7 @@ func TestInvalidInputsAndCancellationDoNotReachTheSource(t *testing.T) {
 	for _, changed := range []map[string]any{
 		{"url": source.URL + "?secret=fixture-token"}, {"url": "http://user:fixture-token@example.com"},
 		{"tenantId": "one|two"}, {"tenantId": "bad\r\nheader"}, {"auth": "implicit"}, {"auth": "basic", "username": ""},
+		{"auth": "none", "username": "unexpected"},
 	} {
 		input := queryRequest(source.URL, nil)
 		for key, value := range changed {
@@ -147,6 +148,11 @@ func TestInvalidInputsAndCancellationDoNotReachTheSource(t *testing.T) {
 		if verified.Status != integrations.StatusFailed || strings.Contains(verified.Note, "fixture-token") {
 			t.Errorf("invalid configuration = %+v", verified)
 		}
+	}
+	input := queryRequest(source.URL, nil)
+	input.Integration.Configuration["auth"] = "none"
+	if verified := loki.Definition().Probe(t.Context(), integrations.ProbeInput{Integration: input.Integration, Credential: "fixture-token"}); verified.Status != integrations.StatusFailed {
+		t.Fatal("unauthenticated mode accepted a credential")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -233,25 +239,31 @@ func queryRequest(address string, arguments map[string]any) integrations.ToolReq
 	}
 }
 
-func TestBasicAuthenticationUsesTheOneCredential(t *testing.T) {
-	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		username, token, ok := r.BasicAuth()
-		if !ok || username != "123456" || token != "fixture-token" || r.Header.Get("X-Scope-OrgID") != "production" {
-			t.Error("Basic authentication or configured tenant was not applied")
-		}
-		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"streams","result":[]}}`))
-	}))
-	defer source.Close()
-	input := queryRequest(source.URL, map[string]any{"query": `{app="checkout"}`})
-	input.Credential = "fixture-token"
-	input.Integration.Configuration["auth"] = "basic"
-	input.Integration.Configuration["username"] = "123456"
-	input.Integration.Configuration["tenantId"] = "production"
-	verified := loki.Definition().Probe(t.Context(), integrations.ProbeInput{Integration: input.Integration, Credential: input.Credential})
-	if verified.Status != integrations.StatusVerified {
-		t.Fatalf("Basic verification = %+v", verified)
-	}
-	if _, err := loki.Definition().Tools[0].Run(t.Context(), input); err != nil {
-		t.Fatal(err)
+func TestAuthenticationUsesTheConfiguredCredential(t *testing.T) {
+	for _, authentication := range []string{"basic", "none"} {
+		t.Run(authentication, func(t *testing.T) {
+			source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				username, token, ok := r.BasicAuth()
+				if authentication == "basic" && (!ok || username != "123456" || token != "fixture-token") || authentication == "none" && r.Header.Get("Authorization") != "" || r.Header.Get("X-Scope-OrgID") != "production" {
+					t.Error("Basic authentication or configured tenant was not applied")
+				}
+				_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"streams","result":[]}}`))
+			}))
+			defer source.Close()
+			input := queryRequest(source.URL, map[string]any{"query": `{app="checkout"}`})
+			input.Integration.Configuration["auth"] = authentication
+			if authentication == "basic" {
+				input.Credential = "fixture-token"
+				input.Integration.Configuration["username"] = "123456"
+			}
+			input.Integration.Configuration["tenantId"] = "production"
+			verified := loki.Definition().Probe(t.Context(), integrations.ProbeInput{Integration: input.Integration, Credential: input.Credential})
+			if verified.Status != integrations.StatusVerified {
+				t.Fatalf("%s verification = %+v", authentication, verified)
+			}
+			if _, err := loki.Definition().Tools[0].Run(t.Context(), input); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

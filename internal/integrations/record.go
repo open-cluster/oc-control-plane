@@ -99,8 +99,3 @@ type List struct {
 	Integrations []Integration
 	Next         string
 }
-
-type ProviderCount struct {
-	Provider Provider
-	Count    int
-}

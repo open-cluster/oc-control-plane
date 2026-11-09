@@ -18,8 +18,6 @@ type Store interface {
 		key InstallationKey) (Integration, Installation, error)
 	QueryIntegrations(ctx context.Context, who authz.Principal, org uuid.UUID,
 		query Query) (List, error)
-	CountIntegrationsByProvider(ctx context.Context, who authz.Principal,
-		org uuid.UUID) ([]ProviderCount, error)
 	UpdateIntegration(ctx context.Context, who authz.Principal, org uuid.UUID,
 		id uuid.UUID, update IntegrationUpdate) (Integration, error)
 	DisconnectIntegration(ctx context.Context, who authz.Principal, org uuid.UUID,

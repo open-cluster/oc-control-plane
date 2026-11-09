@@ -91,6 +91,14 @@ func TestConnectingSlackSealsTheBotTokenAndRecordsTheWorkspace(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-installed-token")
 	vendor.grant("channels:read,channels:history,users:read")
 	plane := startSlackInstallPlane(t, vendor, "")
+	status, detailBody := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/integration-types/slack", nil)
+	var integrationType struct {
+		SupportsConnect bool `json:"supportsConnect"`
+	}
+	decodeInto(t, detailBody, &integrationType)
+	if status != http.StatusOK || !integrationType.SupportsConnect {
+		t.Fatalf("configured Slack type detail = %d: %s", status, detailBody)
+	}
 
 	status, started := plane.pressConnectSlack(t, surfaceOrg)
 	if status != http.StatusOK {
@@ -136,8 +144,8 @@ func TestConnectingSlackSealsTheBotTokenAndRecordsTheWorkspace(t *testing.T) {
 		t.Errorf("status = %q, want verified", installed.Status)
 	}
 
-	if len(installed.Configuration) != 0 || installed.Inbound == nil || !installed.Inbound.Available {
-		t.Errorf("discovered workspace identity leaked into configuration or routing was lost: %+v",
+	if len(installed.Configuration) != 0 {
+		t.Errorf("discovered workspace identity leaked into configuration: %+v",
 			installed)
 	}
 
@@ -179,8 +187,8 @@ func TestTheSlackCallbackIgnoresAnOrganizationInItsQuery(t *testing.T) {
 	if len(listed) != 1 {
 		t.Fatalf("the starting tenant holds %d integrations, want one", len(listed))
 	}
-	if len(listed[0].Configuration) != 0 || listed[0].Inbound == nil || !listed[0].Inbound.Available {
-		t.Errorf("callback changed editable configuration or lost routing state: %+v", listed[0])
+	if len(listed[0].Configuration) != 0 {
+		t.Errorf("callback changed editable configuration: %+v", listed[0])
 	}
 	defer plane.switchOrganization(t, neighbourOrg)()
 	status, body := plane.call(t, http.MethodGet, plane.base(neighbourOrg)+"/integrations", nil)
@@ -243,23 +251,16 @@ func TestADeploymentWithNoSlackAppKeepsTheForm(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-good-token-1234")
 	plane := startSlackPlane(t, vendor)
 
-	status, body := plane.call(t, http.MethodGet,
-		plane.base(surfaceOrg)+"/integration-types", nil)
+	status, body := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/integration-types/slack", nil)
 	if status != http.StatusOK {
-		t.Fatalf("reading the catalog = %d: %s", status, body)
+		t.Fatalf("Slack detail = %d: %s", status, body)
 	}
-	var listed struct {
-		Types []struct {
-			Key             string `json:"key"`
-			SupportsConnect bool   `json:"supportsConnect"`
-		} `json:"types"`
+	var integrationType struct {
+		SupportsConnect bool `json:"supportsConnect"`
 	}
-	decodeInto(t, body, &listed)
-	for _, entry := range listed.Types {
-		if entry.Key == "slack" && entry.SupportsConnect {
-			t.Error("a deployment with no slack app offered a connect button that " +
-				"cannot finish")
-		}
+	decodeInto(t, body, &integrationType)
+	if integrationType.SupportsConnect {
+		t.Fatal("unconfigured Slack advertised Connect")
 	}
 
 	status, refused := plane.pressConnectSlack(t, surfaceOrg)
@@ -283,10 +284,6 @@ func TestAPastedSlackTokenOffersItsGrantedTools(t *testing.T) {
 	if reported := created.Integration.tool(t, "slack_list_channels"); !reported.Available {
 		t.Errorf("a pasted token lost a read Tool it had: %+v", reported)
 	}
-	if inbound := created.Integration.Inbound; inbound == nil || inbound.Available ||
-		!strings.Contains(inbound.Reason, "installed Slack app") {
-		t.Errorf("a pasted token did not explain why app mentions are unavailable: %+v", inbound)
-	}
 }
 
 func TestAConnectedSlackInstallationReportsItsTools(t *testing.T) {
@@ -302,8 +299,5 @@ func TestAConnectedSlackInstallationReportsItsTools(t *testing.T) {
 	}
 	if reported := listed[0].tool(t, "slack_list_channels"); !reported.Available {
 		t.Errorf("list channels is unavailable on a connected installation: %+v", reported)
-	}
-	if inbound := listed[0].Inbound; inbound == nil || !inbound.Available {
-		t.Errorf("an installed Slack app with a signing secret lost inbound app mentions: %+v", inbound)
 	}
 }

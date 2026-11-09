@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -341,51 +340,6 @@ func TestSlackPatchReplacesTheCredentialWriteOnly(t *testing.T) {
 				verified.Status, verified.VerificationNote)
 		}
 	})
-}
-
-func TestSlackCatalogEntryRendersTheTools(t *testing.T) {
-	vendor := newVendorFake(t, "xoxb-good-token-1234")
-	plane := startSlackPlane(t, vendor)
-
-	status, body := plane.call(t, http.MethodGet,
-		plane.base(surfaceOrg)+"/integration-types", nil)
-	if status != http.StatusOK {
-		t.Fatalf("reading the catalog = %d: %s", status, body)
-	}
-	var catalog struct {
-		Types []struct {
-			Key   string            `json:"key"`
-			Tools []json.RawMessage `json:"tools"`
-		} `json:"types"`
-	}
-	decodeInto(t, body, &catalog)
-
-	for _, entry := range catalog.Types {
-		if entry.Key != "slack" {
-			continue
-		}
-		if len(entry.Tools) != 4 {
-			t.Errorf("slack serves %d tools, want 4", len(entry.Tools))
-		}
-		for _, raw := range entry.Tools {
-			var tool map[string]json.RawMessage
-			if err := json.Unmarshal(raw, &tool); err != nil {
-				t.Fatal(err)
-			}
-			for _, field := range []string{"name", "description"} {
-				if len(tool[field]) == 0 {
-					t.Errorf("tool is rendered without %s: %s", field, raw)
-				}
-			}
-			for _, removed := range []string{"whenToUse", "whenNotToUse", "permissions", "output"} {
-				if _, present := tool[removed]; present {
-					t.Errorf("tool still renders obsolete %s: %s", removed, raw)
-				}
-			}
-		}
-		return
-	}
-	t.Fatalf("the catalog does not serve slack: %s", body)
 }
 
 func TestSlackAnotherTenantSeesNothing(t *testing.T) {

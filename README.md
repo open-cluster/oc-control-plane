@@ -69,7 +69,7 @@ OpenCluster currently supports:
 
 Integrations expose only the capabilities that were successfully verified for that connection.
 
-The Integration type API lists Tools, setup capabilities, and configured counts.
+The Integration type catalog lists provider identities. Type detail describes configuration fields and connection requirements.
 Registered types are available in the running build.
 
 See [Connect your tools](https://docs.open-cluster.io/getting-started/connect-your-tools)
