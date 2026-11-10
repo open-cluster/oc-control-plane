@@ -96,13 +96,13 @@ paths:
                   minLength: 1
                   maxLength: 1024
                   writeOnly: true
-                  description: Nonempty, at most 1024 UTF-8 bytes. String length bounds count characters; clients must measure UTF-8 bytes.
+                  description: Nonempty, at most 1024 UTF-8 bytes. String length bounds count characters. Clients must measure UTF-8 bytes.
                 newPassword:
                   type: string
                   minLength: 1
                   maxLength: 1024
                   writeOnly: true
-                  description: 12–1024 UTF-8 bytes. String length bounds count characters; clients must measure UTF-8 bytes.
+                  description: 12–1024 UTF-8 bytes. String length bounds count characters. Clients must measure UTF-8 bytes.
   /api/v1/auth/local/sign-in:
     post:
       security: []
@@ -376,7 +376,7 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
       operationId: getIntegrationType
       summary: Get integration type setup
-      description: Returns provider setup fields and connection support. Required fields describe unconditional manual-creation requirements; provider checks enforce conditional authentication rules.
+      description: Returns provider setup fields and connection support. Required fields describe unconditional manual-creation requirements. Provider checks enforce conditional authentication rules.
       tags:
         - Integration Types
   /api/v1/integration-types/{type}/connect:
@@ -1940,7 +1940,7 @@ components:
           minLength: 1
           maxLength: 1024
           writeOnly: true
-          description: 12–1024 UTF-8 bytes. String length bounds count characters; clients must measure UTF-8 bytes.
+          description: 12–1024 UTF-8 bytes. String length bounds count characters. Clients must measure UTF-8 bytes.
     LocalSignInRequest:
       type: object
       additionalProperties: false
@@ -1957,7 +1957,7 @@ components:
           type: string
           format: password
           writeOnly: true
-          description: Verified against the existing credential. Creation-length rules are not reapplied; JSON decoding is bounded to 64 KiB.
+          description: Verified against the existing credential. Creation-length rules are not reapplied. JSON decoding is bounded to 64 KiB.
     SessionUser:
       type: object
       additionalProperties: false
@@ -2175,7 +2175,7 @@ components:
           minLength: 1
           maxLength: 1024
           writeOnly: true
-          description: 12–1024 UTF-8 bytes. String length bounds count characters; clients must measure UTF-8 bytes.
+          description: 12–1024 UTF-8 bytes. String length bounds count characters. Clients must measure UTF-8 bytes.
         role:
           type: string
           enum:
@@ -2310,7 +2310,7 @@ components:
           type: boolean
         supportsConnect:
           type: boolean
-          description: Deployment prerequisites support starting provider authorization; not a live availability check.
+          description: Deployment prerequisites support starting provider authorization. Provider availability is not checked.
         configurationFields:
           type: array
           items:

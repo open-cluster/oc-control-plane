@@ -26,11 +26,11 @@ for clipping, timing, sensitivity, and retention semantics.
 
 Use `GET /api/v1/integration-types` for the supported-provider catalog. Each card contains only `key`, `name`, `description`, and `category`, ordered by key. The catalog has no query parameters, pagination, configured counts, or public Tool schemas.
 
-Select a provider with `GET /api/v1/integration-types/{type}`. Detail adds `requiresRelay`, `supportsConnect`, and `configurationFields`. Each field contains `key`, `type`, `required`, `secret`, and applicable `options`; no secret values or deployment credentials are returned. Field order follows the provider's configuration. An unknown key returns 404.
+Select a provider with `GET /api/v1/integration-types/{type}`. Detail adds `requiresRelay`, `supportsConnect`, and `configurationFields`. Each field contains `key`, `type`, `required`, `secret`, and applicable `options`. No secret values or deployment credentials are returned. Field order follows the provider's configuration. An unknown key returns 404.
 
-`required` describes unconditional manual-creation requirements. Provider checks still enforce conditional rules, such as a Basic username and token. Supply `relayId` at the top level when required. `supportsConnect` means the deployment can start provider authorization, not that delivery or provider availability has been tested. GitHub requires provider authorization; Slack also supports existing read-only tokens.
+`required` describes unconditional manual-creation requirements. Provider checks still enforce conditional rules, such as a Basic username and token. Supply `relayId` at the top level when required. `supportsConnect` means the deployment can start provider authorization, not that delivery or provider availability has been tested. GitHub requires provider authorization. Slack also supports existing read-only tokens.
 
-Use `GET /api/v1/integrations` separately for the active connections owned by your Organization; multiple instances can share a type. Instance lists retain pagination and search. Per-Integration `toolAvailability` reports verified grants and eligibility for registered operations. It is not a live health check. Setup guides explain provider access and authentication requirements.
+Use `GET /api/v1/integrations` separately for the active connections owned by your Organization. Multiple instances can share a type. Instance lists retain pagination and search. Per-Integration `toolAvailability` reports verified grants and eligibility for registered operations. It is not a live health check. Setup guides explain provider access and authentication requirements.
 
 ## Authentication
 

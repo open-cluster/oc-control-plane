@@ -7,7 +7,6 @@ import (
 )
 
 func Definition(client *Client, installer *Installer) integrations.Definition {
-	connection := connect(installer, client)
 	return integrations.Definition{
 		Key:  "slack",
 		Name: "Slack",
@@ -26,6 +25,6 @@ func Definition(client *Client, installer *Installer) integrations.Definition {
 		Probe: func(ctx context.Context, input integrations.ProbeInput) integrations.Verification {
 			return probe(ctx, client, input.Credential)
 		},
-		Connect: connection,
+		Connect: connect(installer, client),
 	}
 }

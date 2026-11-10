@@ -39,8 +39,12 @@ type integrationTypeListView struct {
 }
 
 func integrationTypeViewOf(definition Definition) integrationTypeView {
-	return integrationTypeView{Key: string(definition.Key), Name: definition.Name,
-		Description: definition.Description, Category: string(definition.Category)}
+	return integrationTypeView{
+		Key:         string(definition.Key),
+		Name:        definition.Name,
+		Description: definition.Description,
+		Category:    string(definition.Category),
+	}
 }
 
 type webhookView struct {

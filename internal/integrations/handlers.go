@@ -55,7 +55,6 @@ func (h Handlers) Routes() []authz.Route {
 }
 
 func (h Handlers) types(writer http.ResponseWriter, request *http.Request) {
-	_ = h.caller(request)
 	if len(request.URL.Query()) != 0 {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: "the integration type catalog does not accept query parameters"})
 		return
@@ -69,7 +68,6 @@ func (h Handlers) types(writer http.ResponseWriter, request *http.Request) {
 }
 
 func (h Handlers) typeDetail(writer http.ResponseWriter, request *http.Request) {
-	_ = h.caller(request)
 	definition, known := h.Catalog.Lookup(Provider(request.PathValue("type")))
 	if !known {
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "integration type not found"})
@@ -77,9 +75,24 @@ func (h Handlers) typeDetail(writer http.ResponseWriter, request *http.Request) 
 	}
 	configurationFields := make([]configurationFieldView, 0, len(definition.Config))
 	for _, field := range definition.Config {
-		configurationFields = append(configurationFields, configurationFieldView{Key: field.Key, Type: string(field.Type), Required: field.Required, Secret: field.Secret, Options: field.Options})
+		configurationFields = append(configurationFields, configurationFieldView{
+			Key:      field.Key,
+			Type:     string(field.Type),
+			Required: field.Required,
+			Secret:   field.Secret,
+			Options:  field.Options,
+		})
 	}
-	writeJSON(writer, http.StatusOK, integrationTypeDetailView{integrationTypeView: integrationTypeViewOf(definition), RequiresRelay: definition.RequiresRelay, SupportsConnect: definition.Connectable(), ConfigurationFields: configurationFields})
+	supportsConnect := definition.Connectable() && h.PublicURL != ""
+	if supportsConnect && definition.Connect.SealsCredential {
+		supportsConnect = h.Sealer.Configured()
+	}
+	writeJSON(writer, http.StatusOK, integrationTypeDetailView{
+		integrationTypeView: integrationTypeViewOf(definition),
+		RequiresRelay:       definition.RequiresRelay,
+		SupportsConnect:     supportsConnect,
+		ConfigurationFields: configurationFields,
+	})
 }
 
 var listSpec = listing.Spec{
@@ -243,7 +256,6 @@ func (h Handlers) probeAndSeal(
 }
 
 func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
-	_ = h.caller(request)
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return

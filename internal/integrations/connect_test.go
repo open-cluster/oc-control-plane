@@ -89,13 +89,21 @@ func TestStartConnectRefusesBeforeTheBrowserLeavesWhenNothingCanSeal(t *testing.
 		t.Fatalf("assembling the catalog: %v", err)
 	}
 
-	recorder := startConnectAgainst(t, Handlers{
+	handlers := Handlers{
 		Store:     storeUnderSeal{},
 		Catalog:   catalog,
 		Logger:    slog.New(slog.DiscardHandler),
 		Sealer:    seal.Sealer{},
 		PublicURL: "https://opencluster.example",
-	}, "")
+	}
+	detailRequest := httptest.NewRequest(http.MethodGet, "/api/v1/integration-types/stub", nil)
+	detailRequest.SetPathValue("type", "stub")
+	detail := httptest.NewRecorder()
+	handlers.typeDetail(detail, detailRequest)
+	if !strings.Contains(detail.Body.String(), `"supportsConnect":false`) {
+		t.Fatalf("type advertises Connect without a sealing key: %s", detail.Body.String())
+	}
+	recorder := startConnectAgainst(t, handlers, "")
 
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("starting a connect with no sealing key = %d, want 503: %s",
@@ -108,6 +116,17 @@ func TestStartConnectRefusesBeforeTheBrowserLeavesWhenNothingCanSeal(t *testing.
 		t.Error("an authorization URL was built for a deployment that cannot store what " +
 			"comes back; the customer would have granted permissions for nothing")
 	}
+	handlers.Sealer, err = seal.New(bytes.Repeat([]byte{9}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handlers.PublicURL = ""
+	detail = httptest.NewRecorder()
+	handlers.typeDetail(detail, detailRequest)
+	if !strings.Contains(detail.Body.String(), `"supportsConnect":false`) {
+		t.Fatalf("type advertises Connect without a callback origin: %s", detail.Body.String())
+	}
+
 }
 
 func TestStartConnectWithoutASealingKeyStillServesATypeThatSealsNothing(t *testing.T) {

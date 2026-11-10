@@ -25,4 +25,4 @@ A read covers at most the latest 24 hours of the requested interval, up to 200 e
 
 - Check the endpoint, token, Basic username and tenant if verification fails.
 - If a query returns no entries, check your labels, ingestion delay and retention. For an incomplete result, try a narrower interval or selector.
-- To replace the token, PATCH the Integration with its full configuration and the new token. Verify again after changes to the endpoint or tenant. To change a credential-bearing connection to unauthenticated access, Disconnect and create a new Integration; saved credentials cannot silently carry into that mode.
+- To replace the token, PATCH the Integration with its full configuration and the new token. Verify again after changes to the endpoint or tenant. To change a credential-bearing connection to unauthenticated access, Disconnect and create a new Integration. Saved credentials cannot silently carry into that mode.
