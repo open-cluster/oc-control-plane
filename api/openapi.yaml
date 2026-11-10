@@ -373,7 +373,7 @@ paths:
       summary: Disconnect integration
       tags: [Integrations]
       responses:
-        "204": { description: Integration permanently disconnected; history retained. Repeated requests are safe. }
+        "204": { description: Integration permanently disconnected. History retained. Repeated requests are safe. }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }

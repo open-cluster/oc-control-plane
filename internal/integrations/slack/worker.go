@@ -238,11 +238,11 @@ func (w Worker) release(ctx context.Context, reply Reply) {
 func (w Worker) send(
 	ctx context.Context, reply Reply, rendered Rendered,
 ) error {
-	token, err := w.credential(ctx, reply)
-	if err != nil {
-		return err
-	}
 	if reply.Stream.Native {
+		token, err := w.credential(ctx, reply)
+		if err != nil {
+			return err
+		}
 		return w.Client.AppendStream(ctx, token, reply.Stream, visible(rendered, false))
 	}
 
@@ -252,7 +252,7 @@ func (w Worker) send(
 	}
 	allRendered := Render(all)
 	allRendered.Footer = rendered.Footer
-	token, err = w.credential(ctx, reply)
+	token, err := w.credential(ctx, reply)
 	if err != nil {
 		return err
 	}

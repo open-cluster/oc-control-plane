@@ -519,7 +519,7 @@ paths:
       x-opencluster-idempotency: not-supported
       responses:
         '204':
-          description: Integration permanently disconnected; history retained. Repeated requests are safe.
+          description: Integration permanently disconnected. History retained. Repeated requests are safe.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':

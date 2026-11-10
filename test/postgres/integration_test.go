@@ -399,6 +399,28 @@ func TestDisconnectingTakesTheRoutingRecordWithIt(t *testing.T) {
 		t.Fatalf("disconnect retained active access: %+v %v", retained, err)
 	}
 
+	if err := database.DisconnectIntegration(context.Background(), ownerOf(t, organization), organization, created.ID); err != nil {
+		t.Fatalf("repeated disconnect: %v", err)
+	}
+	events, err := database.AuditEvents(context.Background(), ownerOf(t, organization), organization, audit.Page{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var transitions, repeats int
+	for _, event := range events.Events {
+		if event.Action != audit.ActionIntegrationDeleted || event.Target.ID != created.ID.String() {
+			continue
+		}
+		if event.Detail["disconnected"] == true {
+			transitions++
+		}
+		if event.Detail["alreadyDisconnected"] == true {
+			repeats++
+		}
+	}
+	if transitions != 1 || repeats != 1 {
+		t.Fatalf("disconnect audit transitions=%d repeats=%d, want one each", transitions, repeats)
+	}
 	if reconnected, err := connectSlack(t, database, organization, "Slack — again",
 		slackInstallation("T0ACME")); err != nil || reconnected.ID == created.ID {
 		t.Errorf("reconnecting a disconnected workspace: %v", err)
