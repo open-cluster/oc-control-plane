@@ -255,21 +255,21 @@ func TestACredentialFromAProvenReturnIsSealedOntoTheRecord(t *testing.T) {
 }
 
 func (s *capturingStore) ReplaceIntegrationCredential(
-	_ context.Context, _ authz.Principal, _ uuid.UUID, id uuid.UUID,
+	_ context.Context, _ authz.Principal, _ uuid.UUID, expectedIntegration Integration,
 	_ Revision, sealed []byte, verification Verification,
 	installed *Installation,
 ) (Integration, error) {
 	s.replaced = sealed
 	s.reinstalled = installed
-	return Integration{ID: id, Provider: "stub", Status: verification.Status}, nil
+	return Integration{ID: expectedIntegration.ID, Provider: "stub", Status: verification.Status}, nil
 }
 
 func (s *capturingStore) RecordIntegrationVerification(
-	_ context.Context, _ authz.Principal, _ uuid.UUID, id uuid.UUID,
+	_ context.Context, _ authz.Principal, _ uuid.UUID, expectedIntegration Integration,
 	verification Verification,
 ) (Integration, error) {
 	s.reVerified = true
-	return Integration{ID: id, Provider: "stub", Status: verification.Status}, nil
+	return Integration{ID: expectedIntegration.ID, Provider: "stub", Status: verification.Status}, nil
 }
 
 func TestReconnectingReplacesTheCredentialRatherThanReverifyingTheOldOne(t *testing.T) {

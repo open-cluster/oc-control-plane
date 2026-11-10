@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -456,9 +457,10 @@ func (p *Database) RotateIntegrationWebhookSecret(
 
 func (p *Database) ReplaceIntegrationCredential(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
-	id uuid.UUID, revision integrations.Revision, sealed []byte,
+	expectedIntegration integrations.Integration, revision integrations.Revision, sealed []byte,
 	verification integrations.Verification, installed *integrations.Installation,
 ) (integrations.Integration, error) {
+	id := expectedIntegration.ID
 	return audited(ctx, p, principal, organization, audit.ActionIntegrationCredentialReplaced,
 		func(ctx context.Context, transaction pgx.Tx) (
 			integrations.Integration, audit.Target, audit.Detail, error,
@@ -471,7 +473,7 @@ func (p *Database) ReplaceIntegrationCredential(
 						fmt.Errorf("encoding configuration: %w", err)
 				}
 			}
-			if err := checkIntegrationSnapshot(ctx, transaction, organization, id, verification.ExpectedIntegration); err != nil {
+			if err := checkExpectedIntegration(ctx, transaction, organization, expectedIntegration); err != nil {
 				return integrations.Integration{}, audit.Target{}, nil, err
 			}
 			grants := verificationGrants(verification)
@@ -514,13 +516,14 @@ func (p *Database) ReplaceIntegrationCredential(
 
 func (p *Database) RecordIntegrationVerification(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
-	id uuid.UUID, verification integrations.Verification,
+	expectedIntegration integrations.Integration, verification integrations.Verification,
 ) (integrations.Integration, error) {
+	id := expectedIntegration.ID
 	return audited(ctx, p, principal, organization, audit.ActionIntegrationVerified,
 		func(ctx context.Context, transaction pgx.Tx) (
 			integrations.Integration, audit.Target, audit.Detail, error,
 		) {
-			if err := checkIntegrationSnapshot(ctx, transaction, organization, id, verification.ExpectedIntegration); err != nil {
+			if err := checkExpectedIntegration(ctx, transaction, organization, expectedIntegration); err != nil {
 				return integrations.Integration{}, audit.Target{}, nil, err
 			}
 			grants := verificationGrants(verification)
@@ -739,4 +742,26 @@ func (p *Database) RecordCredentialUnseal(
 		Outcome:      audit.OutcomeAllowed,
 		Detail:       audit.Detail{"purpose": purpose},
 	})
+}
+
+// Lock the checked access settings until the mutation and its audit record commit.
+func checkExpectedIntegration(ctx context.Context, transaction pgx.Tx, organization uuid.UUID, expectedIntegration integrations.Integration) error {
+	integration, err := scanIntegration(transaction.QueryRow(ctx,
+		`SELECT `+integrationColumns+` FROM integration WHERE integration_id = $1 AND org_id = $2 FOR UPDATE`, expectedIntegration.ID, organization), organization.String())
+	if errors.Is(err, pgx.ErrNoRows) {
+		return integrations.ErrUnknown
+	}
+	if err != nil {
+		return err
+	}
+	if integration.Status != expectedIntegration.Status || !integration.VerifiedAt.Equal(expectedIntegration.VerifiedAt) ||
+		!reflect.DeepEqual(integration.VerificationGrants, expectedIntegration.VerificationGrants) ||
+		!bytes.Equal(integration.WebhookSecretDigest, expectedIntegration.WebhookSecretDigest) ||
+		integration.Disabled != expectedIntegration.Disabled || integration.RelayID != expectedIntegration.RelayID ||
+		!bytes.Equal(integration.CredentialSealed, expectedIntegration.CredentialSealed) ||
+		!reflect.DeepEqual(integration.Configuration, expectedIntegration.Configuration) ||
+		!reflect.DeepEqual(integration.Installation, expectedIntegration.Installation) {
+		return integrations.ErrConflict
+	}
+	return nil
 }

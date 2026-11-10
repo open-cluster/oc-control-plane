@@ -327,7 +327,6 @@ func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
 			verification := definition.Probe(ctx, ProbeInput{
 				Integration: integrationToVerify, Credential: credential,
 			})
-			verification.ExpectedIntegration = &integration
 			if verification.Status == StatusFailed {
 				writeJSON(writer, http.StatusBadRequest, errorView{Error: verification.Note})
 				return
@@ -338,7 +337,7 @@ func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
 			}
 
 			revised, err := h.Store.ReplaceIntegrationCredential(
-				ctx, principal, organization, id, Revision(requestBody), sealed,
+				ctx, principal, organization, integration, Revision(requestBody), sealed,
 				verification, nil)
 			if err != nil {
 				h.fail(writer, request, err)
@@ -447,7 +446,7 @@ func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
 	if definition.Probe != nil {
 		outcome := h.probeExisting(ctx, organization, definition, found)
 		verified, probeErr := h.Store.RecordIntegrationVerification(
-			ctx, principal, organization, id, outcome)
+			ctx, principal, organization, found, outcome)
 		if probeErr != nil {
 			h.fail(writer, request, probeErr)
 			return
@@ -477,9 +476,8 @@ func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
 	}
 
 	outcome := definition.Verify(input)
-	outcome.ExpectedIntegration = &found
 	verified, err := h.Store.RecordIntegrationVerification(
-		ctx, principal, organization, id, outcome)
+		ctx, principal, organization, found, outcome)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -497,7 +495,7 @@ func (h Handlers) probeExisting(
 	if len(integration.CredentialSealed) > 0 {
 		if err := h.Store.RecordCredentialUnseal(
 			ctx, organization, integration.ID, "verification probe"); err != nil {
-			return Verification{ExpectedIntegration: &integration,
+			return Verification{
 				Status: StatusFailed,
 				Note: "the credential unseal could not be recorded, so the credential " +
 					"was not used; verify again once the record is writable",
@@ -505,7 +503,7 @@ func (h Handlers) probeExisting(
 		}
 		credential, err := h.Sealer.Open(integration.CredentialSealed, CredentialBinding(integration.ID))
 		if err != nil {
-			return Verification{ExpectedIntegration: &integration,
+			return Verification{
 				Status: StatusFailed,
 				Note: "the stored credential could not be opened by this deployment; " +
 					"paste the credential again to replace it",
@@ -513,9 +511,7 @@ func (h Handlers) probeExisting(
 		}
 		input.Credential = credential
 	}
-	verification := definition.Probe(ctx, input)
-	verification.ExpectedIntegration = &integration
-	return verification
+	return definition.Probe(ctx, input)
 }
 
 func (h Handlers) rotateSecret(writer http.ResponseWriter, request *http.Request) {

@@ -272,7 +272,7 @@ func (h Handlers) reconnect(
 ) {
 	if bound.Credential == "" {
 		verified, err := h.Store.RecordIntegrationVerification(ctx, principal, organization,
-			existing.ID, h.probeExisting(ctx, organization, definition, existing))
+			existing, h.probeExisting(ctx, organization, definition, existing))
 		if err != nil {
 			h.fail(writer, request, err)
 			return
@@ -284,7 +284,6 @@ func (h Handlers) reconnect(
 	verification := definition.Probe(ctx, ProbeInput{
 		Integration: existing, Credential: bound.Credential,
 	})
-	verification.ExpectedIntegration = &existing
 	if verification.Status == StatusFailed {
 		h.Logger.WarnContext(ctx, "a reconnected integration did not verify",
 			slog.String("org_id", organization.String()),
@@ -300,7 +299,7 @@ func (h Handlers) reconnect(
 		return
 	}
 	verified, err := h.Store.ReplaceIntegrationCredential(ctx, principal, organization,
-		existing.ID, Revision{}, sealed, verification, bound.Installation)
+		existing, Revision{}, sealed, verification, bound.Installation)
 	if errors.Is(err, ErrInstallationTaken) {
 		h.Logger.WarnContext(ctx, "a reconnect named a provider installation already owned elsewhere",
 			slog.String("org_id", organization.String()),

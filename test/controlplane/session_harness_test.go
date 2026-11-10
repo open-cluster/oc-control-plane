@@ -358,7 +358,7 @@ func kubernetesIntegration(
 	if err != nil {
 		t.Fatalf("creating a kubernetes integration: %v", err)
 	}
-	if _, err = database.RecordIntegrationVerification(ctx, acting, organization, created.ID,
+	if _, err = database.RecordIntegrationVerification(ctx, acting, organization, created,
 		integrations.Verification{
 			Status: integrations.StatusVerified,
 			Grants: []string{capabilityUnderTest},
