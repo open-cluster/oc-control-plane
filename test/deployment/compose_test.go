@@ -73,7 +73,8 @@ func TestHelmRequiresAnExplicitPublicOrigin(t *testing.T) {
 		t.Fatalf("chart must require the public origin: %v: %s", err, output)
 	}
 	command = exec.Command("helm", "template", "opencluster", "deploy/helm/opencluster",
-		"--set", "server.publicURL=https://console.example.com")
+		"--set", "server.publicURL=https://console.example.com",
+		"--set", "github.appID=12345")
 	command.Dir = "../.."
 	output, err = command.CombinedOutput()
 	if err != nil {
@@ -83,6 +84,9 @@ func TestHelmRequiresAnExplicitPublicOrigin(t *testing.T) {
 		if !strings.Contains(string(output), expected) {
 			t.Errorf("rendered deployment is missing %q", expected)
 		}
+	}
+	if strings.Contains(string(output), "OC_GITHUB_CLIENT_SECRET") || strings.Contains(string(output), "OC_GITHUB_CLIENT_ID") {
+		t.Fatal("App-key-only reads must not require OAuth credentials")
 	}
 	if !strings.Contains(string(output), "httpGet:") {
 		t.Fatal("Helm must retain HTTP readiness and liveness probes")

@@ -33,13 +33,15 @@ func TestConnectVerifiesUserInstallationOwnership(t *testing.T) {
 	for _, scenario := range []struct {
 		name, installations, membership string
 		accepted                        bool
+		native                          bool
 	}{
-		{"organization owner", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":99}}`, true},
-		{"forged installation", `{"installations":[{"id":8}]}`, `{}`, false},
-		{"repository collaborator", `{"installations":[{"id":7}]}`, `{"state":"active","role":"member","organization":{"id":99}}`, false},
-		{"another organization", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":100}}`, false},
-		{"pending membership", `{"installations":[{"id":7}]}`, `{"state":"pending","role":"admin","organization":{"id":99}}`, false},
-		{"unavailable membership proof", `{"installations":[{"id":7}]}`, `{}`, false},
+		{"native installation owner", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":99}}`, true, true},
+		{"organization owner", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":99}}`, true, false},
+		{"forged installation", `{"installations":[{"id":8}]}`, `{}`, false, true},
+		{"repository collaborator", `{"installations":[{"id":7}]}`, `{"state":"active","role":"member","organization":{"id":99}}`, false, false},
+		{"another organization", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":100}}`, false, false},
+		{"pending membership", `{"installations":[{"id":7}]}`, `{"state":"pending","role":"admin","organization":{"id":99}}`, false, false},
+		{"unavailable membership proof", `{"installations":[{"id":7}]}`, `{}`, false, false},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			vendor := newFakeGitHub(t)
@@ -54,10 +56,16 @@ func TestConnectVerifiesUserInstallationOwnership(t *testing.T) {
 				t.Fatal(err)
 			}
 			authorization := Definition(app, client, "client-id", "client-secret").Connect
-			installation, err := authorization.Redeem(testContext(t), integrations.ConnectReturn{
-				ProviderInstallationID: "7", Callback: "https://control.example/callback",
-				Query: url.Values{"code": {"user-code"}, "installation_id": {"999"}},
-			})
+			returned := integrations.ConnectReturn{
+				ProviderInstallationID: "7",
+				Callback:               "https://control.example/callback",
+				Query:                  url.Values{"code": {"user-code"}, "installation_id": {"999"}},
+			}
+			if scenario.native {
+				returned.ProviderInstallationID = ""
+				returned.Query.Set("installation_id", "7")
+			}
+			installation, err := authorization.Redeem(testContext(t), returned)
 			if (err == nil) != scenario.accepted {
 				t.Fatalf("accepted = %v, want %v", err == nil, scenario.accepted)
 			}

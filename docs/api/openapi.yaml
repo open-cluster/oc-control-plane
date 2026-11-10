@@ -382,34 +382,6 @@ paths:
       summary: Start provider authorization
       tags:
         - Integration Types
-  /api/v1/integration-types/github/setup:
-    get:
-      security:
-        - SessionCookie: []
-      x-opencluster-access: privileged
-      x-opencluster-cookie-csrf: not-required
-      x-opencluster-idempotency: not-applicable
-      responses:
-        '302':
-          description: Redirect to GitHub user authorization.
-        default:
-          $ref: '#/components/responses/ErrorResponse'
-      operationId: continueGitHubConnect
-      summary: Continue GitHub installation authorization
-      tags:
-        - Integrations
-      parameters:
-        - name: state
-          in: query
-          required: true
-          schema:
-            type: string
-        - name: installation_id
-          in: query
-          required: true
-          schema:
-            type: string
-            pattern: ^[1-9][0-9]*$
   /api/v1/integrations/connect/callback:
     get:
       security:
@@ -433,6 +405,12 @@ paths:
       parameters:
         - $ref: '#/components/parameters/OAuthCode'
         - $ref: '#/components/parameters/OAuthState'
+        - name: installation_id
+          in: query
+          description: GitHub installation candidate returned during native installation authorization. A stored selection takes precedence. This identifier alone does not prove authorization.
+          schema:
+            type: string
+            pattern: ^[1-9][0-9]*$
   /api/v1/integrations:
     get:
       security:

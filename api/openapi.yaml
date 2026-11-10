@@ -283,18 +283,6 @@ paths:
       responses:
         "200": { $ref: "#/components/responses/ConnectStarted" }
         default: { $ref: "#/components/responses/ErrorResponse" }
-  /api/v1/integration-types/github/setup:
-    get:
-      <<: *privileged-read
-      operationId: continueGitHubConnect
-      summary: Continue GitHub installation authorization
-      tags: [Integrations]
-      parameters:
-        - { name: state, in: query, required: true, schema: { type: string } }
-        - { name: installation_id, in: query, required: true, schema: { type: string, pattern: '^[1-9][0-9]*$' } }
-      responses:
-        "302": { description: Redirect to GitHub user authorization. }
-        default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/integrations/connect/callback:
     get:
       <<: *authenticated-read
@@ -304,6 +292,10 @@ paths:
       parameters:
         - { $ref: "#/components/parameters/OAuthCode" }
         - { $ref: "#/components/parameters/OAuthState" }
+        - name: installation_id
+          in: query
+          description: GitHub installation candidate returned during native installation authorization. A stored selection takes precedence. This identifier alone does not prove authorization.
+          schema: { type: string, pattern: '^[1-9][0-9]*$' }
       responses:
         "200": { $ref: "#/components/responses/ConnectLanded" }
         "302": { $ref: "#/components/responses/Redirect" }

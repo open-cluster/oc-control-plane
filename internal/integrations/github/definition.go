@@ -20,7 +20,7 @@ const (
 )
 
 func Definition(app *App, client *Client, clientID, clientSecret string) integrations.Definition {
-	where := deployment{app: app, client: client}
+	githubDeployment := deployment{app: app, client: client}
 	return integrations.Definition{
 		Key: "github", Name: "GitHub",
 		Description: "Give investigations read-only access to selected repositories for " +
@@ -35,7 +35,7 @@ func Definition(app *App, client *Client, clientID, clientSecret string) integra
 					Note:   "the integration carries no usable installation identity; reconnect it and verify again",
 				}
 			}
-			return probe(ctx, where, installation)
+			return probe(ctx, githubDeployment, installation)
 		},
 		Connect: connect(app, client, clientID, clientSecret),
 	}

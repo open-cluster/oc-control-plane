@@ -119,7 +119,7 @@ curl --fail-with-body --request POST --cookie "$OPENCLUSTER_COOKIE" \
 
 Use the returned `status` and `toolAvailability` for technical diagnosis. `verificationNote` may be included in verification and credential mutation responses. Ordinary reads do not reconstruct it. Query-source creation and provider authorization already probe access. Kubernetes needs this explicit check. For webhook sources, this operation reports accepted delivery history and returns `failed` when none exists. That alone does not establish an outage.
 
-Configuration edits without replacement credentials retain existing credentials and verification state. Recheck access after changing an endpoint or tenant. Replacement credentials are probed before saving. A successful probe cannot guarantee future queries.
+Renaming an Integration retains its credentials and verification. Changing credential-use settings requires replacement credentials when a credential is stored. Configuration changes without a stored credential clear verification. Replacement credentials are probed before saving. A successful probe cannot guarantee future queries.
 
 Prometheus checks the expected result of `vector(1)`. Loki checks a one-minute log query limited to one entry. Tempo runs a bounded trace search. Valid empty Loki and Tempo results confirm query access. Tempo trace retrieval can still require separate permission.
 

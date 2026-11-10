@@ -40,7 +40,7 @@ type Handlers struct {
 	PublicURL               string
 }
 
-func (h Handlers) Router(additionalRoutes ...authz.Route) (http.Handler, error) {
+func (h Handlers) Router() (http.Handler, error) {
 	guard := authz.Guard{
 		Resolve: h.Identity.Resolve,
 		Record:  h.recordRefusal,
@@ -48,7 +48,7 @@ func (h Handlers) Router(additionalRoutes ...authz.Route) (http.Handler, error) 
 		Logger:  h.Logger,
 	}
 
-	router, err := authz.Router(append(h.Routes(), additionalRoutes...), guard)
+	router, err := authz.Router(h.Routes(), guard)
 	if err != nil {
 		return nil, err
 	}

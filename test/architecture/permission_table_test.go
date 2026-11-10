@@ -12,13 +12,12 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/api"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/integrations/github"
 )
 
 func apiRoutes(t *testing.T) []authz.Route {
 	t.Helper()
 
-	table := append(api.Handlers{Logger: slog.Default()}.Routes(), github.SetupHandlers{}.Routes()...)
+	table := api.Handlers{Logger: slog.Default()}.Routes()
 	if len(table) == 0 {
 		t.Fatal("the application API declares no routes; every gate here would pass vacuously")
 	}
@@ -121,7 +120,6 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 		"GET /api/v1/incidents/{incident}/alert-events",
 		"GET /api/v1/incidents/{incident}/postmortem",
 		"GET /api/v1/integration-types",
-		"GET /api/v1/integration-types/github/setup",
 		"GET /api/v1/integrations",
 		"GET /api/v1/integrations/connect/callback",
 		"GET /api/v1/integrations/{integration}",
