@@ -55,14 +55,20 @@ func TestStaleCredentialVerificationCannotOverwriteChangedAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	verification := integrations.Verification{Status: integrations.StatusVerified, ExpectedIntegration: &integration}
-	if err := database.SetIntegrationDisabled(ctx, principal, organization, integration.ID, true); err != nil {
+	verification := integrations.Verification{Status: integrations.StatusVerified}
+	current, err := database.ReviseIntegration(ctx, principal, organization, integration.ID, integrations.Revision{
+		Configuration: map[string]any{"url": "https://changed.example"},
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.RecordIntegrationVerification(ctx, principal, organization, integration.ID, verification); !errors.Is(err, integrations.ErrConflict) {
+	if current.Disabled {
+		t.Fatal("stale verification must be rejected while the integration is active")
+	}
+	if _, err := database.RecordIntegrationVerification(ctx, principal, organization, integration, verification); !errors.Is(err, integrations.ErrConflict) {
 		t.Fatalf("stale verification = %v, want conflict", err)
 	}
-	if _, err := database.ReplaceIntegrationCredential(ctx, principal, organization, integration.ID,
+	if _, err := database.ReplaceIntegrationCredential(ctx, principal, organization, integration,
 		integrations.Revision{}, []byte("replacement"), verification, nil); !errors.Is(err, integrations.ErrConflict) {
 		t.Fatalf("stale credential replacement = %v, want conflict", err)
 	}

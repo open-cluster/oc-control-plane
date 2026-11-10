@@ -31,10 +31,10 @@ type Store interface {
 	RecordCredentialUnseal(ctx context.Context, org uuid.UUID, id uuid.UUID,
 		purpose string) error
 	ReplaceIntegrationCredential(ctx context.Context, who authz.Principal,
-		org uuid.UUID, id uuid.UUID, revision Revision, sealed []byte,
+		org uuid.UUID, expectedIntegration Integration, revision Revision, sealed []byte,
 		verification Verification, installed *Installation) (Integration, error)
 	RecordIntegrationVerification(ctx context.Context, who authz.Principal,
-		org uuid.UUID, id uuid.UUID, verification Verification) (Integration, error)
+		org uuid.UUID, expectedIntegration Integration, verification Verification) (Integration, error)
 	IntegrationRelayStatus(ctx context.Context, org uuid.UUID,
 		relayID uuid.UUID) (RelayStatus, error)
 	LastAcceptedDelivery(ctx context.Context, org uuid.UUID,
