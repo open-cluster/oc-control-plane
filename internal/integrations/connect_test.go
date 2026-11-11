@@ -256,7 +256,7 @@ func TestACredentialFromAProvenReturnIsSealedOntoTheRecord(t *testing.T) {
 
 func (s *capturingStore) ReplaceIntegrationCredential(
 	_ context.Context, _ authz.Principal, _ uuid.UUID, expectedIntegration Integration,
-	_ Revision, sealed []byte, verification Verification,
+	_ IntegrationUpdate, sealed []byte, verification Verification,
 	installed *Installation,
 ) (Integration, error) {
 	s.replaced = sealed

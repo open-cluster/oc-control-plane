@@ -76,9 +76,9 @@ func (k InstallationKey) Complete() bool {
 	return !slices.Contains(k, "")
 }
 
-type Revision struct {
-	Name          *string
-	Configuration map[string]any
+type IntegrationUpdate struct {
+	Name          *string        `json:"name"`
+	Configuration map[string]any `json:"configuration"`
 }
 
 type Page struct {

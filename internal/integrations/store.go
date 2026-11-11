@@ -20,8 +20,8 @@ type Store interface {
 		query Query) (List, error)
 	CountIntegrationsByProvider(ctx context.Context, who authz.Principal,
 		org uuid.UUID) ([]ProviderCount, error)
-	ReviseIntegration(ctx context.Context, who authz.Principal, org uuid.UUID,
-		id uuid.UUID, revision Revision) (Integration, error)
+	UpdateIntegration(ctx context.Context, who authz.Principal, org uuid.UUID,
+		id uuid.UUID, update IntegrationUpdate) (Integration, error)
 	SetIntegrationDisabled(ctx context.Context, who authz.Principal, org uuid.UUID,
 		id uuid.UUID, disabled bool) error
 	DeleteIntegration(ctx context.Context, who authz.Principal, org uuid.UUID,
@@ -31,7 +31,7 @@ type Store interface {
 	RecordCredentialUnseal(ctx context.Context, org uuid.UUID, id uuid.UUID,
 		purpose string) error
 	ReplaceIntegrationCredential(ctx context.Context, who authz.Principal,
-		org uuid.UUID, expectedIntegration Integration, revision Revision, sealed []byte,
+		org uuid.UUID, expectedIntegration Integration, update IntegrationUpdate, sealed []byte,
 		verification Verification, installed *Installation) (Integration, error)
 	RecordIntegrationVerification(ctx context.Context, who authz.Principal,
 		org uuid.UUID, expectedIntegration Integration, verification Verification) (Integration, error)

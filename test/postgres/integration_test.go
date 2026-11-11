@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -27,10 +28,38 @@ func TestCredentialDestinationCannotChangeWithoutReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	name := "Renamed metrics"
-	if _, err := database.ReviseIntegration(ctx, principal, organization, integration.ID, integrations.Revision{Name: &name}); err != nil {
+	if _, err := database.UpdateIntegration(ctx, principal, organization, integration.ID, integrations.IntegrationUpdate{Name: &name}); err != nil {
 		t.Fatal(err)
 	}
-	_, err = database.ReviseIntegration(ctx, principal, organization, integration.ID, integrations.Revision{
+	if _, err := database.UpdateIntegration(ctx, principal, organization, integration.ID, integrations.IntegrationUpdate{
+		Name:          &name,
+		Configuration: integration.Configuration,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	events, err := database.AuditEvents(ctx, principal, organization, audit.Page{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nameChanges, unchanged int
+	for _, event := range events.Events {
+		if event.Action != audit.ActionIntegrationRevised || event.Target.ID != integration.ID.String() {
+			continue
+		}
+		if event.Detail["configurationChanged"] != false {
+			t.Fatalf("unchanged configuration audit = %v", event.Detail)
+		}
+		switch event.Detail["nameChanged"] {
+		case true:
+			nameChanges++
+		case false:
+			unchanged++
+		}
+	}
+	if nameChanges != 1 || unchanged != 1 {
+		t.Fatalf("update audit reported %d name changes and %d unchanged updates, want one each", nameChanges, unchanged)
+	}
+	_, err = database.UpdateIntegration(ctx, principal, organization, integration.ID, integrations.IntegrationUpdate{
 		Configuration: map[string]any{"url": "https://different.example"},
 	})
 	if err == nil {
@@ -56,7 +85,7 @@ func TestStaleCredentialVerificationCannotOverwriteChangedAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	verification := integrations.Verification{Status: integrations.StatusVerified}
-	current, err := database.ReviseIntegration(ctx, principal, organization, integration.ID, integrations.Revision{
+	current, err := database.UpdateIntegration(ctx, principal, organization, integration.ID, integrations.IntegrationUpdate{
 		Configuration: map[string]any{"url": "https://changed.example"},
 	})
 	if err != nil {
@@ -69,7 +98,7 @@ func TestStaleCredentialVerificationCannotOverwriteChangedAccess(t *testing.T) {
 		t.Fatalf("stale verification = %v, want conflict", err)
 	}
 	if _, err := database.ReplaceIntegrationCredential(ctx, principal, organization, integration,
-		integrations.Revision{}, []byte("replacement"), verification, nil); !errors.Is(err, integrations.ErrConflict) {
+		integrations.IntegrationUpdate{}, []byte("replacement"), verification, nil); !errors.Is(err, integrations.ErrConflict) {
 		t.Fatalf("stale credential replacement = %v, want conflict", err)
 	}
 }

@@ -299,7 +299,7 @@ func (h Handlers) reconnect(
 		return
 	}
 	verified, err := h.Store.ReplaceIntegrationCredential(ctx, principal, organization,
-		existing, Revision{}, sealed, verification, bound.Installation)
+		existing, IntegrationUpdate{}, sealed, verification, bound.Installation)
 	if errors.Is(err, ErrInstallationTaken) {
 		h.Logger.WarnContext(ctx, "a reconnect named a provider installation already owned elsewhere",
 			slog.String("org_id", organization.String()),

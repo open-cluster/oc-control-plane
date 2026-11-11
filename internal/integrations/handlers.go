@@ -46,7 +46,7 @@ func (h Handlers) Routes() []authz.Route {
 		{Method: http.MethodPost, Pattern: base + "/integration-types/{type}/connect", Permission: authz.IntegrationCreate, Handler: http.HandlerFunc(h.startConnect)},
 		{Method: http.MethodGet, Pattern: CallbackPath, Handler: http.HandlerFunc(h.completeConnect)},
 		{Method: http.MethodGet, Pattern: base + "/integrations/{integration}", Permission: authz.IntegrationRead, Handler: http.HandlerFunc(h.read)},
-		{Method: http.MethodPatch, Pattern: base + "/integrations/{integration}", Permission: authz.IntegrationUpdate, Handler: http.HandlerFunc(h.revise)},
+		{Method: http.MethodPatch, Pattern: base + "/integrations/{integration}", Permission: authz.IntegrationUpdate, Handler: http.HandlerFunc(h.update)},
 		{Method: http.MethodDelete, Pattern: base + "/integrations/{integration}", Permission: authz.IntegrationDelete, Handler: http.HandlerFunc(h.remove)},
 		{Method: http.MethodPost, Pattern: base + "/integrations/{integration}/enable", Permission: authz.IntegrationUpdate, Handler: http.HandlerFunc(h.enable)},
 		{Method: http.MethodPost, Pattern: base + "/integrations/{integration}/disable", Permission: authz.IntegrationUpdate, Handler: http.HandlerFunc(h.disable)},
@@ -267,18 +267,13 @@ func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusOK, h.viewOf(found))
 }
 
-type reviseRequest struct {
-	Name          *string        `json:"name"`
-	Configuration map[string]any `json:"configuration"`
-}
-
-func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
+func (h Handlers) update(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return
 	}
-	var requestBody reviseRequest
+	var requestBody IntegrationUpdate
 	if !h.decode(writer, request, &requestBody) {
 		return
 	}
@@ -295,28 +290,24 @@ func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	credential := ""
-	var definition Definition
 	if requestBody.Configuration != nil {
 		integration, err := h.Store.Integration(ctx, organization, id)
 		if err != nil {
 			h.fail(writer, request, err)
 			return
 		}
-		known := false
-		definition, known = h.Catalog.Lookup(integration.Provider)
+		definition, known := h.Catalog.Lookup(integration.Provider)
 		if !known {
 			h.fail(writer, request, fmt.Errorf(
 				"integration %s has provider %q this build does not serve", id, integration.Provider))
 			return
 		}
-		configuration, submitted, refusal := checkConfiguration(definition, requestBody.Configuration, false)
+		configuration, credential, refusal := checkConfiguration(definition, requestBody.Configuration, false)
 		if refusal != "" {
 			writeJSON(writer, http.StatusBadRequest, errorView{Error: refusal})
 			return
 		}
 		requestBody.Configuration = configuration
-		credential = submitted
 
 		if credential != "" {
 			if !h.holdsCredentials(writer) {
@@ -336,26 +327,26 @@ func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
 				return
 			}
 
-			revised, err := h.Store.ReplaceIntegrationCredential(
-				ctx, principal, organization, integration, Revision(requestBody), sealed,
+			updated, err := h.Store.ReplaceIntegrationCredential(
+				ctx, principal, organization, integration, requestBody, sealed,
 				verification, nil)
 			if err != nil {
 				h.fail(writer, request, err)
 				return
 			}
-			view := h.viewOf(revised)
+			view := h.viewOf(updated)
 			view.VerificationNote = verification.Note
 			writeJSON(writer, http.StatusOK, view)
 			return
 		}
 	}
 
-	revised, err := h.Store.ReviseIntegration(ctx, principal, organization, id, Revision(requestBody))
+	updated, err := h.Store.UpdateIntegration(ctx, principal, organization, id, requestBody)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, h.viewOf(revised))
+	writeJSON(writer, http.StatusOK, h.viewOf(updated))
 }
 
 func (h Handlers) holdsCredentials(writer http.ResponseWriter) bool {
