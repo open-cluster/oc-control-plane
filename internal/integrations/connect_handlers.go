@@ -70,8 +70,7 @@ func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request
 	}
 	if !definition.Connectable() {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: definition.Name +
-			" has no installation flow on this deployment; configure it with its settings " +
-			"form instead"})
+			" has no installation flow on this deployment"})
 		return
 	}
 	if definition.Connect.SealsCredential && !h.holdsCredentials(writer) {
@@ -83,7 +82,17 @@ func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request
 		return
 	}
 
-	returnTo, ok := h.returnTarget(writer, request.URL.Query().Get("returnTo"))
+	query, err := url.ParseQuery(request.URL.RawQuery)
+	if err != nil {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: "invalid authorization query"})
+		return
+	}
+	if selections, supplied := query["providerInstallationId"]; supplied &&
+		(len(selections) != 1 || selections[0] == "") {
+		h.fail(writer, request, ErrInvalidConnectSelection)
+		return
+	}
+	returnTo, ok := h.returnTarget(writer, query.Get("returnTo"))
 	if !ok {
 		return
 	}
@@ -96,7 +105,7 @@ func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	providerInstallationID := request.URL.Query().Get("providerInstallationId")
+	providerInstallationID := query.Get("providerInstallationId")
 	authorization, err := definition.Connect.Authorize(ctx, state, h.callbackURL(), providerInstallationID)
 	if err != nil {
 		h.fail(writer, request, err)
@@ -127,8 +136,9 @@ func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request
 
 func (h Handlers) completeConnect(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
-	state := request.URL.Query().Get("state")
-	if state == "" {
+	query, err := url.ParseQuery(request.URL.RawQuery)
+	state := query.Get("state")
+	if err != nil || state == "" {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: refusedConnect})
 		return
 	}
@@ -170,7 +180,9 @@ func (h Handlers) completeConnect(writer http.ResponseWriter, request *http.Requ
 	}
 
 	bound, err := definition.Connect.Redeem(ctx, ConnectReturn{
-		Query: request.URL.Query(), Callback: h.callbackURL(), ProviderInstallationID: flow.ProviderInstallationID,
+		Query:                  query,
+		Callback:               h.callbackURL(),
+		ProviderInstallationID: flow.ProviderInstallationID,
 	})
 	if err != nil {
 		h.Logger.WarnContext(ctx, "an integration connect could not be proven",

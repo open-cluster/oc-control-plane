@@ -55,11 +55,11 @@ func sealingDefinition(authorized *bool) Definition {
 	}
 }
 
-func startConnectAgainst(t *testing.T, handlers Handlers) *httptest.ResponseRecorder {
+func startConnectAgainst(t *testing.T, handlers Handlers, query string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	request := httptest.NewRequest(http.MethodPost,
-		"/api/v1/integration-types/stub/connect", nil)
+		"/api/v1/integration-types/stub/connect"+query, nil)
 	request.Header.Set("Origin", "https://console.example.com")
 	router, err := authz.Router([]authz.Route{
 		{Method: http.MethodPost, Pattern: "/api/v1/integration-types/{type}/connect",
@@ -95,7 +95,7 @@ func TestStartConnectRefusesBeforeTheBrowserLeavesWhenNothingCanSeal(t *testing.
 		Logger:    slog.New(slog.DiscardHandler),
 		Sealer:    seal.Sealer{},
 		PublicURL: "https://opencluster.example",
-	})
+	}, "")
 
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("starting a connect with no sealing key = %d, want 503: %s",
@@ -128,7 +128,7 @@ func TestStartConnectWithoutASealingKeyStillServesATypeThatSealsNothing(t *testi
 		Logger:    slog.New(slog.DiscardHandler),
 		Sealer:    seal.Sealer{},
 		PublicURL: "https://opencluster.example",
-	})
+	}, "")
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("starting a credential-free connect = %d, want 200: %s",
@@ -136,6 +136,28 @@ func TestStartConnectWithoutASealingKeyStillServesATypeThatSealsNothing(t *testi
 	}
 	if !authorized {
 		t.Error("no authorization URL was built for a flow that needs no sealing key")
+	}
+}
+
+func TestStartConnectRejectsInvalidInstallationSelection(t *testing.T) {
+	var authorized bool
+	definition := sealingDefinition(&authorized)
+	definition.Connect.SealsCredential = false
+	definition.Connect.Authorize = func(context.Context, string, string, string) (string, error) {
+		return "", ErrInvalidConnectSelection
+	}
+	catalog, err := NewCatalog(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := startConnectAgainst(t, Handlers{
+		Store:     storeUnderSeal{},
+		Catalog:   catalog,
+		Logger:    slog.New(slog.DiscardHandler),
+		PublicURL: "https://opencluster.example",
+	}, "?providerInstallationId=invalid")
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "providerInstallationId") {
+		t.Fatalf("starting Connect with an invalid installation ID = %d: %s", recorder.Code, recorder.Body.String())
 	}
 }
 

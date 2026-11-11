@@ -199,6 +199,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if (cfg.GitHubClientID == "") != (cfg.GitHubClientSecret == "") {
 		return Config{}, fmt.Errorf("%s and either %s or %s must be configured together", EnvGitHubClientID, EnvGitHubClientSecret, EnvGitHubClientSecretFile)
 	}
+	if cfg.GitHubClientID != "" && cfg.GitHubAppID == "" {
+		return Config{}, fmt.Errorf("%s requires %s and the GitHub App private key", EnvGitHubClientID, EnvGitHubAppID)
+	}
 	if err = slackApp(lookup, &cfg); err != nil {
 		return Config{}, err
 	}

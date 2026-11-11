@@ -276,12 +276,16 @@ paths:
     post:
       <<: *privileged-write
       parameters:
-        - { name: providerInstallationId, in: query, schema: { type: string }, description: Existing GitHub installation to authorize. Selection alone never proves ownership. }
+        - name: providerInstallationId
+          in: query
+          description: Positive ID of an existing GitHub App installation to authorize. Omit for a new installation or for other providers.
+          schema: { type: string }
       operationId: startIntegrationConnect
       summary: Start provider authorization
       tags: [Integration Types]
       responses:
         "200": { $ref: "#/components/responses/ConnectStarted" }
+        "400": { $ref: "#/components/responses/ErrorResponse" }
         default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/integrations/connect/callback:
     get:
@@ -294,7 +298,7 @@ paths:
         - { $ref: "#/components/parameters/OAuthState" }
         - name: installation_id
           in: query
-          description: GitHub installation candidate returned during native installation authorization. A stored selection takes precedence. This identifier alone does not prove authorization.
+          description: GitHub installation ID returned after a new installation. Existing-installation authorization uses the ID selected at Connect start.
           schema: { type: string, pattern: '^[1-9][0-9]*$' }
       responses:
         "200": { $ref: "#/components/responses/ConnectLanded" }
@@ -1296,7 +1300,6 @@ components:
         status: { oneOf: [{ type: string, enum: [verified, failed] }, { type: "null" }] }
         disabled: { type: boolean }
         configuration: { type: object, additionalProperties: true }
-        providerInstallationId: { type: string, description: Non-secret provider installation selection identifier. }
         relayId: { $ref: "#/components/schemas/UUID" }
         webhook: { $ref: "#/components/schemas/WebhookReference" }
         credential: { $ref: "#/components/schemas/SecretReference" }

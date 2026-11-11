@@ -708,6 +708,8 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusConflict, errorView{Error: ErrInUse.Error()})
 	case errors.Is(err, ErrBadCursor):
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: ErrBadCursor.Error()})
+	case errors.Is(err, ErrInvalidConnectSelection):
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: ErrInvalidConnectSelection.Error()})
 	case errors.Is(err, seal.ErrNoKey):
 		writeJSON(writer, http.StatusServiceUnavailable, errorView{
 			Error: "this deployment has no sealing key and cannot hold a credential"})

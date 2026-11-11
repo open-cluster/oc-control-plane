@@ -29,9 +29,14 @@ func connect(app *App, client *Client, clientID, clientSecret string) *integrati
 			if providerInstallationID != "" {
 				id, err := strconv.ParseInt(providerInstallationID, 10, 64)
 				if err != nil || id <= 0 {
-					return "", errInvalidInstallation
+					return "", integrations.ErrInvalidConnectSelection
 				}
-				return webURL + "/login/oauth/authorize?" + url.Values{"client_id": {clientID}, "redirect_uri": {callback}, "state": {state}}.Encode(), nil
+				parameters := url.Values{
+					"client_id":    {clientID},
+					"redirect_uri": {callback},
+					"state":        {state},
+				}
+				return webURL + "/login/oauth/authorize?" + parameters.Encode(), nil
 			}
 
 			jwt, err := app.jwt(time.Now())
@@ -50,7 +55,11 @@ func connect(app *App, client *Client, clientID, clientSecret string) *integrati
 		) {
 			providerInstallationID := returned.ProviderInstallationID
 			if providerInstallationID == "" {
-				providerInstallationID = returned.Query.Get("installation_id")
+				selections := returned.Query["installation_id"]
+				if len(selections) != 1 {
+					return integrations.ConnectBinding{}, errInvalidInstallation
+				}
+				providerInstallationID = selections[0]
 			}
 			id, err := strconv.ParseInt(strings.TrimSpace(providerInstallationID), 10, 64)
 			if err != nil || id < 1 {

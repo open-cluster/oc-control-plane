@@ -34,22 +34,30 @@ func TestConnectVerifiesUserInstallationOwnership(t *testing.T) {
 		name, installations, membership string
 		accepted                        bool
 		native                          bool
+		personalUser                    string
 	}{
-		{"native installation owner", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":99}}`, true, true},
-		{"organization owner", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":99}}`, true, false},
-		{"forged installation", `{"installations":[{"id":8}]}`, `{}`, false, true},
-		{"repository collaborator", `{"installations":[{"id":7}]}`, `{"state":"active","role":"member","organization":{"id":99}}`, false, false},
-		{"another organization", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":100}}`, false, false},
-		{"pending membership", `{"installations":[{"id":7}]}`, `{"state":"pending","role":"admin","organization":{"id":99}}`, false, false},
-		{"unavailable membership proof", `{"installations":[{"id":7}]}`, `{}`, false, false},
+		{"native installation owner", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":99}}`, true, true, ""},
+		{"organization owner", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":99}}`, true, false, ""},
+		{"forged installation", `{"installations":[{"id":8}]}`, `{}`, false, true, ""},
+		{"repository collaborator", `{"installations":[{"id":7}]}`, `{"state":"active","role":"member","organization":{"id":99}}`, false, false, ""},
+		{"another organization", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":100}}`, false, false, ""},
+		{"pending membership", `{"installations":[{"id":7}]}`, `{"state":"pending","role":"admin","organization":{"id":99}}`, false, false, ""},
+		{"unavailable membership proof", `{"installations":[{"id":7}]}`, `{}`, false, false, ""},
+		{"personal owner", `{"installations":[{"id":7}]}`, "", true, true, `{"id":99}`},
+		{"different personal user", `{"installations":[{"id":7}]}`, "", false, true, `{"id":42}`},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			vendor := newFakeGitHub(t)
 			vendor.answer("/login/oauth/access_token", `{"access_token":"user-token","token_type":"bearer"}`)
-			vendor.answer("/app/installations/7", `{"id":7,"account":{"id":99,"login":"controlled-org","type":"Organization"}}`)
 			vendor.answer("/user/installations", scenario.installations)
-			vendor.answer("/user", `{"id":42}`)
-			vendor.answer("/user/memberships/orgs/controlled-org", scenario.membership)
+			if scenario.personalUser != "" {
+				vendor.answer("/app/installations/7", `{"id":7,"account":{"id":99,"login":"account-owner","type":"User"}}`)
+				vendor.answer("/user", scenario.personalUser)
+			} else {
+				vendor.answer("/app/installations/7", `{"id":7,"account":{"id":99,"login":"controlled-org","type":"Organization"}}`)
+				vendor.answer("/user", `{"id":42}`)
+				vendor.answer("/user/memberships/orgs/controlled-org", scenario.membership)
+			}
 			client := NewClient(vendor.URL)
 			app, err := NewApp("12345", pemPKCS1(testKey(t)), client)
 			if err != nil {

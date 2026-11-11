@@ -8,6 +8,8 @@ import (
 )
 
 var ErrConnectFlowUnknown = errors.New("connect flow unknown")
+var ErrInvalidConnectSelection = errors.New(
+	"providerInstallationId is only accepted for GitHub and must be a single positive installation ID")
 
 const connectFlowLifetime = 15 * time.Minute
 

@@ -79,6 +79,8 @@ func TestSecretFilesAreReadAtStartupAndFailuresAreRedacted(t *testing.T) {
 		{EnvModelKeyFile: secretFile(t, " ")},
 		{EnvSealingKeyFile: "", EnvSealingKey: "private-invalid-key"},
 		{EnvLogLevel: "private-invalid-level"},
+		{EnvGitHubClientID: "private-client-id"},
+		{EnvGitHubClientID: "private-client-id", EnvGitHubClientSecret: "private-client-secret"},
 	} {
 		candidate := make(map[string]string, len(values)+1)
 		for key, value := range values {
