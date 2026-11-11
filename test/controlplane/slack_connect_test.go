@@ -92,7 +92,25 @@ func TestConnectingSlackSealsTheBotTokenAndRecordsTheWorkspace(t *testing.T) {
 	vendor.grant("channels:read,channels:history,users:read")
 	plane := startSlackInstallPlane(t, vendor, "")
 
-	status, landed := connectSlack(t, plane, "the-authorization-code")
+	status, started := plane.pressConnectSlack(t, surfaceOrg)
+	if status != http.StatusOK {
+		t.Fatalf("starting Slack authorization = %d: %s", status, started)
+	}
+	var authorization struct {
+		URL string `json:"authorizationUrl"`
+	}
+	decodeInto(t, started, &authorization)
+	authorizationURL, err := url.Parse(authorization.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopes := "," + authorizationURL.Query().Get("scope") + ","
+	if strings.Contains(scopes, ",assistant:write,") || !strings.Contains(scopes, ",chat:write,") || !strings.Contains(scopes, ",app_mentions:read,") {
+		t.Fatalf("Slack authorization requests incorrect scopes: %s", scopes)
+	}
+	status, landed := plane.returnFromSlack(t, url.Values{
+		"state": {stateOf(t, started)}, "code": {"the-authorization-code"},
+	})
 	if status != http.StatusOK {
 		t.Fatalf("a valid slack callback = %d: %s", status, landed)
 	}

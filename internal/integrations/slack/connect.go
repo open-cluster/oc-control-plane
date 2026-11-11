@@ -14,7 +14,6 @@ import (
 )
 
 var requestedScopes = []string{
-	"assistant:write",
 	"chat:write",
 	"app_mentions:read",
 	"channels:history",
