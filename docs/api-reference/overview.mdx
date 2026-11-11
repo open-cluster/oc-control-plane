@@ -119,8 +119,6 @@ curl --fail-with-body --request POST --cookie "$OPENCLUSTER_COOKIE" \
 
 Use the returned `status` and `toolAvailability` for technical diagnosis. `verificationNote` may be included in verification and credential mutation responses. Ordinary reads do not reconstruct it. Query-source creation and provider authorization already probe access. Kubernetes needs this explicit check. For webhook sources, this operation reports accepted delivery history and returns `failed` when none exists. That alone does not establish an outage.
 
-Renaming an Integration retains its credentials and verification. Changing credential-use settings requires replacement credentials when a credential is stored. Configuration changes without a stored credential clear verification. Replacement credentials are probed before saving. A successful probe cannot guarantee future queries.
-
 Prometheus checks the expected result of `vector(1)`. Loki checks a one-minute log query limited to one entry. Tempo runs a bounded trace search. Valid empty Loki and Tempo results confirm query access. Tempo trace retrieval can still require separate permission.
 
 ## Authorize GitHub or Slack in a browser
@@ -278,7 +276,7 @@ method/path entry in the navigation.
 
 An Admin creates Integrations or starts provider authorization. Editors and Admins can update, enable, disable, and verify existing Integrations. Only Admins can delete them or rotate webhook secrets. Viewers can read permitted metadata. Investigation and Conversation permissions are separate.
 
-Use the [session and Origin setup](#authentication). Save the relevant JSON example below in a private file, then submit it with this shared command. Set `INTEGRATION_CONFIG` to that file's name. Send the complete configuration when updating it. For GitHub or installed Slack apps, use the [browser authorization flow](#authorize-github-or-slack-in-a-browser).
+Use the [session and Origin setup](#authentication). Save the relevant JSON example below in a private file, then submit it with this shared command. Set `INTEGRATION_CONFIG` to that file's name. For GitHub or installed Slack apps, use the [browser authorization flow](#authorize-github-or-slack-in-a-browser).
 
 ```bash
 INTEGRATION_CONFIG=prometheus.json
@@ -286,6 +284,8 @@ curl --fail-with-body --cookie "$OPENCLUSTER_COOKIE" \
   --header "Origin: $OPENCLUSTER_URL" --header 'Content-Type: application/json' \
   --data @"$INTEGRATION_CONFIG" "$OPENCLUSTER_URL/api/v1/integrations"
 ```
+
+Use `PATCH /api/v1/integrations/{integration}` to update an existing Integration. When changing its configuration, send the complete configuration and include a replacement credential if the Integration already has one. Test the connection after changing configuration on a source without a credential. If access changes during verification and the API returns `409`, reload the Integration before retrying.
 
 ### Prometheus configuration
 
@@ -468,15 +468,6 @@ limitation. It does not substitute another run or claim fresh verification.
 
 
 ## Interpret integration availability
-
-Renaming an Integration does not require a new credential. Replacing its configuration
-changes the complete configuration. If it holds a credential, changed settings require
-an explicitly supplied replacement, checked before saving. A rejected update preserves
-the previous settings and credential. Access changes without a credential clear the old
-verification and grants; test the connection again.
-
-An update or verification can return `409` if access settings changed while its provider
-check was running. Reload the Integration before retrying.
 
 `status` and `verifiedAt` describe a recorded check. `toolAvailability` combines that check, recorded grants, and the disabled flag. Provider access or Relay connectivity can change afterward.
 

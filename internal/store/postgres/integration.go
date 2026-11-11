@@ -273,9 +273,9 @@ func (p *Database) CountIntegrationsByProvider(
 	return counts, nil
 }
 
-func (p *Database) ReviseIntegration(
+func (p *Database) UpdateIntegration(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
-	id uuid.UUID, revision integrations.Revision,
+	id uuid.UUID, update integrations.IntegrationUpdate,
 ) (integrations.Integration, error) {
 	return audited(ctx, p, principal, organization, audit.ActionIntegrationRevised,
 		func(ctx context.Context, transaction pgx.Tx) (
@@ -289,13 +289,13 @@ func (p *Database) ReviseIntegration(
 			if err != nil {
 				return integrations.Integration{}, audit.Target{}, nil, err
 			}
-			configurationChanged := revision.Configuration != nil && !reflect.DeepEqual(integration.Configuration, revision.Configuration)
+			configurationChanged := update.Configuration != nil && !reflect.DeepEqual(integration.Configuration, update.Configuration)
 			if configurationChanged && len(integration.CredentialSealed) > 0 {
 				return integrations.Integration{}, audit.Target{}, nil, integrations.ErrCredentialRequired
 			}
 			var configuration []byte
-			if revision.Configuration != nil {
-				configuration, err = json.Marshal(revision.Configuration)
+			if update.Configuration != nil {
+				configuration, err = json.Marshal(update.Configuration)
 				if err != nil {
 					return integrations.Integration{}, audit.Target{}, nil,
 						fmt.Errorf("encoding configuration: %w", err)
@@ -310,21 +310,21 @@ func (p *Database) ReviseIntegration(
 				       verification_grants = CASE WHEN $5 THEN '{}'::text[] ELSE verification_grants END
 				 WHERE integration_id = $1 AND org_id = $2
 				RETURNING `+integrationColumns,
-				id, organization, revision.Name, configuration, configurationChanged)
+				id, organization, update.Name, configuration, configurationChanged)
 
-			revised, err := scanIntegration(row, organization.String())
+			updated, err := scanIntegration(row, organization.String())
 			switch {
 			case errors.Is(err, pgx.ErrNoRows):
 				return integrations.Integration{}, audit.Target{}, nil, integrations.ErrUnknown
 			case err != nil:
 				return integrations.Integration{}, audit.Target{}, nil,
-					fmt.Errorf("revising an integration: %w", err)
+					fmt.Errorf("updating an integration: %w", err)
 			}
-			return revised,
+			return updated,
 				audit.Target{Kind: audit.TargetIntegration, ID: id.String()},
 				audit.Detail{
-					"nameChanged":          revision.Name != nil,
-					"configurationChanged": revision.Configuration != nil,
+					"nameChanged":          integration.Name != updated.Name,
+					"configurationChanged": !reflect.DeepEqual(integration.Configuration, updated.Configuration),
 				}, nil
 		})
 }
@@ -457,7 +457,7 @@ func (p *Database) RotateIntegrationWebhookSecret(
 
 func (p *Database) ReplaceIntegrationCredential(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
-	expectedIntegration integrations.Integration, revision integrations.Revision, sealed []byte,
+	expectedIntegration integrations.Integration, update integrations.IntegrationUpdate, sealed []byte,
 	verification integrations.Verification, installed *integrations.Installation,
 ) (integrations.Integration, error) {
 	id := expectedIntegration.ID
@@ -467,8 +467,8 @@ func (p *Database) ReplaceIntegrationCredential(
 		) {
 			var configuration []byte
 			var err error
-			if revision.Configuration != nil {
-				if configuration, err = json.Marshal(revision.Configuration); err != nil {
+			if update.Configuration != nil {
+				if configuration, err = json.Marshal(update.Configuration); err != nil {
 					return integrations.Integration{}, audit.Target{}, nil,
 						fmt.Errorf("encoding configuration: %w", err)
 				}
@@ -488,7 +488,7 @@ func (p *Database) ReplaceIntegrationCredential(
 				 WHERE integration_id = $1
 				   AND org_id = $2
 				RETURNING `+integrationColumns,
-				id, organization, revision.Name, configuration, sealed,
+				id, organization, update.Name, configuration, sealed,
 				verification.Status.String(), grants)
 
 			replaced, err := scanIntegration(row, organization.String())

@@ -493,7 +493,7 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
       operationId: updateIntegration
       summary: Update integration
-      description: Name-only changes retain credentials. Changed credential-use settings require an explicitly supplied replacement credential, verified before saving. Configuration changes without a credential invalidate prior verification. Concurrent access changes can return 409; reload before retrying.
+      description: When changing configuration, supply the complete configuration and include a replacement credential if the Integration already has one. OpenCluster verifies replacement credentials before saving. Configuration changes without a credential clear prior verification. If access changes during verification, reload before retrying.
       tags:
         - Integrations
       requestBody:
