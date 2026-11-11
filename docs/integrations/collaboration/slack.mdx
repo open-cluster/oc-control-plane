@@ -14,7 +14,6 @@ The current installation flow requests these bot scopes:
 - `channels:read`, `channels:history` and `groups:history` for channel and thread reads.
 - `users:read` for display names.
 - `app_mentions:read` for direct mentions and `chat:write` for replies.
-- `assistant:write` is also requested by the current installer. Plain threaded replies use chat methods.
 
 For mentions, configure the signing secret and subscribe the app to `app_mention` at your public URL ending in `/webhooks/v1/slack/events`.
 
