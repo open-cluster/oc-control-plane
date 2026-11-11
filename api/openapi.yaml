@@ -343,6 +343,7 @@ paths:
       <<: *privileged-write
       operationId: updateIntegration
       summary: Update integration
+      description: When changing configuration, supply the complete configuration and include a replacement credential if the Integration already has one. OpenCluster verifies replacement credentials before saving. Configuration changes without a credential clear prior verification. If access changes during verification, reload before retrying.
       tags: [Integrations]
       requestBody:
         content:
@@ -390,6 +391,7 @@ paths:
       <<: *privileged-write
       operationId: verifyIntegration
       summary: Verify integration
+      description: Checks the current access settings. Returns 409 if those settings change before the result can be saved.
       tags: [Integrations]
       responses:
         "200": { $ref: "#/components/responses/IntegrationOperation" }

@@ -1,6 +1,7 @@
 package storage_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -8,9 +9,99 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
+
+func TestCredentialDestinationCannotChangeWithoutReplacement(t *testing.T) {
+	database, organization := migratedDatabase(t)
+	ctx := context.Background()
+	principal := ownerOf(t, organization)
+	integration, err := database.CreateIntegration(ctx, principal, organization, integrations.NewIntegration{
+		Provider: "prometheus", Name: "Metrics",
+		Configuration:    map[string]any{"url": "https://original.example"},
+		CredentialSealed: []byte("sealed credential"),
+		Verification:     &integrations.Verification{Status: integrations.StatusVerified, Grants: []string{"prometheus:query"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "Renamed metrics"
+	if _, err := database.UpdateIntegration(ctx, principal, organization, integration.ID, integrations.IntegrationUpdate{Name: &name}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.UpdateIntegration(ctx, principal, organization, integration.ID, integrations.IntegrationUpdate{
+		Name:          &name,
+		Configuration: integration.Configuration,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	events, err := database.AuditEvents(ctx, principal, organization, audit.Page{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nameChanges, unchanged int
+	for _, event := range events.Events {
+		if event.Action != audit.ActionIntegrationRevised || event.Target.ID != integration.ID.String() {
+			continue
+		}
+		if event.Detail["configurationChanged"] != false {
+			t.Fatalf("unchanged configuration audit = %v", event.Detail)
+		}
+		switch event.Detail["nameChanged"] {
+		case true:
+			nameChanges++
+		case false:
+			unchanged++
+		}
+	}
+	if nameChanges != 1 || unchanged != 1 {
+		t.Fatalf("update audit reported %d name changes and %d unchanged updates, want one each", nameChanges, unchanged)
+	}
+	_, err = database.UpdateIntegration(ctx, principal, organization, integration.ID, integrations.IntegrationUpdate{
+		Configuration: map[string]any{"url": "https://different.example"},
+	})
+	if err == nil {
+		t.Fatal("changed destination retained an existing credential")
+	}
+	current, err := database.Integration(ctx, organization, integration.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Name != name || current.Configuration["url"] != "https://original.example" || !bytes.Equal(current.CredentialSealed, integration.CredentialSealed) || current.Status != integrations.StatusVerified {
+		t.Fatalf("rejected update changed integration: %+v", current)
+	}
+}
+
+func TestStaleCredentialVerificationCannotOverwriteChangedAccess(t *testing.T) {
+	database, organization := migratedDatabase(t)
+	ctx := context.Background()
+	principal := ownerOf(t, organization)
+	integration, err := database.CreateIntegration(ctx, principal, organization, integrations.NewIntegration{
+		Provider: "prometheus", Name: "Metrics", Configuration: map[string]any{"url": "https://original.example"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verification := integrations.Verification{Status: integrations.StatusVerified}
+	current, err := database.UpdateIntegration(ctx, principal, organization, integration.ID, integrations.IntegrationUpdate{
+		Configuration: map[string]any{"url": "https://changed.example"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Disabled {
+		t.Fatal("stale verification must be rejected while the integration is active")
+	}
+	if _, err := database.RecordIntegrationVerification(ctx, principal, organization, integration, verification); !errors.Is(err, integrations.ErrConflict) {
+		t.Fatalf("stale verification = %v, want conflict", err)
+	}
+	if _, err := database.ReplaceIntegrationCredential(ctx, principal, organization, integration,
+		integrations.IntegrationUpdate{}, []byte("replacement"), verification, nil); !errors.Is(err, integrations.ErrConflict) {
+		t.Fatalf("stale credential replacement = %v, want conflict", err)
+	}
+}
 
 func TestOIDCFlowIsDisposable(t *testing.T) {
 	ctx := context.Background()

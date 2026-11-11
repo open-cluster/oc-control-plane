@@ -46,7 +46,7 @@ func (h Handlers) Routes() []authz.Route {
 		{Method: http.MethodPost, Pattern: base + "/integration-types/{type}/connect", Permission: authz.IntegrationCreate, Handler: http.HandlerFunc(h.startConnect)},
 		{Method: http.MethodGet, Pattern: CallbackPath, Handler: http.HandlerFunc(h.completeConnect)},
 		{Method: http.MethodGet, Pattern: base + "/integrations/{integration}", Permission: authz.IntegrationRead, Handler: http.HandlerFunc(h.read)},
-		{Method: http.MethodPatch, Pattern: base + "/integrations/{integration}", Permission: authz.IntegrationUpdate, Handler: http.HandlerFunc(h.revise)},
+		{Method: http.MethodPatch, Pattern: base + "/integrations/{integration}", Permission: authz.IntegrationUpdate, Handler: http.HandlerFunc(h.update)},
 		{Method: http.MethodDelete, Pattern: base + "/integrations/{integration}", Permission: authz.IntegrationDelete, Handler: http.HandlerFunc(h.remove)},
 		{Method: http.MethodPost, Pattern: base + "/integrations/{integration}/enable", Permission: authz.IntegrationUpdate, Handler: http.HandlerFunc(h.enable)},
 		{Method: http.MethodPost, Pattern: base + "/integrations/{integration}/disable", Permission: authz.IntegrationUpdate, Handler: http.HandlerFunc(h.disable)},
@@ -267,65 +267,56 @@ func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusOK, h.viewOf(found))
 }
 
-type reviseRequest struct {
-	Name          *string        `json:"name"`
-	Configuration map[string]any `json:"configuration"`
-}
-
-func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
+func (h Handlers) update(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return
 	}
-	var asked reviseRequest
-	if !h.decode(writer, request, &asked) {
+	var requestBody IntegrationUpdate
+	if !h.decode(writer, request, &requestBody) {
 		return
 	}
-	if asked.Name != nil {
-		trimmed := strings.TrimSpace(*asked.Name)
+	if requestBody.Name != nil {
+		trimmed := strings.TrimSpace(*requestBody.Name)
 		if trimmed == "" || len(trimmed) > maxNameLength {
 			writeJSON(writer, http.StatusBadRequest,
 				errorView{Error: "name must be between 1 and 128 characters"})
 			return
 		}
-		asked.Name = &trimmed
+		requestBody.Name = &trimmed
 	}
 
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	credential := ""
-	var definition Definition
-	if asked.Configuration != nil {
-		current, err := h.Store.Integration(ctx, organization, id)
+	if requestBody.Configuration != nil {
+		integration, err := h.Store.Integration(ctx, organization, id)
 		if err != nil {
 			h.fail(writer, request, err)
 			return
 		}
-		known := false
-		definition, known = h.Catalog.Lookup(current.Provider)
+		definition, known := h.Catalog.Lookup(integration.Provider)
 		if !known {
 			h.fail(writer, request, fmt.Errorf(
-				"integration %s has provider %q this build does not serve", id, current.Provider))
+				"integration %s has provider %q this build does not serve", id, integration.Provider))
 			return
 		}
-		checked, submitted, refusal := checkConfiguration(definition, asked.Configuration, false)
+		configuration, credential, refusal := checkConfiguration(definition, requestBody.Configuration, false)
 		if refusal != "" {
 			writeJSON(writer, http.StatusBadRequest, errorView{Error: refusal})
 			return
 		}
-		asked.Configuration = checked
-		credential = submitted
+		requestBody.Configuration = configuration
 
 		if credential != "" {
 			if !h.holdsCredentials(writer) {
 				return
 			}
-			preview := current
-			preview.Configuration = checked
+			integrationToVerify := integration
+			integrationToVerify.Configuration = configuration
 			verification := definition.Probe(ctx, ProbeInput{
-				Integration: preview, Credential: credential,
+				Integration: integrationToVerify, Credential: credential,
 			})
 			if verification.Status == StatusFailed {
 				writeJSON(writer, http.StatusBadRequest, errorView{Error: verification.Note})
@@ -336,26 +327,26 @@ func (h Handlers) revise(writer http.ResponseWriter, request *http.Request) {
 				return
 			}
 
-			revised, err := h.Store.ReplaceIntegrationCredential(
-				ctx, principal, organization, id, Revision(asked), sealed,
+			updated, err := h.Store.ReplaceIntegrationCredential(
+				ctx, principal, organization, integration, requestBody, sealed,
 				verification, nil)
 			if err != nil {
 				h.fail(writer, request, err)
 				return
 			}
-			view := h.viewOf(revised)
+			view := h.viewOf(updated)
 			view.VerificationNote = verification.Note
 			writeJSON(writer, http.StatusOK, view)
 			return
 		}
 	}
 
-	revised, err := h.Store.ReviseIntegration(ctx, principal, organization, id, Revision(asked))
+	updated, err := h.Store.UpdateIntegration(ctx, principal, organization, id, requestBody)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, h.viewOf(revised))
+	writeJSON(writer, http.StatusOK, h.viewOf(updated))
 }
 
 func (h Handlers) holdsCredentials(writer http.ResponseWriter) bool {
@@ -446,7 +437,7 @@ func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
 	if definition.Probe != nil {
 		outcome := h.probeExisting(ctx, organization, definition, found)
 		verified, probeErr := h.Store.RecordIntegrationVerification(
-			ctx, principal, organization, id, outcome)
+			ctx, principal, organization, found, outcome)
 		if probeErr != nil {
 			h.fail(writer, request, probeErr)
 			return
@@ -477,7 +468,7 @@ func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
 
 	outcome := definition.Verify(input)
 	verified, err := h.Store.RecordIntegrationVerification(
-		ctx, principal, organization, id, outcome)
+		ctx, principal, organization, found, outcome)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -489,19 +480,19 @@ func (h Handlers) verify(writer http.ResponseWriter, request *http.Request) {
 
 func (h Handlers) probeExisting(
 	ctx context.Context, organization uuid.UUID, definition Definition,
-	found Integration,
+	integration Integration,
 ) Verification {
-	input := ProbeInput{Integration: found}
-	if len(found.CredentialSealed) > 0 {
+	input := ProbeInput{Integration: integration}
+	if len(integration.CredentialSealed) > 0 {
 		if err := h.Store.RecordCredentialUnseal(
-			ctx, organization, found.ID, "verification probe"); err != nil {
+			ctx, organization, integration.ID, "verification probe"); err != nil {
 			return Verification{
 				Status: StatusFailed,
 				Note: "the credential unseal could not be recorded, so the credential " +
 					"was not used; verify again once the record is writable",
 			}
 		}
-		credential, err := h.Sealer.Open(found.CredentialSealed, CredentialBinding(found.ID))
+		credential, err := h.Sealer.Open(integration.CredentialSealed, CredentialBinding(integration.ID))
 		if err != nil {
 			return Verification{
 				Status: StatusFailed,
@@ -709,6 +700,10 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "integration not found"})
 	case errors.Is(err, ErrCrossTenant):
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: ErrCrossTenant.Error()})
+	case errors.Is(err, ErrCredentialRequired):
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: ErrCredentialRequired.Error()})
+	case errors.Is(err, ErrConflict):
+		writeJSON(writer, http.StatusConflict, errorView{Error: ErrConflict.Error()})
 	case errors.Is(err, ErrInUse):
 		writeJSON(writer, http.StatusConflict, errorView{Error: ErrInUse.Error()})
 	case errors.Is(err, ErrBadCursor):

@@ -1,10 +1,12 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -271,18 +273,29 @@ func (p *Database) CountIntegrationsByProvider(
 	return counts, nil
 }
 
-func (p *Database) ReviseIntegration(
+func (p *Database) UpdateIntegration(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
-	id uuid.UUID, revision integrations.Revision,
+	id uuid.UUID, update integrations.IntegrationUpdate,
 ) (integrations.Integration, error) {
 	return audited(ctx, p, principal, organization, audit.ActionIntegrationRevised,
 		func(ctx context.Context, transaction pgx.Tx) (
 			integrations.Integration, audit.Target, audit.Detail, error,
 		) {
+			integration, err := scanIntegration(transaction.QueryRow(ctx,
+				`SELECT `+integrationColumns+` FROM integration WHERE integration_id = $1 AND org_id = $2 FOR UPDATE`, id, organization), organization.String())
+			if errors.Is(err, pgx.ErrNoRows) {
+				return integrations.Integration{}, audit.Target{}, nil, integrations.ErrUnknown
+			}
+			if err != nil {
+				return integrations.Integration{}, audit.Target{}, nil, err
+			}
+			configurationChanged := update.Configuration != nil && !reflect.DeepEqual(integration.Configuration, update.Configuration)
+			if configurationChanged && len(integration.CredentialSealed) > 0 {
+				return integrations.Integration{}, audit.Target{}, nil, integrations.ErrCredentialRequired
+			}
 			var configuration []byte
-			var err error
-			if revision.Configuration != nil {
-				configuration, err = json.Marshal(revision.Configuration)
+			if update.Configuration != nil {
+				configuration, err = json.Marshal(update.Configuration)
 				if err != nil {
 					return integrations.Integration{}, audit.Target{}, nil,
 						fmt.Errorf("encoding configuration: %w", err)
@@ -291,24 +304,27 @@ func (p *Database) ReviseIntegration(
 			row := transaction.QueryRow(ctx, `
 				UPDATE integration
 				   SET name          = coalesce($3, name),
-				       configuration = coalesce($4, configuration)
+				       configuration = coalesce($4, configuration),
+				       verification_status = CASE WHEN $5 THEN NULL ELSE verification_status END,
+				       verified_at = CASE WHEN $5 THEN NULL ELSE verified_at END,
+				       verification_grants = CASE WHEN $5 THEN '{}'::text[] ELSE verification_grants END
 				 WHERE integration_id = $1 AND org_id = $2
 				RETURNING `+integrationColumns,
-				id, organization, revision.Name, configuration)
+				id, organization, update.Name, configuration, configurationChanged)
 
-			revised, err := scanIntegration(row, organization.String())
+			updated, err := scanIntegration(row, organization.String())
 			switch {
 			case errors.Is(err, pgx.ErrNoRows):
 				return integrations.Integration{}, audit.Target{}, nil, integrations.ErrUnknown
 			case err != nil:
 				return integrations.Integration{}, audit.Target{}, nil,
-					fmt.Errorf("revising an integration: %w", err)
+					fmt.Errorf("updating an integration: %w", err)
 			}
-			return revised,
+			return updated,
 				audit.Target{Kind: audit.TargetIntegration, ID: id.String()},
 				audit.Detail{
-					"nameChanged":          revision.Name != nil,
-					"configurationChanged": revision.Configuration != nil,
+					"nameChanged":          integration.Name != updated.Name,
+					"configurationChanged": !reflect.DeepEqual(integration.Configuration, updated.Configuration),
 				}, nil
 		})
 }
@@ -441,20 +457,24 @@ func (p *Database) RotateIntegrationWebhookSecret(
 
 func (p *Database) ReplaceIntegrationCredential(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
-	id uuid.UUID, revision integrations.Revision, sealed []byte,
+	expectedIntegration integrations.Integration, update integrations.IntegrationUpdate, sealed []byte,
 	verification integrations.Verification, installed *integrations.Installation,
 ) (integrations.Integration, error) {
+	id := expectedIntegration.ID
 	return audited(ctx, p, principal, organization, audit.ActionIntegrationCredentialReplaced,
 		func(ctx context.Context, transaction pgx.Tx) (
 			integrations.Integration, audit.Target, audit.Detail, error,
 		) {
 			var configuration []byte
 			var err error
-			if revision.Configuration != nil {
-				if configuration, err = json.Marshal(revision.Configuration); err != nil {
+			if update.Configuration != nil {
+				if configuration, err = json.Marshal(update.Configuration); err != nil {
 					return integrations.Integration{}, audit.Target{}, nil,
 						fmt.Errorf("encoding configuration: %w", err)
 				}
+			}
+			if err := checkExpectedIntegration(ctx, transaction, organization, expectedIntegration); err != nil {
+				return integrations.Integration{}, audit.Target{}, nil, err
 			}
 			grants := verificationGrants(verification)
 			row := transaction.QueryRow(ctx, `
@@ -467,9 +487,8 @@ func (p *Database) ReplaceIntegrationCredential(
 				       verification_grants = $7
 				 WHERE integration_id = $1
 				   AND org_id = $2
-				   AND credential_sealed IS NOT NULL
 				RETURNING `+integrationColumns,
-				id, organization, revision.Name, configuration, sealed,
+				id, organization, update.Name, configuration, sealed,
 				verification.Status.String(), grants)
 
 			replaced, err := scanIntegration(row, organization.String())
@@ -497,12 +516,16 @@ func (p *Database) ReplaceIntegrationCredential(
 
 func (p *Database) RecordIntegrationVerification(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
-	id uuid.UUID, verification integrations.Verification,
+	expectedIntegration integrations.Integration, verification integrations.Verification,
 ) (integrations.Integration, error) {
+	id := expectedIntegration.ID
 	return audited(ctx, p, principal, organization, audit.ActionIntegrationVerified,
 		func(ctx context.Context, transaction pgx.Tx) (
 			integrations.Integration, audit.Target, audit.Detail, error,
 		) {
+			if err := checkExpectedIntegration(ctx, transaction, organization, expectedIntegration); err != nil {
+				return integrations.Integration{}, audit.Target{}, nil, err
+			}
 			grants := verificationGrants(verification)
 			row := transaction.QueryRow(ctx, `
 				UPDATE integration
@@ -719,4 +742,26 @@ func (p *Database) RecordCredentialUnseal(
 		Outcome:      audit.OutcomeAllowed,
 		Detail:       audit.Detail{"purpose": purpose},
 	})
+}
+
+// Lock the checked access settings until the mutation and its audit record commit.
+func checkExpectedIntegration(ctx context.Context, transaction pgx.Tx, organization uuid.UUID, expectedIntegration integrations.Integration) error {
+	integration, err := scanIntegration(transaction.QueryRow(ctx,
+		`SELECT `+integrationColumns+` FROM integration WHERE integration_id = $1 AND org_id = $2 FOR UPDATE`, expectedIntegration.ID, organization), organization.String())
+	if errors.Is(err, pgx.ErrNoRows) {
+		return integrations.ErrUnknown
+	}
+	if err != nil {
+		return err
+	}
+	if integration.Status != expectedIntegration.Status || !integration.VerifiedAt.Equal(expectedIntegration.VerifiedAt) ||
+		!reflect.DeepEqual(integration.VerificationGrants, expectedIntegration.VerificationGrants) ||
+		!bytes.Equal(integration.WebhookSecretDigest, expectedIntegration.WebhookSecretDigest) ||
+		integration.Disabled != expectedIntegration.Disabled || integration.RelayID != expectedIntegration.RelayID ||
+		!bytes.Equal(integration.CredentialSealed, expectedIntegration.CredentialSealed) ||
+		!reflect.DeepEqual(integration.Configuration, expectedIntegration.Configuration) ||
+		!reflect.DeepEqual(integration.Installation, expectedIntegration.Installation) {
+		return integrations.ErrConflict
+	}
+	return nil
 }

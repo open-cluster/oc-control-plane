@@ -20,11 +20,13 @@ func (s Status) String() string {
 }
 
 var (
-	ErrUnknown           = errors.New("integration unknown")
-	ErrCrossTenant       = errors.New("integration names something outside its organization")
-	ErrInUse             = errors.New("integration has records depending on it; disable it instead")
-	ErrBadCursor         = errors.New("after is not a page position from a previous response")
-	ErrInstallationTaken = errors.New(
+	ErrConflict           = errors.New("integration access changed; reload and try again")
+	ErrCredentialRequired = errors.New("changed credential-use settings require a replacement credential")
+	ErrUnknown            = errors.New("integration unknown")
+	ErrCrossTenant        = errors.New("integration names something outside its organization")
+	ErrInUse              = errors.New("integration has records depending on it; disable it instead")
+	ErrBadCursor          = errors.New("after is not a page position from a previous response")
+	ErrInstallationTaken  = errors.New(
 		"another integration in this deployment already owns that provider installation")
 	ErrInvalidInstallation = errors.New("installation cannot be recorded")
 )
@@ -74,9 +76,9 @@ func (k InstallationKey) Complete() bool {
 	return !slices.Contains(k, "")
 }
 
-type Revision struct {
-	Name          *string
-	Configuration map[string]any
+type IntegrationUpdate struct {
+	Name          *string        `json:"name"`
+	Configuration map[string]any `json:"configuration"`
 }
 
 type Page struct {
