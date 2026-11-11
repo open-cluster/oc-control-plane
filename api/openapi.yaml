@@ -278,7 +278,10 @@ paths:
       parameters:
         - name: providerInstallationId
           in: query
-          description: Positive ID of an existing GitHub App installation to authorize. Omit for a new installation or for other providers.
+          description: >
+            Positive ID of an existing GitHub App installation to authorize.
+            Copy it from the installation settings URL in GitHub.
+            Omit for a new installation or for other providers.
           schema: { type: string }
       operationId: startIntegrationConnect
       summary: Start provider authorization
