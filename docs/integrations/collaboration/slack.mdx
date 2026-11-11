@@ -15,9 +15,6 @@ The current installation flow requests these bot scopes:
 - `users:read` for display names.
 - `app_mentions:read` for direct mentions and `chat:write` for replies.
 
-Threaded replies and streaming use `chat:write`. They do not require `assistant:write`.
-Existing installations can retain earlier grants until changed in Slack.
-
 For mentions, configure the signing secret and subscribe the app to `app_mention` at your public URL ending in `/webhooks/v1/slack/events`.
 
 ## Connect
