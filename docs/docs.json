@@ -60,7 +60,6 @@
         "group": "Get started",
         "pages": [
           "index",
-          "feature-availability",
           "getting-started/quickstart",
           "getting-started/run-your-first-investigation"
         ]
@@ -105,7 +104,7 @@
         "group": "API reference",
         "pages": [
           "api-reference/overview",
-          "api-reference/surface",
+          "api-reference/workflows",
           {
             "group": "Endpoints",
             "openapi": "api/openapi.yaml"
@@ -139,7 +138,8 @@
     { "source": "/concepts/results-evidence-and-actions", "destination": "/concepts/investigations-and-conversations" },
     { "source": "/concepts/postmortems", "destination": "/concepts/investigations-and-conversations" },
     { "source": "/self-hosting/model-providers-and-byok", "destination": "/self-hosting/configuration" },
-    { "source": "/self-hosting/upgrade", "destination": "/feature-availability" },
+    { "source": "/self-hosting/upgrade", "destination": "/self-hosting/helm#resources-and-upgrades" },
+    { "source": "/feature-availability", "destination": "/" },
     { "source": "/self-hosting/backup-and-restore", "destination": "/self-hosting/troubleshooting" },
     { "source": "/security/data-handling", "destination": "/security/overview" },
     { "source": "/security/authentication-and-authorization", "destination": "/security/overview" },
@@ -149,7 +149,8 @@
     { "source": "/api-reference/errors-and-pagination", "destination": "/api-reference/overview" },
     { "source": "/api-reference/webhooks", "destination": "/api-reference/overview" },
     { "source": "/api-reference/investigation-events", "destination": "/api-reference/overview" },
-    { "source": "/api-reference/generated-endpoints", "destination": "/api-reference/surface" },
+    { "source": "/api-reference/generated-endpoints", "destination": "/api-reference/overview" },
+    { "source": "/api-reference/surface", "destination": "/api-reference/overview" },
     { "source": "/developers/local-development", "destination": "/developers/contributing" },
     { "source": "/developers/repositories", "destination": "/developers/contributing" }
   ],

@@ -35,7 +35,7 @@ Connect [Prometheus Alertmanager](/integrations/alerting/alertmanager) or [Gener
 
 An Admin creates an integration or authorizes its provider installation. GitHub and installed Slack apps use provider authorization. Slack also accepts existing tokens for read-only access. Kubernetes requires a Relay, and alert senders need a webhook URL and secret.
 
-Each guide explains required access, connection methods, examples, and limitations. Administration currently uses the [API connection procedures](/api-reference/overview#connect-an-integration). A web setup experience is under development.
+Each guide explains required access, connection methods, examples, and limitations. Administration currently uses the [API connection procedures](/api-reference/workflows#connect-an-integration). A web setup experience is under development.
 
 A successful connection check confirms access at that time. Source permissions, retention, and availability still affect later reads. Kubernetes needs an explicit Relay capability check during setup. Alert sources can receive alerts before verification, and waiting for a first delivery alone does not indicate an outage.
 

@@ -37,14 +37,14 @@ Use this order:
 
 A failed health probe indicates the process is unavailable. Healthy but not ready points
 to a dependency or startup condition. If only one Integration fails, keep the deployment
-running and use that provider's troubleshooting section; disable it if new reads or
-deliveries must stop while retained history remains available.
+running and use that provider's troubleshooting section. [Disconnect it](/integrations/overview#disconnect) to stop new reads or
+deliveries while retained history remains available.
 
 ## Data recovery boundary
 
 PostgreSQL is the durable source of truth. The deployment encryption key is also required
 to recover sealed Integration credentials. Protect database backups as production data
-and keep the encryption key under separate custody; neither belongs in this repository.
+and keep the encryption key under separate custody.
 
 OSS v0.1 does not publish a rehearsed backup, restore, or in-place upgrade procedure. Do
 not infer one from image tags. If recovery is required, use a PostgreSQL-consistent method

@@ -7,7 +7,7 @@ Connect Slack for operational questions, deployment context, troubleshooting, co
 
 ## Prerequisites
 
-An Admin can connect an installed app or use an existing read-only token. App installation also requires permission to install apps in your workspace. For that path, configure your Slack App's client ID and secret in [deployment configuration](/self-hosting/configuration#environment-reference). Add the public HTTPS URL ending in `/api/v1/integrations/connect/callback` as an OAuth redirect URL.
+An OpenCluster Admin can connect an installed Slack app or add an existing token for read-only access. To install the app, you also need permission to install apps in the Slack workspace. Ask your deployment administrator to [configure the Slack app](/self-hosting/configuration#slack-app-setup).
 
 The current installation flow requests these bot scopes:
 
@@ -15,17 +15,17 @@ The current installation flow requests these bot scopes:
 - `users:read` for display names.
 - `app_mentions:read` for direct mentions and `chat:write` for replies.
 
-For mentions, configure the signing secret and subscribe the app to `app_mention` at your public URL ending in `/webhooks/v1/slack/events`.
+Mentions require event delivery from the installed app.
 
 ## Connect
 
-The current self-hosted deployment uses an advanced API-only browser procedure for authorization until the frontend ships.
+Start app authorization through the API, then approve access in Slack.
 
-1. Start the [browser authorization flow](/api-reference/overview#authorize-github-or-slack-in-a-browser) with type `slack`.
-2. Authorize the app in Slack and return in the same browser session. The [authorization reference](/api-reference/overview#authorize-github-or-slack-in-a-browser) explains how to confirm setup.
+1. Start the [browser authorization flow](/api-reference/workflows#authorize-github-or-slack-in-a-browser) with type `slack`.
+2. Authorize the app in Slack and return in the same browser session. Check that the Integration is verified when you return.
 3. Invite the app to the channels it should read. OpenCluster does not join channels on its own.
 
-For read-only access with an existing token instead of app installation, use the [Slack configuration example](/api-reference/overview#slack-configuration) to connect through the API.
+For read-only access with an existing token instead of app installation, use the [Slack configuration example](/api-reference/workflows#slack-configuration) to connect through the API.
 
 ## Ask in Slack
 
@@ -44,6 +44,6 @@ An existing user token with `search:read` can search discussions visible to that
 ## Troubleshooting
 
 - **No messages.** Invite the app and verify the channel's history scope.
-- **No reply.** Check the installed app, signing secret, event subscription, channel membership and connection state. Use the [API availability guidance](/api-reference/overview#interpret-integration-availability) for diagnosis.
+- **No reply.** Check the installed app, signing secret, event subscription, channel membership and connection state. Use the [API availability guidance](/api-reference/workflows#interpret-integration-availability) for diagnosis.
 - **Token revoked.** Reconnect the app or replace a pasted token with a valid one. OpenCluster checks replacement credentials before saving them.
-- **Reply delivery failed.** An Admin can retry terminal failed work through the [API reference](/api-reference/surface). A retry can occasionally duplicate a message if the earlier send succeeded in Slack.
+- **Reply delivery failed.** An Admin can retry terminal failed work through the [Slack recovery operation](/api-reference/slack/recover-terminal-slack-message-processing). A retry can occasionally duplicate a message if the earlier send succeeded in Slack.

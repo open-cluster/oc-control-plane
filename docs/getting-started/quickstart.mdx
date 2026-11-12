@@ -11,7 +11,7 @@ For a new deployment, follow [Docker Compose setup](/self-hosting/docker-compose
 
 Administration currently uses the API. A web experience is under development. A compatible
 frontend can create the first account at `/setup` over trusted private access using the
-[browser signup contract](/api-reference/overview#initial-local-signup-in-a-browser).
+[browser signup contract](/api-reference/workflows#initial-local-signup-in-a-browser).
 Keep new installations private until the initial Admin exists. You can ask questions through an installed Slack app or the Conversation API.
 
 ## 2. Connect one relevant source
@@ -22,7 +22,7 @@ Choose a source from the [Integration overview](/integrations/overview). For exa
 
 Try “Is the checkout Deployment healthy in the payments namespace?” with Kubernetes, or “What errors appeared in checkout logs in the last 15 minutes?” with Loki. Include the workload, service, repository, or time interval you care about.
 
-In a channel with the installed Slack app, mention `@OpenCluster` with your question. It replies in a thread. Alternatively, use the [Conversation API example](/api-reference/overview#ask-a-question), which covers sending a question and retrieving the answer. API questions require Editor or Admin access.
+In a channel with the installed Slack app, mention `@OpenCluster` with your question. It replies in a thread. Alternatively, use the [Conversation API example](/api-reference/workflows#ask-a-question), which covers sending a question and retrieving the answer. API questions require Editor or Admin access.
 
 ## 4. Review and follow up
 

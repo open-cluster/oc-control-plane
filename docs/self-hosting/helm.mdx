@@ -111,7 +111,7 @@ connection and pin the control-plane public key.
 The chart intentionally ships no generic CPU or memory requests. Set requests and limits
 from measured Investigation concurrency and provider workloads before production. OSS
 v0.1 does not publish a qualified in-place upgrade path. Do not infer compatibility from
-image or chart tags. See [Feature availability](/feature-availability).
+image or chart tags.
 
 Back up PostgreSQL, disable any autoscaler that could restart old replicas, scale the old
 Deployment to zero, and wait for every old Pod to terminate. Do not use a rolling upgrade

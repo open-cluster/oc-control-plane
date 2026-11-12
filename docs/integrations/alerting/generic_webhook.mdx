@@ -9,7 +9,7 @@ Use Generic Webhook when your alerting system can send JSON over HTTP. OpenClust
 
 You need the OpenCluster **Admin** role and a sender that can reach the HTTPS webhook endpoint and set request headers. An Admin creates the Integration through the API.
 
-Follow the [Generic Webhook creation example](/api-reference/overview#generic-webhook-creation).
+Follow the [Generic Webhook creation example](/api-reference/workflows#generic-webhook-creation).
 
 Configure the returned webhook URL and one-time secret in your sender. Set the `X-OpenCluster-Token` header to the secret. A representative firing event is shown below. Replace its timestamps with the actual event times when sending it:
 

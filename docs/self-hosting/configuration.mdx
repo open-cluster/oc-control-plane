@@ -76,6 +76,14 @@ To enable GitHub Connect, also supply the App's OAuth client ID and client secre
 - **Helm.** Set `github.appID` and put the private key in the existing credentials Secret under `github.privateKeyKey`. For Connect, also set `github.clientID` and put the OAuth secret in the same Secret under `github.clientSecretKey`. These key settings name entries in the Secret.
 - **Standalone.** Use the GitHub variables in the [environment reference](#environment-reference). Prefer the `_FILE` inputs for credentials.
 
+## Slack App setup
+
+Set `OC_SLACK_CLIENT_ID` and either `OC_SLACK_CLIENT_SECRET_FILE` or `OC_SLACK_CLIENT_SECRET` to enable Slack app authorization. In your Slack app settings, register your public HTTPS origin followed by `/api/v1/integrations/connect/callback` as an OAuth redirect URL.
+
+To receive mentions, set `OC_SLACK_SIGNING_SECRET_FILE` or `OC_SLACK_SIGNING_SECRET`. In Slack Event Subscriptions, set the request URL to your public HTTPS origin followed by `/webhooks/v1/slack/events` and subscribe to the `app_mention` bot event.
+
+See the [Slack guide](/integrations/collaboration/slack) for scopes, connection options, and channel access.
+
 ## Backend listener and public origin
 
 The standalone backend listens on `:8081`. Its local public origin is
