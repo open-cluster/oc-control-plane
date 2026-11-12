@@ -2,7 +2,13 @@ openapi: 3.1.0
 info:
   title: OpenCluster Control Plane API
   version: 0.1.0
-  description: HTTP contract for the OpenCluster product API and inbound webhook endpoints.
+  description: |
+    Use the OpenAPI document for the deployed version. Product operations use session
+    cookies and resolve the Organization from the authenticated User.
+    Include the configured public Origin on write requests.
+    Collection cursors are opaque. Pass next unchanged to the cursor parameter
+    documented by the operation. An empty next value ends pagination.
+    Use HTTP status codes for error handling rather than parsing error text.
   license:
     name: Apache-2.0
 servers:
@@ -397,6 +403,15 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
       operationId: startIntegrationConnect
       summary: Start provider authorization
+      description: |
+        Start from an authenticated browser session on the public HTTPS origin.
+        Navigate that browser to authorizationUrl. The callback requires the same session.
+        For an API-only deployment, sign in using the local sign-in operation or visit
+        /api/v1/auth/oidc/start. From the same browser, send this POST with a
+        same-origin API client, then open the returned URL. A separate command-line
+        cookie jar does not authenticate the browser callback.
+        The callback redirects with connect and, on success, integration query values.
+        Read the resulting Integration to confirm its verification status.
       parameters:
         - name: existing
           in: query

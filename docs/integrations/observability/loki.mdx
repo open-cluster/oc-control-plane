@@ -11,7 +11,20 @@ You need the OpenCluster **Admin** role, a Loki endpoint reachable from OpenClus
 
 Use bearer or Basic authentication with a read-only token. Basic authentication also needs a username. Grafana Cloud uses its Loki username and token. For a trusted endpoint that requires no authentication, select `none` and omit token and username. Legacy bearer configuration with no token remains supported. Supply a tenant ID only when your endpoint requires it.
 
-Use the [Loki configuration example](/api-reference/overview#loki-configuration) to connect through the API.
+Create the Integration with the following settings through the [Create integration operation](/api-reference/integrations/create-integration).
+
+```json
+{
+  "type": "loki",
+  "name": "Production logs",
+  "configuration": {
+    "url": "https://logs.example.com",
+    "auth": "bearer",
+    "token": "<read-only-token>",
+    "tenantId": "production"
+  }
+}
+```
 
 ## After connection
 

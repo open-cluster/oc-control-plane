@@ -11,7 +11,19 @@ You need the OpenCluster **Admin** role and permission to search traces and retr
 
 Use bearer or Basic authentication with a read-only token. Basic authentication also needs a username. Supply a tenant ID when required by your endpoint.
 
-Use the [Tempo configuration example](/api-reference/overview#tempo-configuration) to connect through the API.
+Create the Integration with the following settings through the [Create integration operation](/api-reference/integrations/create-integration).
+
+```json
+{
+  "type": "tempo",
+  "name": "Production traces",
+  "configuration": {
+    "url": "https://traces.example.com",
+    "auth": "bearer",
+    "token": "<read-only-token>"
+  }
+}
+```
 
 ## After connection
 

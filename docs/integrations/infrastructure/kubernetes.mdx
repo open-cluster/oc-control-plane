@@ -8,20 +8,31 @@ Connect Kubernetes to investigate workload health and recent changes without exp
 ## Prerequisites
 
 - An Admin to create the Integration.
-- A Relay running inside your customer environment with outbound access to the deployment. The [API setup](/api-reference/overview#kubernetes-creation) explains how to find its ID.
+- A Relay running inside your customer environment with outbound access to the deployment. Find its ID with [List relays](/api-reference/relays/list-relays).
 - A Relay service account allowed to read the workloads, pods, namespace Events and pod logs you intend to inspect. Keep credentials inside the cluster. Grant only the necessary read permissions.
 
 ## Connect
 
 Select the Relay and namespaces OpenCluster should read.
 
-Follow the [Kubernetes creation example](/api-reference/overview#kubernetes-creation).
+Create the Integration through the [Create integration operation](/api-reference/integrations/create-integration) with these settings.
+
+```json
+{
+  "type": "kubernetes",
+  "name": "Production cluster",
+  "relayId": "<relay-id>",
+  "configuration": {
+    "namespaceAllowList": "checkout,payments"
+  }
+}
+```
 
 The comma-separated namespace list narrows Relay access. An empty list leaves the scope to the Relay's own policy and Kubernetes RBAC.
 
 ## After connection
 
-The API-only setup requires an explicit [verification request](/api-reference/overview#verify-an-integration) to check Relay connectivity and advertised capabilities. Verification can succeed with only some capabilities and does not test Kubernetes RBAC. An Investigation can inspect a named Deployment, StatefulSet or DaemonSet and its pods, list Events in one namespace, or read a named container's logs. Name the workload and namespace in your question, such as “Is the checkout Deployment healthy in payments?” General resource discovery and historical workload state are unavailable. Local Relay limits and Kubernetes retention can shorten results. OpenCluster does not read Secret data.
+The API-only setup requires an explicit [verification request](/api-reference/integrations/verify-integration) to check Relay connectivity and advertised capabilities. Verification can succeed with only some capabilities and does not test Kubernetes RBAC. An Investigation can inspect a named Deployment, StatefulSet or DaemonSet and its pods, list Events in one namespace, or read a named container's logs. Name the workload and namespace in your question, such as “Is the checkout Deployment healthy in payments?” General resource discovery and historical workload state are unavailable. Local Relay limits and Kubernetes retention can shorten results. OpenCluster does not read Secret data.
 
 ## Troubleshooting
 

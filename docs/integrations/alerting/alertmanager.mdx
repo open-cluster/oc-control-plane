@@ -7,9 +7,17 @@ Connect Alertmanager to open Incidents from firing alerts and update them when a
 
 ## Connect
 
-You need the OpenCluster **Admin** role, HTTPS reachability from Alertmanager to OpenCluster and Alertmanager 0.28.0 or later for the custom header. Create the Integration through the API.
+You need the OpenCluster **Admin** role, HTTPS reachability from Alertmanager to OpenCluster and Alertmanager 0.28.0 or later for the custom header.
 
-Follow the [Alertmanager creation example](/api-reference/overview#alertmanager-creation).
+Create the Integration through the [Create integration operation](/api-reference/integrations/create-integration) with these settings.
+
+```json
+{
+  "type": "alertmanager",
+  "name": "Production alerts",
+  "configuration": {}
+}
+```
 
 Save the returned webhook URL and one-time secret. Add the receiver below with the returned URL and secret. Merge this receiver and child route into your existing configuration. Adjust matching and ordering for your alert policy. See [Alertmanager routing configuration](https://prometheus.io/docs/alerting/latest/configuration/#route) for the full routing options:
 

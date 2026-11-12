@@ -40,7 +40,7 @@
         "header": "Resources",
         "items": [
           { "label": "Quickstart", "href": "/getting-started/quickstart" },
-          { "label": "API reference", "href": "/api-reference/overview" },
+          { "label": "API reference", "href": "/api-reference/authentication/sign-in-with-local-authentication" },
           { "label": "Security", "href": "/security/overview" }
         ]
       },
@@ -60,7 +60,6 @@
         "group": "Get started",
         "pages": [
           "index",
-          "feature-availability",
           "getting-started/quickstart",
           "getting-started/run-your-first-investigation"
         ]
@@ -104,8 +103,6 @@
       {
         "group": "API reference",
         "pages": [
-          "api-reference/overview",
-          "api-reference/surface",
           {
             "group": "Endpoints",
             "openapi": "api/openapi.yaml"
@@ -122,6 +119,8 @@
     ]
   },
   "redirects": [
+    { "source": "/api-reference/overview", "destination": "/api-reference/authentication/sign-in-with-local-authentication" },
+    { "source": "/api-reference/workflows", "destination": "/integrations/overview" },
     { "source": "/getting-started/connect-your-tools", "destination": "/integrations/overview" },
     { "source": "/quickstart", "destination": "/getting-started/quickstart" },
     { "source": "/investigations/overview", "destination": "/concepts/investigations-and-conversations" },
@@ -139,17 +138,19 @@
     { "source": "/concepts/results-evidence-and-actions", "destination": "/concepts/investigations-and-conversations" },
     { "source": "/concepts/postmortems", "destination": "/concepts/investigations-and-conversations" },
     { "source": "/self-hosting/model-providers-and-byok", "destination": "/self-hosting/configuration" },
-    { "source": "/self-hosting/upgrade", "destination": "/feature-availability" },
+    { "source": "/self-hosting/upgrade", "destination": "/self-hosting/helm#resources-and-upgrades" },
+    { "source": "/feature-availability", "destination": "/" },
     { "source": "/self-hosting/backup-and-restore", "destination": "/self-hosting/troubleshooting" },
     { "source": "/security/data-handling", "destination": "/security/overview" },
     { "source": "/security/authentication-and-authorization", "destination": "/security/overview" },
     { "source": "/security/secrets-and-relay", "destination": "/security/overview" },
     { "source": "/security/ai-provider-data-flow", "destination": "/security/overview" },
-    { "source": "/api-reference/authentication-and-organization-context", "destination": "/api-reference/overview" },
-    { "source": "/api-reference/errors-and-pagination", "destination": "/api-reference/overview" },
-    { "source": "/api-reference/webhooks", "destination": "/api-reference/overview" },
-    { "source": "/api-reference/investigation-events", "destination": "/api-reference/overview" },
-    { "source": "/api-reference/generated-endpoints", "destination": "/api-reference/surface" },
+    { "source": "/api-reference/authentication-and-organization-context", "destination": "/security/overview#using-the-api-securely" },
+    { "source": "/api-reference/errors-and-pagination", "destination": "/api-reference/authentication/sign-in-with-local-authentication" },
+    { "source": "/api-reference/webhooks", "destination": "/api-reference/webhook-intake/receive-alert-events" },
+    { "source": "/api-reference/investigation-events", "destination": "/api-reference/investigations/stream-investigation-events" },
+    { "source": "/api-reference/generated-endpoints", "destination": "/api-reference/authentication/sign-in-with-local-authentication" },
+    { "source": "/api-reference/surface", "destination": "/api-reference/authentication/sign-in-with-local-authentication" },
     { "source": "/developers/local-development", "destination": "/developers/contributing" },
     { "source": "/developers/repositories", "destination": "/developers/contributing" }
   ],

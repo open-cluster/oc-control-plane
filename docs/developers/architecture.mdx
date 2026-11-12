@@ -15,8 +15,8 @@ See the repository `ARCHITECTURE.md` for implementation details.
 Product requests authenticate a User, resolve their current Organization, and cross one declared
 route table into a domain handler. Only the PostgreSQL adapter touches deployment data,
 and every Organization-owned query predicates on its identifier. Webhook intake
-has separate authentication and contracts even though it shares the HTTP server;
-operational probes remain outside the product OpenAPI contract.
+has separate authentication and contracts even though it shares the HTTP server.
+Operational probes remain outside the product OpenAPI contract.
 
 OpenCluster currently ships observation/read tools. The capability runtime does not assume
 that all future capabilities are reads. State-changing capabilities will require explicit
@@ -24,7 +24,7 @@ authorization, approval, idempotency and audit semantics before they are enabled
 
 Provider adapters or Relay execute eligible Tools, and the Investigation engine records bounded Tool Runs and cited results.
 Maintenance cleanup is conditional on those consumers. Relay conflict history is part of
-the audit record and follows each Organization's audit retention policy; captured workload changes
+the audit record and follows each Organization's audit retention policy. Captured workload changes
 stay durable until an equivalent shipped surface replaces them or the contract is explicitly
 retired.
 The public control-plane repository owns this documentation and HTTP contract. The
