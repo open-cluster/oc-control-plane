@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -120,6 +121,9 @@ func TestConnectVerifiesUserInstallationOwnership(t *testing.T) {
 				t.Fatal("callback did not bind the verified installation")
 			}
 			if scenario.name == "multiple owned installations" {
+				if !errors.Is(err, integrations.ErrConnectAmbiguousInstallation) {
+					t.Fatalf("multiple owned installations must request selection: %v", err)
+				}
 				_, state, err := authorization.AuthorizeExisting(testContext(t), "state", returned.Callback, "Account-Owner")
 				if err != nil {
 					t.Fatal(err)

@@ -244,6 +244,19 @@ func TestAnAmbiguousInstallationReturnsToTheRequestedPage(t *testing.T) {
 		recorder.Header().Get("Location") != "https://opencluster.example/integrations?connect=installation-ambiguous" {
 		t.Fatalf("unexpected ambiguous installation response: %d %s", recorder.Code, recorder.Header().Get("Location"))
 	}
+	recorder = completeConnectAgainst(t, Handlers{
+		Store:   store,
+		Catalog: catalog,
+		Logger:  slog.New(slog.DiscardHandler),
+	}, principal)
+	if recorder.Code != http.StatusOK ||
+		!strings.Contains(recorder.Body.String(), `"connect":"installation-ambiguous"`) ||
+		!strings.Contains(recorder.Body.String(), "Choose the GitHub username or organization you want to connect, then authorize again.") {
+		t.Fatalf("unexpected installation selection response: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if store.created.ID != uuid.Nil || store.reVerified || store.replaced != nil {
+		t.Fatal("an ambiguous installation changed an Integration")
+	}
 }
 
 func TestACredentialFromAProvenReturnIsSealedOntoTheRecord(t *testing.T) {

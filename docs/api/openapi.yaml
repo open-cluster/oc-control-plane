@@ -409,6 +409,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
       operationId: completeIntegrationConnect
       summary: Complete provider authorization
+      description: Returns to OpenCluster with a connect outcome. installation-ambiguous means a GitHub owner must be chosen before anything is connected. Start authorization again with existing=true and owner set to that GitHub username or organization.
       tags:
         - Integrations
       parameters:
@@ -416,7 +417,7 @@ paths:
         - $ref: '#/components/parameters/OAuthState'
         - name: installation_id
           in: query
-          description: Installation ID supplied by GitHub when available. Without it, GitHub Connect requires exactly one eligible installation.
+          description: Installation ID supplied by GitHub when available. Otherwise, OpenCluster verifies the authorized user's installations and requests a choice if several qualify.
           schema:
             type: string
             pattern: ^[1-9][0-9]*$

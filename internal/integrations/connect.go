@@ -8,7 +8,7 @@ import (
 )
 
 var ErrConnectFlowUnknown = errors.New("connect flow unknown")
-var ErrConnectAmbiguousInstallation = errors.New("more than one installation can be connected")
+var ErrConnectAmbiguousInstallation = errors.New("installation selection required")
 
 const connectFlowLifetime = 15 * time.Minute
 

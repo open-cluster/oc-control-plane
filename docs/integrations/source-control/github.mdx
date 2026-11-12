@@ -23,11 +23,13 @@ For GitHub organization installations, also grant **Organization permissions →
 
 ## Connect
 
+GitHub Connect is currently available through the API. You authorize access in your browser without entering App credentials or installation IDs.
+
 1. Start GitHub Connect using the [browser authorization steps](/api-reference/overview#authorize-github-or-slack-in-a-browser). Choose whether to install the App or connect an App you already installed.
 2. In GitHub, choose your account and authorize the App. For a new installation, select the repositories OpenCluster should read.
 3. GitHub returns you to OpenCluster. Keep the same browser session open and confirm that the Integration is verified.
 
-For an existing App, OpenCluster connects it when it can verify exactly one installation that your GitHub account owns. If you own more than one, start Connect again and specify the GitHub username or organization that owns the installation. The [Connect API](/api-reference/integration-types/start-provider-authorization) describes this option. Each installation can belong to one OpenCluster Organization.
+For an existing App, OpenCluster connects it automatically when only one installation qualifies. If several qualify, choose the owning GitHub username or organization and authorize again. Each installation can belong to one OpenCluster Organization.
 
 ## After connection
 

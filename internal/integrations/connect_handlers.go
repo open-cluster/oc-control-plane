@@ -31,7 +31,7 @@ const (
 )
 
 func (o connectOutcome) status() int {
-	if o == outcomeConnected {
+	if o == outcomeConnected || o == outcomeInstallationAmbiguous {
 		return http.StatusOK
 	}
 	return http.StatusBadRequest
@@ -51,7 +51,7 @@ func (o connectOutcome) note() string {
 		return "that provider installation is already connected to OpenCluster, so nothing was " +
 			"connected; disconnect it there before connecting it here"
 	case outcomeInstallationAmbiguous:
-		return "more than one installation can be connected. Choose the GitHub account or organization that owns the installation"
+		return "Choose the GitHub username or organization you want to connect, then authorize again."
 	default:
 		return refusedConnect
 	}
