@@ -70,7 +70,7 @@ Treat the cookie jar as a credential. Unsafe product requests such as POST and P
 
 For a new installation, open `/setup` in a compatible frontend over the deployment owner's
 trusted private connection. Follow [Compose](/self-hosting/docker-compose) or
-[Helm](/self-hosting/helm) to restrict deployment access during initialization. This repository supplies the API;
+[Helm](/self-hosting/helm) to restrict deployment access during initialization. This repository supplies the API.
 it does not serve a browser console or the `/setup` page.
 
 The form shows **Create your OpenCluster account** and submits Organization name, email,
@@ -276,7 +276,7 @@ method/path entry in the navigation.
 
 ## Connect an Integration
 
-An Admin creates Integrations or starts provider authorization. Editors and Admins can update and test active Integrations. Only Admins can permanently disconnect them or rotate webhook secrets. Viewers can read permitted metadata. Investigation and Conversation permissions are separate.
+An Admin creates Integrations or starts provider authorization. Editors and Admins can update and test active Integrations. Only Admins can disconnect them or rotate webhook secrets. Viewers can read permitted metadata. Investigation and Conversation permissions are separate.
 
 Use the [session and Origin setup](#authentication). Save the relevant JSON example below in a private file, then submit it with this shared command. Set `INTEGRATION_CONFIG` to that file's name. For GitHub or installed Slack apps, use the [browser authorization flow](#authorize-github-or-slack-in-a-browser).
 

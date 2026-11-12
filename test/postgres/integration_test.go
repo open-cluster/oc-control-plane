@@ -108,7 +108,7 @@ func TestStaleCredentialVerificationCannotOverwriteChangedAccess(t *testing.T) {
 		t.Fatalf("disconnected verification = %v, want disconnected", err)
 	}
 	if _, err := database.ReplaceIntegrationCredential(ctx, principal, organization, current,
-		integrations.Revision{}, []byte("replacement"), verification, nil); !errors.Is(err, integrations.ErrDisconnected) {
+		integrations.IntegrationUpdate{}, []byte("replacement"), verification, nil); !errors.Is(err, integrations.ErrDisconnected) {
 		t.Fatalf("disconnected replacement = %v, want disconnected", err)
 	}
 }

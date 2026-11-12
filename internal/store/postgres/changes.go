@@ -32,7 +32,7 @@ func (p *Database) OpenInventoryScopes(
 			  FROM integration
 			 WHERE org_id = $1
 			   AND relay_id = $2
-			   -- 2 is the kubernetes integration type, the one kind a Relay watches.
+			   -- A Relay watches Kubernetes Integrations.
 			   AND provider = 'kubernetes'
 			   AND NOT disconnected
 			 FOR SHARE
