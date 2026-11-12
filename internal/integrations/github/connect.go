@@ -37,28 +37,40 @@ func connect(app *App, client *Client, clientID, clientSecret string) *integrati
 			return webURL + "/apps/" + url.PathEscape(slug) + "/installations/new?" +
 				url.Values{"state": {state}}.Encode(), nil
 		},
+		AuthorizeExisting: func(_ context.Context, state, callback string) (string, error) {
+			if state == "" || callback == "" {
+				return "", errors.New("github authorization needs state and a callback URL")
+			}
+			parameters := url.Values{
+				"client_id":    {clientID},
+				"prompt":       {"select_account"},
+				"redirect_uri": {callback},
+				"state":        {state},
+			}
+			return webURL + "/login/oauth/authorize?" + parameters.Encode(), nil
+		},
 		Redeem: func(ctx context.Context, returned integrations.ConnectReturn) (
 			integrations.ConnectBinding, error,
 		) {
 			installationIDs := returned.Query["installation_id"]
-			if len(installationIDs) != 1 {
+			if len(installationIDs) > 1 {
 				return integrations.ConnectBinding{}, errInvalidInstallation
 			}
-			id, err := strconv.ParseInt(strings.TrimSpace(installationIDs[0]), 10, 64)
-			if err != nil || id < 1 {
-				return integrations.ConnectBinding{}, errInvalidInstallation
+			var requestedID int64
+			if len(installationIDs) == 1 {
+				var err error
+				requestedID, err = strconv.ParseInt(strings.TrimSpace(installationIDs[0]), 10, 64)
+				if err != nil || requestedID < 1 {
+					return integrations.ConnectBinding{}, errInvalidInstallation
+				}
 			}
 			userToken, err := exchangeUserCode(ctx, client, clientID, clientSecret, returned.Query.Get("code"), returned.Callback)
 			if err != nil {
 				return integrations.ConnectBinding{}, errInvalidInstallation
 			}
-			jwt, err := app.jwt(time.Now())
+			id, installed, err := authorizedInstallation(ctx, app, client, userToken, requestedID)
 			if err != nil {
 				return integrations.ConnectBinding{}, err
-			}
-			installed, err := client.Installation(ctx, jwt, id)
-			if err != nil || installed.Suspended || !userOwnsInstallation(ctx, client, userToken, id, installed) {
-				return integrations.ConnectBinding{}, errInvalidInstallation
 			}
 			return integrations.ConnectBinding{
 				Name:          "GitHub — " + installed.Account,
@@ -112,37 +124,76 @@ func exchangeUserCode(ctx context.Context, client *Client, clientID, clientSecre
 	return token.AccessToken, nil
 }
 
-func userOwnsInstallation(ctx context.Context, client *Client, userToken string, installationID int64, providerInstallation Installation) bool {
-	associated := false
-	for page := 1; page <= authorizationPageLimit; page++ {
-		installations, next, err := client.UserInstallations(ctx, userToken, page)
-		if err != nil {
-			return false
-		}
-		for _, installation := range installations {
-			if installation.ID == installationID {
-				associated = true
-				break
-			}
-		}
-		if associated || !next {
-			break
-		}
-	}
-	if !associated || providerInstallation.AccountID <= 0 {
-		return false
+func authorizedInstallation(
+	ctx context.Context, app *App, client *Client, userToken string, requestedID int64,
+) (int64, Installation, error) {
+	jwt, err := app.jwt(time.Now())
+	if err != nil {
+		return 0, Installation{}, err
 	}
 	var user struct {
 		ID int64 `json:"id"`
 	}
 	if _, err := client.call(ctx, userToken, http.MethodGet, "/user", nil, &user); err != nil || user.ID <= 0 {
-		return false
+		return 0, Installation{}, errInvalidInstallation
+	}
+	var selectedID int64
+	var selected Installation
+	for page := 1; page <= authorizationPageLimit; page++ {
+		installations, next, err := client.UserInstallations(ctx, userToken, page)
+		if err != nil {
+			return 0, Installation{}, err
+		}
+		for _, installation := range installations {
+			if installation.ID < 1 {
+				return 0, Installation{}, errInvalidInstallation
+			}
+			if installation.ID == selectedID || (requestedID != 0 && installation.ID != requestedID) {
+				continue
+			}
+			providerInstallation, err := client.Installation(ctx, jwt, installation.ID)
+			if err != nil {
+				return 0, Installation{}, err
+			}
+			if providerInstallation.Suspended {
+				continue
+			}
+			owned, err := userOwnsInstallation(ctx, client, userToken, user.ID, providerInstallation)
+			if err != nil {
+				return 0, Installation{}, err
+			}
+			if !owned {
+				continue
+			}
+			if requestedID != 0 {
+				return installation.ID, providerInstallation, nil
+			}
+			if selectedID != 0 {
+				return 0, Installation{}, integrations.ErrConnectAmbiguousInstallation
+			}
+			selectedID, selected = installation.ID, providerInstallation
+		}
+		if !next {
+			if selectedID != 0 {
+				return selectedID, selected, nil
+			}
+			break
+		}
+	}
+	return 0, Installation{}, errInvalidInstallation
+}
+
+func userOwnsInstallation(
+	ctx context.Context, client *Client, userToken string, userID int64, providerInstallation Installation,
+) (bool, error) {
+	if providerInstallation.AccountID <= 0 {
+		return false, errInvalidInstallation
 	}
 	if providerInstallation.AccountType == "User" {
-		return user.ID == providerInstallation.AccountID
+		return userID == providerInstallation.AccountID, nil
 	}
 	if providerInstallation.AccountType != "Organization" || providerInstallation.Account == "" {
-		return false
+		return false, errInvalidInstallation
 	}
 	var membership struct {
 		State        string `json:"state"`
@@ -153,6 +204,8 @@ func userOwnsInstallation(ctx context.Context, client *Client, userToken string,
 	}
 	_, err := client.call(ctx, userToken, http.MethodGet,
 		"/user/memberships/orgs/"+url.PathEscape(providerInstallation.Account), nil, &membership)
-	return err == nil && membership.Organization.ID == providerInstallation.AccountID &&
-		membership.State == "active" && membership.Role == "admin"
+	if err != nil || membership.Organization.ID != providerInstallation.AccountID {
+		return false, errInvalidInstallation
+	}
+	return membership.State == "active" && membership.Role == "admin", nil
 }

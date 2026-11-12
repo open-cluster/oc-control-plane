@@ -8,6 +8,7 @@ import (
 )
 
 var ErrConnectFlowUnknown = errors.New("connect flow unknown")
+var ErrConnectAmbiguousInstallation = errors.New("more than one installation can be connected")
 
 const connectFlowLifetime = 15 * time.Minute
 
@@ -20,9 +21,10 @@ type ConnectFlow struct {
 }
 
 type Connect struct {
-	SealsCredential bool
-	Authorize       func(ctx context.Context, state, callback string) (string, error)
-	Redeem          func(ctx context.Context, returned ConnectReturn) (ConnectBinding, error)
+	SealsCredential   bool
+	Authorize         func(ctx context.Context, state, callback string) (string, error)
+	AuthorizeExisting func(ctx context.Context, state, callback string) (string, error)
+	Redeem            func(ctx context.Context, returned ConnectReturn) (ConnectBinding, error)
 }
 
 type ConnectReturn struct {

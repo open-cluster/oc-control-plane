@@ -22,11 +22,12 @@ const refusedConnect = "this connection cannot be completed"
 type connectOutcome string
 
 const (
-	outcomeConnected         connectOutcome = "connected"
-	outcomeRefused           connectOutcome = "refused"
-	outcomeUnproven          connectOutcome = "unproven"
-	outcomeUnverified        connectOutcome = "unverified"
-	outcomeInstallationTaken connectOutcome = "installation-taken"
+	outcomeConnected             connectOutcome = "connected"
+	outcomeRefused               connectOutcome = "refused"
+	outcomeUnproven              connectOutcome = "unproven"
+	outcomeUnverified            connectOutcome = "unverified"
+	outcomeInstallationTaken     connectOutcome = "installation-taken"
+	outcomeInstallationAmbiguous connectOutcome = "installation-ambiguous"
 )
 
 func (o connectOutcome) status() int {
@@ -49,6 +50,8 @@ func (o connectOutcome) note() string {
 	case outcomeInstallationTaken:
 		return "that provider installation is already connected to OpenCluster, so nothing was " +
 			"connected; disconnect it there before connecting it here"
+	case outcomeInstallationAmbiguous:
+		return "more than one installation can be connected. Start again with a GitHub account that owns one installation"
 	default:
 		return refusedConnect
 	}
@@ -82,7 +85,16 @@ func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request
 		return
 	}
 
-	returnTo, ok := h.returnTarget(writer, request.URL.Query().Get("returnTo"))
+	query := request.URL.Query()
+	authorize := definition.Connect.Authorize
+	if existing := query.Get("existing"); existing != "" {
+		if existing != "true" || definition.Connect.AuthorizeExisting == nil {
+			writeJSON(writer, http.StatusBadRequest, errorView{Error: "existing=true is only supported by GitHub Connect"})
+			return
+		}
+		authorize = definition.Connect.AuthorizeExisting
+	}
+	returnTo, ok := h.returnTarget(writer, query.Get("returnTo"))
 	if !ok {
 		return
 	}
@@ -95,7 +107,7 @@ func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	authorization, err := definition.Connect.Authorize(ctx, state, h.callbackURL())
+	authorization, err := authorize(ctx, state, h.callbackURL())
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -171,6 +183,10 @@ func (h Handlers) completeConnect(writer http.ResponseWriter, request *http.Requ
 		Query:    query,
 		Callback: h.callbackURL(),
 	})
+	if errors.Is(err, ErrConnectAmbiguousInstallation) {
+		h.landConnect(writer, request, flow.ReturnTo, definition.Key, outcomeInstallationAmbiguous, "")
+		return
+	}
 	if err != nil {
 		h.Logger.WarnContext(ctx, "an integration connect could not be proven",
 			slog.String("org_id", organization.String()),

@@ -42,6 +42,19 @@ func TestConnectStartsNativeInstallationWithOAuthCredentials(t *testing.T) {
 	if target.Path != "/apps/opencluster-app/installations/new" || target.Query().Get("state") != "connect-state" {
 		t.Fatalf("unexpected installation authorization URL: %s", authorizationURL)
 	}
+	authorizationURL, err = connect.AuthorizeExisting(testContext(t), "connect-state", "https://control.example/callback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err = url.Parse(authorizationURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Path != "/login/oauth/authorize" ||
+		target.Query().Get("state") != "connect-state" ||
+		target.Query().Get("redirect_uri") != "https://control.example/callback" {
+		t.Fatalf("unexpected existing installation authorization URL: %s", authorizationURL)
+	}
 }
 
 func TestConnectVerifiesUserInstallationOwnership(t *testing.T) {
@@ -59,13 +72,23 @@ func TestConnectVerifiesUserInstallationOwnership(t *testing.T) {
 		{"unavailable membership proof", `{"installations":[{"id":7}]}`, `{}`, false, []string{"7"}, ""},
 		{"personal owner", `{"installations":[{"id":7}]}`, "", true, []string{"7"}, `{"id":99}`},
 		{"different personal user", `{"installations":[{"id":7}]}`, "", false, []string{"7"}, `{"id":42}`},
-		{"missing installation ID", `{"installations":[{"id":7}]}`, "", false, nil, `{"id":99}`},
+		{"existing personal installation", `{"installations":[{"id":7}]}`, "", true, nil, `{"id":99}`},
+		{"existing organization installation", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":99}}`, true, nil, ""},
+		{"no accessible installation", `{"installations":[]}`, "", false, nil, `{"id":99}`},
+		{"one owned installation and one with read access", `{"installations":[{"id":9},{"id":7}]}`, "", true, nil, `{"id":99}`},
+		{"multiple owned installations", `{"installations":[{"id":7},{"id":8}]}`, "", false, nil, `{"id":99}`},
+		{"explicit installation with another owned installation", `{"installations":[{"id":8},{"id":7}]}`, "", true, []string{"7"}, `{"id":99}`},
+		{"invalid explicit installation", `{"installations":[{"id":7}]}`, "", false, []string{"invalid"}, `{"id":99}`},
 		{"ambiguous installation ID", `{"installations":[{"id":7}]}`, "", false, []string{"7", "8"}, `{"id":99}`},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			vendor := newFakeGitHub(t)
 			vendor.answer("/login/oauth/access_token", `{"access_token":"user-token","token_type":"bearer"}`)
 			vendor.answer("/user/installations", scenario.installations)
+			vendor.answer("/app/installations/8", `{"account":{"id":100,"login":"another-org","type":"Organization"}}`)
+			vendor.answer("/user/memberships/orgs/another-org", `{"state":"active","role":"admin","organization":{"id":100}}`)
+			vendor.answer("/app/installations/9", `{"account":{"id":101,"login":"read-only-org","type":"Organization"}}`)
+			vendor.answer("/user/memberships/orgs/read-only-org", `{"state":"active","role":"member","organization":{"id":101}}`)
 			if scenario.personalUser != "" {
 				vendor.answer("/app/installations/7", `{"id":7,"account":{"id":99,"login":"account-owner","type":"User"}}`)
 				vendor.answer("/user", scenario.personalUser)

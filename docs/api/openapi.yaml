@@ -376,7 +376,14 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
       operationId: startIntegrationConnect
       summary: Start provider authorization
-      description: For GitHub, opens the App installation page to install and authorize the App.
+      parameters:
+        - name: existing
+          in: query
+          description: Set to true to authorize an already-installed GitHub App. Omit for a new installation or for other providers.
+          schema:
+            type: string
+            enum:
+              - 'true'
       tags:
         - Integration Types
   /api/v1/integrations/connect/callback:
@@ -404,7 +411,7 @@ paths:
         - $ref: '#/components/parameters/OAuthState'
         - name: installation_id
           in: query
-          description: Installation ID supplied by GitHub after installation. Required for GitHub callbacks.
+          description: Installation ID supplied by GitHub when available. Without it, GitHub Connect requires exactly one eligible installation.
           schema:
             type: string
             pattern: ^[1-9][0-9]*$
@@ -2356,6 +2363,7 @@ components:
             - unproven
             - unverified
             - installation-taken
+            - installation-ambiguous
         integrationId:
           $ref: '#/components/schemas/UUID'
         note:
