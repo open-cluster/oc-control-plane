@@ -7,9 +7,17 @@ Use Generic Webhook when your alerting system can send JSON over HTTP. OpenClust
 
 ## Connect
 
-You need the OpenCluster **Admin** role and a sender that can reach the HTTPS webhook endpoint and set request headers. An Admin creates the Integration through the API.
+You need the OpenCluster **Admin** role and a sender that can reach the HTTPS webhook endpoint and set request headers.
 
-Follow the [Generic Webhook creation example](/api-reference/workflows#generic-webhook-creation).
+Create the Integration through the [Create integration operation](/api-reference/integrations/create-integration) with these settings.
+
+```json
+{
+  "type": "generic_webhook",
+  "name": "Database alerts",
+  "configuration": {}
+}
+```
 
 Configure the returned webhook URL and one-time secret in your sender. Set the `X-OpenCluster-Token` header to the secret. A representative firing event is shown below. Replace its timestamps with the actual event times when sending it:
 
@@ -26,7 +34,7 @@ Configure the returned webhook URL and one-time secret in your sender. Set the `
   }
 ```
 
-Send the resolution with the same event ID, start time and deduplication key, set `status` to `resolved` and add `resolvedAt`. Optional fields include string maps for `labels` and `annotations`, and an HTTP(S) `sourceUrl`. See the [webhook contract](/api-reference/overview#webhooks) for the full schema.
+Send the resolution with the same event ID, start time and deduplication key, set `status` to `resolved` and add `resolvedAt`. Optional fields include string maps for `labels` and `annotations`, and an HTTP(S) `sourceUrl`. See the [webhook contract](/api-reference/webhook-intake/receive-alert-events) for the full schema.
 
 ## After connection
 

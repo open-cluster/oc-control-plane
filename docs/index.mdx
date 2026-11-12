@@ -5,10 +5,12 @@ description: "Ask operational questions and investigate production incidents wit
 
 OpenCluster is an open-source AI SRE for answering operational questions and investigating production incidents. It brings together metrics, logs, traces, workload state, code changes, and team discussions from connected systems.
 
-Ask “Why did checkout latency increase?” or “What changed before the errors started?” Use an installed [Slack app](/integrations/collaboration/slack#ask-in-slack) or the [Conversation API](/api-reference/workflows#ask-a-question), then ask follow-up questions in the same conversation. An alert is not required. Optional alert sources can open incidents and start investigations automatically.
+Ask “Why did checkout latency increase?” or “What changed before the errors started?” Use an installed [Slack app](/integrations/collaboration/slack#ask-in-slack) or the [Conversation API](/api-reference/conversations/open-conversation), then ask follow-up questions in the same conversation. An alert is not required. Optional alert sources can open incidents and start investigations automatically.
 
 Results include findings with citations to the evidence OpenCluster read, recommended actions, and explicit limitations. Inspect the supporting observations to assess whether the explanation fits. OpenCluster proposes production changes for human review and does not execute them.
 
 Start with the [Quickstart](/getting-started/quickstart), explore [Integrations](/integrations/overview), or learn how to [review results](/concepts/investigations-and-conversations).
 
 Administration and connection setup currently use the API. A web experience is under development and is not included in the self-hosted release. Check the release notes for the version you deploy.
+
+OSS v0.1 uses deployment-level model-provider credentials. Organization-level BYOK, billing, managed provisioning, and enterprise directory controls are unavailable in this release.

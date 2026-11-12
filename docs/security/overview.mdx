@@ -3,17 +3,16 @@ title: "Security model"
 description: "Understand identity, Organization isolation, data handling, read-only access, secrets, Relay, and model-provider boundaries."
 ---
 
-OpenCluster authenticates a Principal, resolves the User's sole current Organization
-Membership, and checks the route's Permission before tenant-owned logic runs.
+OpenCluster checks your identity and Organization role before granting access to data or operations.
 
 Report vulnerabilities through the process in `SECURITY.md`. Do not open a public issue
 containing sensitive details.
 
 ## Authentication and authorization
 
-Initial local signup atomically creates the first Organization, its Admin User and
-Membership, local password, audit record, and an opaque cookie session. The deployment
-owner opens `/setup` in a compatible frontend over trusted private access. Signup requires
+Initial local signup creates the first Organization and its Admin account. Follow the
+private initialization instructions for [Docker Compose](/self-hosting/docker-compose)
+or [Helm](/self-hosting/helm). Signup requires
 the configured same Origin even before a cookie exists. The Origin check protects browser
 requests, but does not establish deployment ownership.
 
@@ -154,4 +153,10 @@ to apply the shipped controls.
 
 ## Manage Integrations
 
-Store one-time webhook secrets securely. When an Admin rotates a secret, update the sender promptly because the old secret stops working immediately. Editors and Admins can disable an Integration to stop new use while preserving history. Only Admins can delete Integrations. Deletion is refused while retained records depend on the Integration.
+Store one-time webhook secrets securely. When an Admin rotates a secret, update the sender promptly because the old secret stops working immediately. Only Admins can [disconnect Integrations](/integrations/overview#disconnect). Disconnect clears saved credentials and stops new use while preserving historical records.
+
+## Using the API securely
+
+Sign in through local authentication or OIDC and use the issued session cookie for subsequent API requests. Keep cookie files private and treat them as credentials. Include an Origin header matching the deployment public URL on write requests, including when using generated request examples. The session determines your Organization and role.
+
+For provider authorization, sign in and start Connect from the same browser session on the public HTTPS origin. Follow the returned authorization URL and keep that session open for the callback. A command-line cookie jar cannot authenticate a browser callback.

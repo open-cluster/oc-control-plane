@@ -9,20 +9,17 @@ Start with an operational question. You do not need an alert or an incident.
 
 For a new deployment, follow [Docker Compose setup](/self-hosting/docker-compose) or [Helm](/self-hosting/helm) and configure a model provider. If OpenCluster is already running, ask your administrator which sources are connected.
 
-Administration currently uses the API. A web experience is under development. A compatible
-frontend can create the first account at `/setup` over trusted private access using the
-[browser signup contract](/api-reference/workflows#initial-local-signup-in-a-browser).
-Keep new installations private until the initial Admin exists. You can ask questions through an installed Slack app or the Conversation API.
+Administration currently uses the API. Follow the private initialization instructions in the deployment guide to create the initial Admin. For API access, see [Using the API securely](/security/overview#using-the-api-securely). You can ask questions through an installed Slack app or the Conversation API.
 
 ## 2. Connect one relevant source
 
-Choose a source from the [Integration overview](/integrations/overview). For example, Kubernetes can report the health of a named workload, while Loki can read application logs. An Admin connects the source using its guide and the linked API procedure.
+Choose a source from the [Integration overview](/integrations/overview). For example, Kubernetes can report the health of a named workload, while Loki can read application logs. An Admin connects the source using its guide and the linked API reference.
 
 ## 3. Ask a specific question
 
 Try “Is the checkout Deployment healthy in the payments namespace?” with Kubernetes, or “What errors appeared in checkout logs in the last 15 minutes?” with Loki. Include the workload, service, repository, or time interval you care about.
 
-In a channel with the installed Slack app, mention `@OpenCluster` with your question. It replies in a thread. Alternatively, use the [Conversation API example](/api-reference/workflows#ask-a-question), which covers sending a question and retrieving the answer. API questions require Editor or Admin access.
+In a channel with the installed Slack app, mention `@OpenCluster` with your question. It replies in a thread. Alternatively, use the [Open conversation operation](/api-reference/conversations/open-conversation) to send a question and [Get conversation](/api-reference/conversations/get-conversation) to retrieve the answer. API questions require Editor or Admin access.
 
 ## 4. Review and follow up
 

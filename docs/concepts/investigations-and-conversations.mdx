@@ -25,9 +25,9 @@ Check the source, timestamps, requested interval, and incomplete-result indicato
 
 ## Inspect a cited observation
 
-Editors and Admins can inspect the retained source observation behind a citation using the [observation API](/api-reference/workflows#investigation-observations). Viewers can read summaries and Tool Run metadata, but cannot retrieve these observation bodies.
+Editors and Admins can inspect the retained source observation behind a citation using the [observation API](/api-reference/investigations/inspect-one-retained-tool-observation). Viewers can read summaries and Tool Run metadata, but cannot retrieve these observation bodies.
 
-Observations are bounded and may omit source content. Older observations can be unavailable. See [response details](/api-reference/workflows#observation-response-details) for fields and [Security](/security/overview) for sensitivity and retention.
+Observations are bounded and may omit source content. Older observations can be unavailable. See [response details](/api-reference/investigations/inspect-one-retained-tool-observation) for fields and [Security](/security/overview) for sensitivity and retention.
 
 ## Action Proposals
 
@@ -41,4 +41,4 @@ After an incident resolves, an Editor or Admin can request a draft postmortem th
 
 Missing impact, resolution, owner, or deadline facts appear as `Needs human input.` You can correct and regenerate the draft before marking it reviewed. Review records the reviewer, and the postmortem is not automatically published. Human testimony remains distinct from system evidence.
 
-See [Run your first investigation](/getting-started/run-your-first-investigation) for the question-to-answer workflow and the [API reference](/api-reference/workflows#conversation-windows-and-pagination) for time windows and turn pagination.
+See [Run your first investigation](/getting-started/run-your-first-investigation) for the question-to-answer workflow and the [API reference](/api-reference/conversations/list-conversation-turns) for time windows and turn pagination.
