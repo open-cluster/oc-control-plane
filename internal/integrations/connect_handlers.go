@@ -51,7 +51,7 @@ func (o connectOutcome) note() string {
 		return "that provider installation is already connected to OpenCluster, so nothing was " +
 			"connected; disconnect it there before connecting it here"
 	case outcomeInstallationAmbiguous:
-		return "more than one installation can be connected. Start again with a GitHub account that owns one installation"
+		return "more than one installation can be connected. Choose the GitHub account or organization that owns the installation"
 	default:
 		return refusedConnect
 	}
@@ -86,13 +86,15 @@ func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request
 	}
 
 	query := request.URL.Query()
-	authorize := definition.Connect.Authorize
-	if existing := query.Get("existing"); existing != "" {
-		if existing != "true" || definition.Connect.AuthorizeExisting == nil {
-			writeJSON(writer, http.StatusBadRequest, errorView{Error: "existing=true is only supported by GitHub Connect"})
-			return
-		}
-		authorize = definition.Connect.AuthorizeExisting
+	existing := query.Get("existing")
+	owner := strings.TrimSpace(query.Get("owner"))
+	if existing != "" && (existing != "true" || definition.Connect.AuthorizeExisting == nil) {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: "existing=true is only supported by GitHub Connect"})
+		return
+	}
+	if owner != "" && existing != "true" {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: "owner requires existing=true"})
+		return
 	}
 	returnTo, ok := h.returnTarget(writer, query.Get("returnTo"))
 	if !ok {
@@ -107,7 +109,12 @@ func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	authorization, err := authorize(ctx, state, h.callbackURL())
+	var authorization string
+	if existing == "true" {
+		authorization, state, err = definition.Connect.AuthorizeExisting(ctx, state, h.callbackURL(), owner)
+	} else {
+		authorization, err = definition.Connect.Authorize(ctx, state, h.callbackURL())
+	}
 	if err != nil {
 		h.fail(writer, request, err)
 		return

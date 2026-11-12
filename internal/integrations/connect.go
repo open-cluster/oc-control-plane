@@ -23,7 +23,7 @@ type ConnectFlow struct {
 type Connect struct {
 	SealsCredential   bool
 	Authorize         func(ctx context.Context, state, callback string) (string, error)
-	AuthorizeExisting func(ctx context.Context, state, callback string) (string, error)
+	AuthorizeExisting func(ctx context.Context, state, callback, owner string) (authorizationURL, flowState string, err error)
 	Redeem            func(ctx context.Context, returned ConnectReturn) (ConnectBinding, error)
 }
 

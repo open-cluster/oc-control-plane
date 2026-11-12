@@ -142,8 +142,11 @@ func TestStartConnectWithoutASealingKeyStillServesATypeThatSealsNothing(t *testi
 func TestStartConnectCanAuthorizeAnExistingInstallation(t *testing.T) {
 	definition := sealingDefinition(new(bool))
 	definition.Connect.SealsCredential = false
-	definition.Connect.AuthorizeExisting = func(context.Context, string, string) (string, error) {
-		return "https://vendor.example/authorize", nil
+	definition.Connect.AuthorizeExisting = func(_ context.Context, state, _, owner string) (string, string, error) {
+		if owner != "example-org" {
+			t.Fatalf("existing installation owner = %q", owner)
+		}
+		return "https://vendor.example/authorize", state, nil
 	}
 	catalog, err := NewCatalog(definition)
 	if err != nil {
@@ -154,7 +157,7 @@ func TestStartConnectCanAuthorizeAnExistingInstallation(t *testing.T) {
 		Catalog:   catalog,
 		Logger:    slog.New(slog.DiscardHandler),
 		PublicURL: "https://opencluster.example",
-	}, "?existing=true")
+	}, "?existing=true&owner=example-org")
 	if recorder.Code != http.StatusOK ||
 		!strings.Contains(recorder.Body.String(), "https://vendor.example/authorize") {
 		t.Fatalf("unexpected existing installation response: %d %s", recorder.Code, recorder.Body.String())

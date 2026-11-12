@@ -2,6 +2,8 @@ package github
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -37,9 +39,13 @@ func connect(app *App, client *Client, clientID, clientSecret string) *integrati
 			return webURL + "/apps/" + url.PathEscape(slug) + "/installations/new?" +
 				url.Values{"state": {state}}.Encode(), nil
 		},
-		AuthorizeExisting: func(_ context.Context, state, callback string) (string, error) {
+		AuthorizeExisting: func(_ context.Context, state, callback, owner string) (string, string, error) {
 			if state == "" || callback == "" {
-				return "", errors.New("github authorization needs state and a callback URL")
+				return "", "", errors.New("github authorization needs state and a callback URL")
+			}
+			if owner != "" {
+				// The single-use flow stores the digest of the full state, binding the owner to this attempt.
+				state += "." + ownerDigest(owner)
 			}
 			parameters := url.Values{
 				"client_id":    {clientID},
@@ -47,7 +53,7 @@ func connect(app *App, client *Client, clientID, clientSecret string) *integrati
 				"redirect_uri": {callback},
 				"state":        {state},
 			}
-			return webURL + "/login/oauth/authorize?" + parameters.Encode(), nil
+			return webURL + "/login/oauth/authorize?" + parameters.Encode(), state, nil
 		},
 		Redeem: func(ctx context.Context, returned integrations.ConnectReturn) (
 			integrations.ConnectBinding, error,
@@ -68,7 +74,8 @@ func connect(app *App, client *Client, clientID, clientSecret string) *integrati
 			if err != nil {
 				return integrations.ConnectBinding{}, errInvalidInstallation
 			}
-			id, installed, err := authorizedInstallation(ctx, app, client, userToken, requestedID)
+			_, selectedOwner, _ := strings.Cut(returned.Query.Get("state"), ".")
+			id, installed, err := authorizedInstallation(ctx, app, client, userToken, requestedID, selectedOwner)
 			if err != nil {
 				return integrations.ConnectBinding{}, err
 			}
@@ -84,6 +91,11 @@ func connect(app *App, client *Client, clientID, clientSecret string) *integrati
 }
 
 const authorizationPageLimit = 10
+
+func ownerDigest(owner string) string {
+	digest := sha256.Sum256([]byte(strings.ToLower(owner)))
+	return hex.EncodeToString(digest[:])
+}
 
 func exchangeUserCode(ctx context.Context, client *Client, clientID, clientSecret, code, callback string) (string, error) {
 	if code == "" || callback == "" {
@@ -125,7 +137,7 @@ func exchangeUserCode(ctx context.Context, client *Client, clientID, clientSecre
 }
 
 func authorizedInstallation(
-	ctx context.Context, app *App, client *Client, userToken string, requestedID int64,
+	ctx context.Context, app *App, client *Client, userToken string, requestedID int64, selectedOwner string,
 ) (int64, Installation, error) {
 	jwt, err := app.jwt(time.Now())
 	if err != nil {
@@ -155,7 +167,8 @@ func authorizedInstallation(
 			if err != nil {
 				return 0, Installation{}, err
 			}
-			if providerInstallation.Suspended {
+			if providerInstallation.Suspended ||
+				(selectedOwner != "" && ownerDigest(providerInstallation.Account) != selectedOwner) {
 				continue
 			}
 			owned, err := userOwnsInstallation(ctx, client, userToken, user.ID, providerInstallation)

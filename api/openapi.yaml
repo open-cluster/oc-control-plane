@@ -282,6 +282,10 @@ paths:
           in: query
           description: Set to true to authorize an already-installed GitHub App. Omit for a new installation or for other providers.
           schema: { type: string, enum: ['true'] }
+        - name: owner
+          in: query
+          description: GitHub user or organization login that owns the installation. Use with existing=true to choose among installations.
+          schema: { type: string }
       tags: [Integration Types]
       responses:
         "200": { $ref: "#/components/responses/ConnectStarted" }

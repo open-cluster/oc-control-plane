@@ -384,6 +384,11 @@ paths:
             type: string
             enum:
               - 'true'
+        - name: owner
+          in: query
+          description: GitHub user or organization login that owns the installation. Use with existing=true to choose among installations.
+          schema:
+            type: string
       tags:
         - Integration Types
   /api/v1/integrations/connect/callback:

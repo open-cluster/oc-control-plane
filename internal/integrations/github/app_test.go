@@ -42,7 +42,7 @@ func TestConnectStartsNativeInstallationWithOAuthCredentials(t *testing.T) {
 	if target.Path != "/apps/opencluster-app/installations/new" || target.Query().Get("state") != "connect-state" {
 		t.Fatalf("unexpected installation authorization URL: %s", authorizationURL)
 	}
-	authorizationURL, err = connect.AuthorizeExisting(testContext(t), "connect-state", "https://control.example/callback")
+	authorizationURL, boundState, err := connect.AuthorizeExisting(testContext(t), "connect-state", "https://control.example/callback", "Example-Org")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,8 @@ func TestConnectStartsNativeInstallationWithOAuthCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	if target.Path != "/login/oauth/authorize" ||
-		target.Query().Get("state") != "connect-state" ||
+		target.Query().Get("state") != boundState || boundState == "connect-state" ||
+		strings.Contains(boundState, "Example-Org") ||
 		target.Query().Get("redirect_uri") != "https://control.example/callback" {
 		t.Fatalf("unexpected existing installation authorization URL: %s", authorizationURL)
 	}
@@ -117,6 +118,17 @@ func TestConnectVerifiesUserInstallationOwnership(t *testing.T) {
 			if scenario.accepted && (installation.Installation == nil ||
 				len(installation.Installation.Key) != 1 || installation.Installation.Key[0] != "7") {
 				t.Fatal("callback did not bind the verified installation")
+			}
+			if scenario.name == "multiple owned installations" {
+				_, state, err := authorization.AuthorizeExisting(testContext(t), "state", returned.Callback, "Account-Owner")
+				if err != nil {
+					t.Fatal(err)
+				}
+				returned.Query.Set("state", state)
+				installation, err := authorization.Redeem(testContext(t), returned)
+				if err != nil || installation.Installation == nil || installation.Installation.Key[0] != "7" {
+					t.Fatalf("explicit owner did not disambiguate existing installation: %v", err)
+				}
 			}
 		})
 	}
