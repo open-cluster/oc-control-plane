@@ -145,8 +145,6 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 		"POST /api/v1/incidents/{incident}/postmortem/review",
 		"POST /api/v1/integration-types/{type}/connect",
 		"POST /api/v1/integrations",
-		"POST /api/v1/integrations/{integration}/disable",
-		"POST /api/v1/integrations/{integration}/enable",
 		"POST /api/v1/integrations/{integration}/rotate-webhook-secret",
 		"POST /api/v1/integrations/{integration}/verify",
 		"POST /api/v1/investigations",
@@ -179,10 +177,7 @@ func TestIntegrationStateHasExplicitCanonicalOperations(t *testing.T) {
 	for _, route := range apiRoutes(t) {
 		found[routeKey(route)] = true
 	}
-	for _, key := range []string{
-		"POST /api/v1/integrations/{integration}/enable",
-		"POST /api/v1/integrations/{integration}/disable",
-	} {
+	for _, key := range []string{} {
 		if !found[key] {
 			t.Errorf("%s is absent", key)
 		}
@@ -398,11 +393,7 @@ func TestTheCorrectedPathsAreTheOnesServed(t *testing.T) {
 		{"PATCH /api/v1/integrations/{integration}",
 			"revising changes part of a record and leaves its identity and its secret alone"},
 		{"DELETE /api/v1/integrations/{integration}",
-			"an Integration nothing depends on can be removed; one with a history is refused"},
-		{"POST /api/v1/integrations/{integration}/enable",
-			"enabling is explicit and idempotent"},
-		{"POST /api/v1/integrations/{integration}/disable",
-			"disabling is explicit and idempotent"},
+			"Disconnect retires access while preserving historical records"},
 		{"POST /api/v1/integrations/{integration}/verify",
 			"verifying is what separates an Integration that is configured from one that works"},
 		{"POST /api/v1/integrations/{integration}/rotate-webhook-secret",

@@ -67,6 +67,10 @@ func (d *Database) RecoverSlackMessage(
 				       failure_class = '', failure_message = '', updated_at = now()
 				 WHERE org_id = $1 AND conversation_id = $2 AND message_sequence = $3
 				   AND status = 4
+				   AND EXISTS (SELECT 1 FROM integration
+				                WHERE integration.org_id = slack_message_work.org_id
+				                  AND integration.integration_id = slack_message_work.integration_id
+				                  AND NOT integration.disconnected)
 				 RETURNING integration_id`, organization, conversationID, messageSequence).
 				Scan(&integrationID)
 			if err != nil {
@@ -100,6 +104,9 @@ func (d *Database) ApplySlackMessageWork(
 		return fmt.Errorf("beginning Slack Message processing: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err = lockActiveIntegration(ctx, tx, organization, work.IntegrationID); err != nil {
+		return err
+	}
 	if err = reserveWaitingInvestigations(ctx, tx, work.Organization, maxWaiting, 1); err != nil {
 		return err
 	}
@@ -166,8 +173,12 @@ func (d *Database) ClaimSlackMessageWork(
 			WITH selected AS (
 				SELECT org_id, work_id
 				  FROM slack_message_work
-				 WHERE (status IN (1, 3) AND available_at <= now())
-				    OR (status = 2 AND lease_expires_at <= now())
+				 WHERE ((status IN (1, 3) AND available_at <= now())
+				    OR (status = 2 AND lease_expires_at <= now()))
+				   AND EXISTS (SELECT 1 FROM integration
+				                WHERE integration.org_id = slack_message_work.org_id
+				                  AND integration.integration_id = slack_message_work.integration_id
+				                  AND NOT integration.disconnected)
 				 ORDER BY available_at, created_at, work_id
 				 FOR UPDATE SKIP LOCKED
 				 LIMIT 1
@@ -180,7 +191,7 @@ func (d *Database) ClaimSlackMessageWork(
 			       failure_class = '', failure_message = '',
 			       updated_at = now()
 			  FROM selected
-			 WHERE work.org_id = selected.org_id AND work.work_id = selected.work_id
+			 WHERE work.org_id = selected.org_id AND work.work_id = selected.work_id AND work.status IN (1, 2, 3)
 			RETURNING work.work_id, work.org_id, work.status, work.delivery_id,
 			          work.integration_id, work.conversation_id,
 			          coalesce(work.message_sequence, 0), work.attempts, work.lease_owner,

@@ -29,6 +29,8 @@ func oweSlackReplies(ctx context.Context, pool *pgxpool.Pool, limit int) error {
 		  JOIN slack_conversation s
 		    ON s.org_id = i.org_id AND s.conversation_id = i.conversation_id
 		 WHERE i.conversation_id IS NOT NULL
+			  AND EXISTS (SELECT 1 FROM integration WHERE integration.org_id = s.org_id
+			  AND integration.integration_id = s.integration_id AND NOT integration.disconnected)
 		   AND NOT EXISTS (SELECT 1 FROM slack_reply d
 		                    WHERE d.investigation_id = i.investigation_id)
 		 ORDER BY i.created_at
@@ -52,11 +54,17 @@ func (p *Database) ClaimSlackReplies(
 			       lease_owner  = gen_random_uuid(),
 			       leased_until = now() + $2::interval,
 			       updated_at   = now()
-			 WHERE investigation_id IN (
+			 WHERE status IN ($3, $1) AND investigation_id IN (
 			       SELECT investigation_id
 			         FROM slack_reply
 			        WHERE status IN ($3, $1)
 			          AND next_attempt_at <= now()
+			          AND EXISTS (SELECT 1 FROM slack_conversation conversation JOIN integration
+			                       ON integration.org_id = conversation.org_id
+			                      AND integration.integration_id = conversation.integration_id
+			                      WHERE conversation.org_id = slack_reply.org_id
+			                        AND conversation.conversation_id = slack_reply.conversation_id
+			                        AND NOT integration.disconnected)
 			          AND (leased_until IS NULL OR leased_until < now())
 			        ORDER BY next_attempt_at
 			        LIMIT $4

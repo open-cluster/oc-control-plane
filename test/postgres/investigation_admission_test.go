@@ -328,104 +328,122 @@ func TestInvestigationCancellationDurablyStopsPendingAndExecutingRelayJobs(t *te
 
 func TestInvestigationCancellationCannotRacePastAConcurrentRelayJob(t *testing.T) {
 	t.Parallel()
+	for _, operation := range []string{"cancel investigation", "disconnect integration"} {
+		t.Run(operation, func(t *testing.T) {
 
-	database, organization := migratedDatabase(t)
-	registration := enrolledRelay(t, database, organization)
-	integration := kubernetesIntegration(t, database, organization, registration)
-	conversation := openConversation(t, database, organization, "cancel concurrent cluster work")
-	say(t, database, organization, conversation.ID, "stop the concurrent read")
-	turn, opened, err := openTurnForTest(database, context.Background(), organization, conversation.ID,
-		turnWindowLead)
-	if err != nil || !opened {
-		t.Fatalf("opening the investigation: opened=%v error=%v", opened, err)
-	}
-	pool, err := poolForTest(database, organization)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = pool.Exec(context.Background(), `
+			database, organization := migratedDatabase(t)
+			registration := enrolledRelay(t, database, organization)
+			integration := kubernetesIntegration(t, database, organization, registration)
+			conversation := openConversation(t, database, organization, "cancel concurrent cluster work")
+			say(t, database, organization, conversation.ID, "stop the concurrent read")
+			turn, opened, err := openTurnForTest(database, context.Background(), organization, conversation.ID,
+				turnWindowLead)
+			if err != nil || !opened {
+				t.Fatalf("opening the investigation: opened=%v error=%v", opened, err)
+			}
+			pool, err := poolForTest(database, organization)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = pool.Exec(context.Background(), `
 		CREATE FUNCTION hold_investigation_job() RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN PERFORM pg_advisory_xact_lock(82734019); RETURN NEW; END $$;
 		CREATE TRIGGER hold_investigation_job BEFORE INSERT ON relay_job
 		FOR EACH ROW EXECUTE FUNCTION hold_investigation_job()`); err != nil {
-		t.Fatalf("installing the deterministic concurrent-insert barrier: %v", err)
-	}
-	barrier, err := pool.Acquire(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer barrier.Release()
-	if _, err = barrier.Exec(context.Background(), `SELECT pg_advisory_lock(82734019)`); err != nil {
-		t.Fatalf("holding the concurrent-insert barrier: %v", err)
-	}
-	unlocked := false
-	defer func() {
-		if !unlocked {
-			_, _ = barrier.Exec(context.Background(), `SELECT pg_advisory_unlock(82734019)`)
-		}
-	}()
-	job := storage.RelayJob{ID: uuid.New(), InvestigationID: turn.InvestigationID,
-		IntegrationID: integration, RegistrationID: registration,
-		CapabilityID: "kubernetes.workload.runtime", CapabilityVersion: 1,
-		Arguments: []byte("bounded")}
-	enqueued := make(chan error, 1)
-	go func() {
-		enqueueError := database.EnqueueVerifiedJob(context.Background(), organization, job)
-		enqueued <- enqueueError
-	}()
-	deadline := time.After(10 * time.Second)
-	for {
-		var waiting bool
-		err = pool.QueryRow(context.Background(), `
+				t.Fatalf("installing the deterministic concurrent-insert barrier: %v", err)
+			}
+			barrier, err := pool.Acquire(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer barrier.Release()
+			if _, err = barrier.Exec(context.Background(), `SELECT pg_advisory_lock(82734019)`); err != nil {
+				t.Fatalf("holding the concurrent-insert barrier: %v", err)
+			}
+			unlocked := false
+			defer func() {
+				if !unlocked {
+					_, _ = barrier.Exec(context.Background(), `SELECT pg_advisory_unlock(82734019)`)
+				}
+			}()
+			job := storage.RelayJob{ID: uuid.New(), InvestigationID: turn.InvestigationID,
+				IntegrationID: integration, RegistrationID: registration,
+				CapabilityID: "kubernetes.workload.runtime", CapabilityVersion: 1,
+				Arguments: []byte("bounded")}
+			enqueued := make(chan error, 1)
+			go func() {
+				enqueueError := database.EnqueueVerifiedJob(context.Background(), organization, job)
+				enqueued <- enqueueError
+			}()
+			deadline := time.After(10 * time.Second)
+			for {
+				var waiting bool
+				err = pool.QueryRow(context.Background(), `
 			SELECT EXISTS (SELECT 1 FROM pg_stat_activity
 			                WHERE wait_event_type = 'Lock' AND wait_event = 'advisory'
 			                  AND query LIKE '%INSERT INTO relay_job%')`).Scan(&waiting)
-		if err != nil {
-			t.Fatalf("observing the blocked concurrent insert: %v", err)
-		}
-		if waiting {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatal("the concurrent Relay insert never reached its deterministic barrier")
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
-	principal := ownerOf(t, organization)
-	cancelled := make(chan error, 1)
-	go func() {
-		_, cancelError := database.CancelInvestigation(context.Background(), principal,
-			organization, turn.InvestigationID)
-		cancelled <- cancelError
-	}()
-	cancelCompleted := false
-	select {
-	case err = <-cancelled:
-		cancelCompleted = true
-		t.Errorf("cancellation raced past an investigation-owned insert: %v", err)
-	case <-time.After(150 * time.Millisecond):
-	}
-	if _, err = barrier.Exec(context.Background(), `SELECT pg_advisory_unlock(82734019)`); err != nil {
-		t.Fatalf("releasing the concurrent-insert barrier: %v", err)
-	}
-	unlocked = true
-	if err = <-enqueued; err != nil {
-		t.Fatalf("enqueueing the synchronized Relay job: %v", err)
-	}
-	if !cancelCompleted {
-		err = <-cancelled
-		if err != nil {
-			t.Fatalf("cancelling synchronized Relay work: %v", err)
-		}
-	}
-	var status storage.JobStatus
-	if err = pool.QueryRow(context.Background(),
-		`SELECT status FROM relay_job WHERE org_id = $1 AND job_id = $2`,
-		organization, job.ID).Scan(&status); err != nil {
-		t.Fatalf("reading synchronized Relay work: %v", err)
-	}
-	if status != storage.JobCancelled {
-		t.Fatalf("concurrent Relay work survived cancellation with status %d", status)
+				if err != nil {
+					t.Fatalf("observing the blocked concurrent insert: %v", err)
+				}
+				if waiting {
+					break
+				}
+				select {
+				case <-deadline:
+					t.Fatal("the concurrent Relay insert never reached its deterministic barrier")
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+			principal := ownerOf(t, organization)
+			cancelled := make(chan error, 1)
+			go func() {
+				if operation == "disconnect integration" {
+					cancelled <- database.DisconnectIntegration(context.Background(), principal, organization, integration)
+				} else {
+					_, cancelError := database.CancelInvestigation(context.Background(), principal, organization, turn.InvestigationID)
+					cancelled <- cancelError
+				}
+			}()
+			cancelCompleted := false
+			select {
+			case err = <-cancelled:
+				cancelCompleted = true
+				t.Errorf("cancellation raced past an investigation-owned insert: %v", err)
+			case <-time.After(150 * time.Millisecond):
+			}
+			if _, err = barrier.Exec(context.Background(), `SELECT pg_advisory_unlock(82734019)`); err != nil {
+				t.Fatalf("releasing the concurrent-insert barrier: %v", err)
+			}
+			unlocked = true
+			if err = <-enqueued; err != nil {
+				t.Fatalf("enqueueing the synchronized Relay job: %v", err)
+			}
+			if !cancelCompleted {
+				err = <-cancelled
+				if err != nil {
+					t.Fatalf("cancelling synchronized Relay work: %v", err)
+				}
+			}
+			var status storage.JobStatus
+			if err = pool.QueryRow(context.Background(),
+				`SELECT status FROM relay_job WHERE org_id = $1 AND job_id = $2`,
+				organization, job.ID).Scan(&status); err != nil {
+				t.Fatalf("reading synchronized Relay work: %v", err)
+			}
+			if status != storage.JobCancelled {
+				t.Fatalf("concurrent Relay work survived cancellation with status %d", status)
+			}
+			if operation == "disconnect integration" {
+				job.ID = uuid.New()
+				if err := database.EnqueueVerifiedJob(context.Background(), organization, job); !errors.Is(err, storage.ErrJobRefused) {
+					t.Fatalf("disconnected job admitted: %v", err)
+				}
+				otherJob := enqueue(t, database, organization, registration)
+				jobs := claim(t, database, organization, registration, uuid.New())
+				if len(jobs) != 1 || jobs[0].ID != otherJob {
+					t.Fatalf("Disconnect affected another integration or claimed retired work: %+v", jobs)
+				}
+			}
+		})
 	}
 }

@@ -206,7 +206,7 @@ func TestSlackEvents_AnActionableMentionRequiresAnAgentBeforeAcceptance(t *testi
 	unknown := `{"type":"event_callback","api_app_id":"A0OPENCLUSTER","team_id":"T0UNKNOWN",` +
 		`"event_id":"EvUnknown","event":{"type":"app_mention","channel":"C0INCIDENTS",` +
 		`"ts":"1700000011.1","user":"U9SRE","text":"<@U0BOT> unknown"}}`
-	if status, body := plane.deliverEvent(t, unknown); status != http.StatusUnauthorized {
+	if status, body := plane.deliverEvent(t, unknown); status != http.StatusOK {
 		t.Fatalf("unknown installation without an Agent = %d: %s", status, body)
 	}
 
@@ -494,7 +494,7 @@ func TestSlackEvents_AForgedOrReplayedRequestIsRefused(t *testing.T) {
 	}
 }
 
-func TestSlackEvents_AnUnknownWorkspaceIsRefusedWithoutDisclosure(t *testing.T) {
+func TestSlackEvents_UnconnectedWorkspacesAreAcknowledgedWithoutWork(t *testing.T) {
 	vendor := newVendorFake(t, "xoxb-installed-token")
 	vendor.grant("channels:read,channels:history,users:read")
 	plane := startSlackEventPlane(t, vendor)
@@ -504,15 +504,30 @@ func TestSlackEvents_AnUnknownWorkspaceIsRefusedWithoutDisclosure(t *testing.T) 
 		`"team_id":"T0STRANGER","event":{"type":"app_mention","channel":"C1",` +
 		`"ts":"1700000001.1","user":"U9","text":"<@U0BOT> hello"}}`
 	status, answer := plane.deliverEvent(t, stranger)
-	if status != http.StatusUnauthorized {
+	if status != http.StatusOK {
 		t.Fatalf("an unknown workspace answered %d: %s", status, answer)
 	}
-	if answer != `{"status":"unauthorized"}`+"\n" {
-		t.Errorf("an unknown workspace answered %q, which differs from a refused signature",
+	if answer != `{"status":"ignored"}`+"\n" {
+		t.Errorf("an unknown workspace answered %q, want ignored",
 			answer)
 	}
 	if found := plane.conversationsIn(t); len(found) != 0 {
 		t.Errorf("an unknown workspace created %+v", found)
+	}
+	installed := plane.integrations(t, surfaceOrg)
+	if len(installed) != 1 {
+		t.Fatalf("expected one installed integration, got %d", len(installed))
+	}
+	if status, body := plane.call(t, http.MethodDelete,
+		plane.base(surfaceOrg)+"/integrations/"+installed[0].ID, nil); status != http.StatusNoContent {
+		t.Fatalf("disconnect = %d: %s", status, body)
+	}
+	event := mention("<@U0BOT> hello", "C1", "1700000002.1", "", "U9")
+	if status, body := plane.deliverEvent(t, event); status != http.StatusOK || body != `{"status":"ignored"}`+"\n" {
+		t.Fatalf("disconnected workspace = %d: %s", status, body)
+	}
+	if found := plane.conversationsIn(t); len(found) != 0 {
+		t.Errorf("a disconnected workspace created %+v", found)
 	}
 }
 

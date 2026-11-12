@@ -54,7 +54,7 @@ func (p *Database) EnqueueVerifiedJob(
 		 WHERE integration.integration_id = $3
 		   AND integration.org_id = $2
 		   AND integration.relay_id = $4
-		   AND NOT integration.disabled
+		   AND NOT integration.disconnected
 		   AND integration.verification_status = 'verified'
 		   AND integration.verified_at IS NOT NULL
 		   AND $5 = ANY(integration.verification_grants)
@@ -63,7 +63,8 @@ func (p *Database) EnqueueVerifiedJob(
 		        WHERE investigation.org_id = $2
 		          AND investigation.investigation_id = $8
 		          AND investigation.status = $9
-		          FOR NO KEY UPDATE))`,
+		          FOR NO KEY UPDATE))
+		 FOR SHARE OF integration`,
 		job.ID, organization, job.IntegrationID, job.RegistrationID,
 		job.CapabilityID, job.CapabilityVersion, job.Arguments,
 		nullableUUID(job.InvestigationID), int16(1))

@@ -91,7 +91,7 @@ func TestStaleCredentialVerificationCannotOverwriteChangedAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current.Disabled {
+	if current.Disconnected {
 		t.Fatal("stale verification must be rejected while the integration is active")
 	}
 	if _, err := database.RecordIntegrationVerification(ctx, principal, organization, integration, verification); !errors.Is(err, integrations.ErrConflict) {
@@ -100,6 +100,16 @@ func TestStaleCredentialVerificationCannotOverwriteChangedAccess(t *testing.T) {
 	if _, err := database.ReplaceIntegrationCredential(ctx, principal, organization, integration,
 		integrations.IntegrationUpdate{}, []byte("replacement"), verification, nil); !errors.Is(err, integrations.ErrConflict) {
 		t.Fatalf("stale credential replacement = %v, want conflict", err)
+	}
+	if err := database.DisconnectIntegration(ctx, principal, organization, integration.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.RecordIntegrationVerification(ctx, principal, organization, current, verification); !errors.Is(err, integrations.ErrDisconnected) {
+		t.Fatalf("disconnected verification = %v, want disconnected", err)
+	}
+	if _, err := database.ReplaceIntegrationCredential(ctx, principal, organization, current,
+		integrations.IntegrationUpdate{}, []byte("replacement"), verification, nil); !errors.Is(err, integrations.ErrDisconnected) {
+		t.Fatalf("disconnected replacement = %v, want disconnected", err)
 	}
 }
 
@@ -366,11 +376,15 @@ func TestDisconnectingTakesTheRoutingRecordWithIt(t *testing.T) {
 
 	database, organization := migratedDatabase(t)
 	installed := slackInstallation("T0ACME")
-	created, err := connectSlack(t, database, organization, "Slack — Acme", installed)
+	created, err := database.CreateIntegration(context.Background(), ownerOf(t, organization), organization, integrations.NewIntegration{
+		Provider: "slack", Name: "Slack — Acme", Installation: installed,
+		CredentialSealed: []byte("sealed credential"), WebhookSecretDigest: make([]byte, 32),
+		Verification: &integrations.Verification{Status: integrations.StatusVerified, Grants: []string{"slack:history"}},
+	})
 	if err != nil {
 		t.Fatalf("connecting slack: %v", err)
 	}
-	if err := database.DeleteIntegration(context.Background(), ownerOf(t, organization),
+	if err := database.DisconnectIntegration(context.Background(), ownerOf(t, organization),
 		organization, created.ID); err != nil {
 		t.Fatalf("disconnecting: %v", err)
 	}
@@ -380,9 +394,35 @@ func TestDisconnectingTakesTheRoutingRecordWithIt(t *testing.T) {
 	if !errors.Is(err, integrations.ErrUnknown) {
 		t.Errorf("a disconnected workspace still resolves: %v", err)
 	}
+	retained, err := database.Integration(context.Background(), organization, created.ID)
+	if err != nil || !retained.Disconnected || len(retained.CredentialSealed) != 0 || len(retained.WebhookSecretDigest) != 0 || retained.Status != "" || !retained.VerifiedAt.IsZero() || len(retained.VerificationGrants) != 0 || retained.Installation != nil {
+		t.Fatalf("disconnect retained active access: %+v %v", retained, err)
+	}
 
-	if _, err := connectSlack(t, database, organization, "Slack — again",
-		slackInstallation("T0ACME")); err != nil {
+	if err := database.DisconnectIntegration(context.Background(), ownerOf(t, organization), organization, created.ID); err != nil {
+		t.Fatalf("repeated disconnect: %v", err)
+	}
+	events, err := database.AuditEvents(context.Background(), ownerOf(t, organization), organization, audit.Page{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var transitions, repeats int
+	for _, event := range events.Events {
+		if event.Action != audit.ActionIntegrationDeleted || event.Target.ID != created.ID.String() {
+			continue
+		}
+		if event.Detail["disconnected"] == true {
+			transitions++
+		}
+		if event.Detail["alreadyDisconnected"] == true {
+			repeats++
+		}
+	}
+	if transitions != 1 || repeats != 1 {
+		t.Fatalf("disconnect audit transitions=%d repeats=%d, want one each", transitions, repeats)
+	}
+	if reconnected, err := connectSlack(t, database, organization, "Slack — again",
+		slackInstallation("T0ACME")); err != nil || reconnected.ID == created.ID {
 		t.Errorf("reconnecting a disconnected workspace: %v", err)
 	}
 }

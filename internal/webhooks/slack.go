@@ -85,8 +85,8 @@ func (h *receiver) handleSlackEvents(writer http.ResponseWriter, request *http.R
 		"slack", integrations.InstallationKey(envelope.Key()))
 	if err != nil {
 		if errors.Is(err, integrations.ErrUnknown) {
-			h.counters.countRequest(ctx, surfaceSlack, resultRejected)
-			writeStatus(writer, http.StatusUnauthorized, "unauthorized")
+			h.counters.countRequest(ctx, surfaceSlack, resultAccepted)
+			writeStatus(writer, http.StatusOK, "ignored")
 			return
 		}
 		h.Logger.ErrorContext(ctx, "could not resolve a slack installation",
@@ -112,7 +112,7 @@ func (h *receiver) handleSlackEvents(writer http.ResponseWriter, request *http.R
 	}
 
 	switch {
-	case integration.Disabled:
+	case integration.Disconnected:
 		h.counters.countRequest(ctx, surfaceSlack, resultAccepted)
 		writeStatus(writer, http.StatusOK, "ignored")
 		return
@@ -151,6 +151,11 @@ func (h *receiver) acceptSlackMessage(
 		AuthorName:    conversation.Bounded(envelope.Event.User, conversation.MaxAuthorNameLength),
 		Text:          conversation.Bounded(envelope.Event.Text, conversation.MaxMessageTextLength),
 	})
+	if errors.Is(err, integrations.ErrDisconnected) {
+		h.counters.countRequest(ctx, surfaceSlack, resultAccepted)
+		writeStatus(writer, http.StatusOK, "ignored")
+		return
+	}
 	if err != nil {
 		h.Logger.ErrorContext(ctx, "recording a slack message failed",
 			slog.String("request_id", requestID),

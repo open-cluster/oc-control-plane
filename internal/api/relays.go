@@ -122,16 +122,16 @@ func (h Handlers) relayIntegrations(writer http.ResponseWriter, request *http.Re
 		return
 	}
 	served := make([]servedIntegrationView, 0, len(list.Integrations))
-	for _, found := range list.Integrations {
+	for _, integration := range list.Integrations {
 		view := servedIntegrationView{
-			ID:       found.ID.String(),
-			Name:     found.Name,
-			Disabled: found.Disabled,
+			ID:           integration.ID.String(),
+			Name:         integration.Name,
+			Disconnected: integration.Disconnected,
 		}
-		if status := found.Status.String(); status != "" {
+		if status := integration.Status.String(); status != "" {
 			view.Status = &status
 		}
-		if definition, known := h.Catalog.Lookup(found.Provider); known {
+		if definition, known := h.Catalog.Lookup(integration.Provider); known {
 			view.Type = string(definition.Key)
 		}
 		served = append(served, view)

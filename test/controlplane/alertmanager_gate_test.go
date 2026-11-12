@@ -224,15 +224,15 @@ func TestAlertmanagerGate_ARefusedDeliveryIsNotPersisted(t *testing.T) {
 		t.Errorf("a truncated real body = %d, want 400", status)
 	}
 
-	gate.setEnabled(t, false)
+	gate.disconnect(t)
 	gate.fire(t, firingAlert(afterDisabling, began))
 	refused := gate.recorder.await(t, afterDisabling, "firing", 1)[0]
 	if refused.Status != http.StatusUnauthorized {
-		t.Errorf("a delivery to a disabled integration = %d, want 401 — an operator who "+
+		t.Errorf("a delivery to a disconnected integration = %d, want 401 — an operator who "+
 			"turned it off wants deliveries refused, not merely recorded", refused.Status)
 	}
 	if alertEvents := gate.alertEventsNamed(t, afterDisabling); len(alertEvents) != 0 {
-		t.Errorf("a disabled integration recorded %d alertEvents, want 0", len(alertEvents))
+		t.Errorf("a disconnected integration recorded %d alertEvents, want 0", len(alertEvents))
 	}
 
 	if count := gate.countDeliveries(t); count != 1 {

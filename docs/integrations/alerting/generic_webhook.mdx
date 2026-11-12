@@ -37,6 +37,6 @@ A new firing Incident queues an Investigation when a model provider is configure
 ## Troubleshooting
 
 - **400.** Check required fields, timestamps and event identity. Reusing an event ID with different content in the same phase is refused.
-- **401.** Check the current secret and confirm the Integration is enabled. Rotation invalidates the old secret immediately.
+- **401.** Check the current secret and confirm the Integration is not disconnected. Rotation invalidates the old secret immediately.
 - **413.** Reduce the request body below the 1 MiB limit.
 - **503.** Retry with bounded backoff and honor `Retry-After` when supplied. Keep the same event identity.

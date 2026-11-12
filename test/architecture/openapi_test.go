@@ -290,7 +290,7 @@ func TestOpenAPIListOperationsDeclareTheirQueryCapabilities(t *testing.T) {
 		"listMembers":             paged,
 		"listAuditEvents":         paged,
 		"listIntegrationTypes":    paged,
-		"listIntegrations":        append(slices.Clone(paged), "IntegrationSearch", "IntegrationSort", "IntegrationTypeFilter", "RelayFilter", "DisabledFilter"),
+		"listIntegrations":        append(slices.Clone(paged), "IntegrationSearch", "IntegrationSort", "IntegrationTypeFilter", "RelayFilter"),
 		"listRelays":              append(slices.Clone(paged), "RelaySearch", "RelaySort", "RelayStateFilter", "RelayVersionFilter", "RelayCapabilityFilter"),
 		"listRelayIntegrations":   paged,
 		"listRelayFailures":       paged,
@@ -415,6 +415,10 @@ func TestOpenAPISessionDescribesIdentity(t *testing.T) {
 	organization := document.Components.Schemas["SessionOrganization"]
 	if !hasFields(organization, "id", "displayName", "role") {
 		t.Errorf("SessionOrganization fields = %v", organization.Required)
+	}
+	member := document.Components.Schemas["Member"]
+	if !hasFields(member, "userId", "email", "displayName", "role", "disabled", "createdAt") {
+		t.Errorf("Member fields = %v, want the existing disabled account contract", member.Required)
 	}
 	if email := user.Properties["email"]; len(email.OneOf) != 2 || email.OneOf[1].Const != "" {
 		t.Errorf("SessionUser email does not allow an empty value: %+v", email)

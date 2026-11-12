@@ -33,11 +33,16 @@ func (p *Database) ClaimJobs(
 		       lease_session    = $3,
 		       lease_epoch      = lease_epoch + 1,
 		       lease_expires_at = now() + $4::interval
-		 WHERE job_id IN (
+		 WHERE cancel_requested_at IS NULL AND status IN (0, 1) AND job_id IN (
 		       SELECT job_id
 		         FROM relay_job
 		        WHERE org_id    = $1
 		          AND registration_id = $2
+		          AND cancel_requested_at IS NULL
+		          AND EXISTS (SELECT 1 FROM integration
+		                       WHERE integration.org_id = relay_job.org_id
+		                         AND integration.integration_id = relay_job.integration_id
+		                         AND NOT integration.disconnected)
 		          AND (status = 0 OR (status = 1 AND lease_expires_at <= now()))
 		        ORDER BY created_at
 		        -- Capacity is a ceiling on what this session holds at once, not a batch size,
@@ -148,7 +153,8 @@ func (p *Database) ReleaseStrandedLeases(
 	}
 	tag, err := pool.Exec(ctx, `
 		UPDATE relay_job
-		   SET status           = 0,
+		   SET status           = CASE WHEN cancel_requested_at IS NOT NULL THEN 4 ELSE 0 END,
+		       terminal_at      = CASE WHEN cancel_requested_at IS NOT NULL THEN now() END,
 		       lease_session    = NULL,
 		       lease_expires_at = NULL,
 		       -- Raised here rather than left for the next claim. Releasing a lease ends that

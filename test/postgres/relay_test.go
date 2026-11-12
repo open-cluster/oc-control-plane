@@ -337,11 +337,15 @@ func TestJob_LeasesNoRelayIsExecutingAreReleasedAtOnce(t *testing.T) {
 	enqueue(t, database, organization, registration)
 	enqueue(t, database, organization, registration)
 	enqueue(t, database, organization, registration)
+	enqueue(t, database, organization, registration)
 	leased := claim(t, database, organization, registration, uuid.New())
-	if len(leased) != 3 {
-		t.Fatalf("claimed %d jobs, want three", len(leased))
+	if len(leased) != 4 {
+		t.Fatalf("claimed %d jobs, want four", len(leased))
 	}
-	stillRunning, abandoned, finished := leased[0], leased[1], leased[2]
+	stillRunning, abandoned, finished, disconnected := leased[0], leased[1], leased[2], leased[3]
+	if err := database.DisconnectIntegration(context.Background(), ownerOf(t, organization), organization, disconnected.IntegrationID); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := database.RecordResult(context.Background(), organization,
 		storage.JobFence{
@@ -368,9 +372,11 @@ func TestJob_LeasesNoRelayIsExecutingAreReleasedAtOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("releasing stranded leases: %v", err)
 	}
-	if released != 1 {
-		t.Fatalf("released %d jobs, want only the abandoned one — the adopted job is being "+
-			"executed and the finished one is over", released)
+	if released != 2 {
+		t.Fatalf("released %d jobs, want abandoned and disconnected work", released)
+	}
+	if outcome, terminal, err := database.JobOutcome(context.Background(), organization, disconnected.ID); err != nil || !terminal || outcome.Status != storage.JobCancelled {
+		t.Fatalf("disconnected stranded lease = %+v terminal=%v: %v", outcome, terminal, err)
 	}
 
 	reclaimed := claim(t, database, organization, registration, reconnected)

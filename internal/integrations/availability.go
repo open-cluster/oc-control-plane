@@ -44,8 +44,8 @@ func SupportedTools(definition Definition, integration Integration) []Tool {
 }
 
 func integrationEligible(integration Integration) (bool, string) {
-	if integration.Disabled {
-		return false, "this Integration is disabled"
+	if integration.Disconnected {
+		return false, "this Integration is disconnected"
 	}
 	if integration.Status != StatusVerified {
 		return false, "this Integration does not have a successful Verification"

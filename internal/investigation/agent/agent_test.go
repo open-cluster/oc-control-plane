@@ -120,6 +120,19 @@ func (r *records) InvestigationCandidates(context.Context, uuid.UUID) ([]integra
 	}
 	return []integrations.Integration{candidate}, nil
 }
+
+func (r *records) Integration(ctx context.Context, organization, id uuid.UUID) (integrations.Integration, error) {
+	candidates, err := r.InvestigationCandidates(ctx, organization)
+	if err != nil {
+		return integrations.Integration{}, err
+	}
+	for _, integration := range candidates {
+		if integration.ID == id {
+			return integration, nil
+		}
+	}
+	return integrations.Integration{}, integrations.ErrUnknown
+}
 func (r *records) RecordCredentialUnseal(context.Context, uuid.UUID, uuid.UUID, string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -681,6 +694,15 @@ func (r *candidateRecords) InvestigationCandidates(context.Context, uuid.UUID) (
 	return r.candidates, nil
 }
 
+func (r *candidateRecords) Integration(_ context.Context, _, id uuid.UUID) (integrations.Integration, error) {
+	for _, integration := range r.candidates {
+		if integration.ID == id {
+			return integration, nil
+		}
+	}
+	return integrations.Integration{}, integrations.ErrUnknown
+}
+
 func TestRunAuditsCredentialBeforeUsingIt(t *testing.T) {
 	const credential = "fixture-credential-\"\\suffix"
 	sealer, err := seal.New(bytes.Repeat([]byte{7}, seal.KeyLength))
@@ -744,6 +766,32 @@ func TestRunAuditsCredentialBeforeUsingIt(t *testing.T) {
 	}
 	if sourceArguments["password"] != credential || sourceArguments["query"] != "value="+credential || store.unseals != 1 {
 		t.Fatal("persistence sanitization mutated execution input or opened a rejected call's credential")
+	}
+}
+
+func TestRunRefusesLaterReadsAfterDisconnect(t *testing.T) {
+	store := &records{candidate: integrations.Integration{ID: uuid.New(), Provider: "stub", Name: "source"}}
+	reads := 0
+	catalog := testCatalog(t, func(context.Context, integrations.ToolRequest) (integrations.ToolResult, error) {
+		reads++
+		store.candidate.Disconnected = true
+		return integrations.ToolResult{Summary: "retained evidence"}, nil
+	})
+	model := &scriptedModel{next: func(call int, _ Prompt) (Completion, error) {
+		if call == 1 {
+			return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{
+				{ID: "first", Name: "stub_read", Arguments: json.RawMessage(`{"purpose":"first read","input":{"query":"first"}}`)},
+				{ID: "later", Name: "stub_read", Arguments: json.RawMessage(`{"purpose":"later read","input":{"query":"later"}}`)},
+			}}, nil
+		}
+		return Completion{Stop: StopToolUse, ToolCalls: []CompletionCall{{ID: "done", Name: ConcludeToolName, Arguments: validConclusion(t, []int{1})}}}, nil
+	}}
+	agent := configuredTestAgent(t, store, model, catalog)
+	if err := agent.Run(context.Background(), uuid.New(), investigation.Investigation{ID: uuid.New(), Subject: "question"}); err != nil {
+		t.Fatal(err)
+	}
+	if reads != 1 || len(store.runs) != 2 || store.runs[0].Outcome != investigation.RunSucceeded || store.runs[1].Outcome != investigation.RunFailed {
+		t.Fatalf("reads=%d runs=%+v", reads, store.runs)
 	}
 }
 

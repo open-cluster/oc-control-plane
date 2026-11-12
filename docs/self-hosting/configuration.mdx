@@ -317,3 +317,11 @@ automatic Investigations. If the current backlog cannot fit them, the whole deli
 refused with `503` and `Retry-After`. A delivery needing more slots than the configured
 limit receives permanent `400`. Without a model provider, alert intake records Incident state
 without reserving Investigation capacity.
+
+## Upgrading to Disconnect
+
+The Disconnect upgrade converts previously disabled Integrations to disconnected records. It clears their saved credentials, webhook secrets, verification results, and provider bindings. Historical investigations, evidence, conversations, and audit records remain available. Active Integrations keep their access.
+
+Before upgrading, inventory disabled Integrations without exporting secrets and notify their Admins. Take a secure database backup, then stop and drain all backend processes. Mixed versions are unsupported.
+
+Previously disabled Integrations cannot be enabled again. Create a new Integration with fresh credentials or provider authorization. Reverting the software cannot restore cleared secrets. Recovery requires the backup and a coordinated rollback.

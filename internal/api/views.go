@@ -32,11 +32,11 @@ type relaySummaryView struct {
 }
 
 type servedIntegrationView struct {
-	ID       string  `json:"id"`
-	Type     string  `json:"type"`
-	Name     string  `json:"name"`
-	Status   *string `json:"status"`
-	Disabled bool    `json:"disabled"`
+	ID           string  `json:"id"`
+	Type         string  `json:"type"`
+	Name         string  `json:"name"`
+	Status       *string `json:"status"`
+	Disconnected bool    `json:"disconnected"`
 }
 
 type relayFailureView struct {

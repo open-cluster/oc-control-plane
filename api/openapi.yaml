@@ -323,7 +323,6 @@ paths:
         - { $ref: "#/components/parameters/IntegrationSort" }
         - { $ref: "#/components/parameters/IntegrationTypeFilter" }
         - { $ref: "#/components/parameters/RelayFilter" }
-        - { $ref: "#/components/parameters/DisabledFilter" }
       responses:
         "200": { $ref: "#/components/responses/IntegrationList" }
         default: { $ref: "#/components/responses/ErrorResponse" }
@@ -371,35 +370,13 @@ paths:
     delete:
       <<: *privileged-write
       operationId: deleteIntegration
-      summary: Delete integration
+      summary: Disconnect integration
       tags: [Integrations]
       responses:
-        "204": { description: Integration deleted. }
+        "204": { description: Integration permanently disconnected. History retained. Repeated requests are safe. }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-  /api/v1/integrations/{integration}/enable:
-    parameters: *integration-path
-    post:
-      <<: *privileged-write
-      operationId: enableIntegration
-      summary: Enable integration
-      tags: [Integrations]
-      x-opencluster-idempotency: intrinsic
-      responses:
-        "204": { $ref: "#/components/responses/NoContent" }
-        default: { $ref: "#/components/responses/ErrorResponse" }
-  /api/v1/integrations/{integration}/disable:
-    parameters: *integration-path
-    post:
-      <<: *privileged-write
-      operationId: disableIntegration
-      summary: Disable integration
-      tags: [Integrations]
-      x-opencluster-idempotency: intrinsic
-      responses:
-        "204": { $ref: "#/components/responses/NoContent" }
-        default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/integrations/{integration}/verify:
     parameters: *integration-path
     post:
@@ -924,11 +901,6 @@ components:
       in: query
       required: false
       schema: { $ref: "#/components/schemas/UUID" }
-    DisabledFilter:
-      name: disabled
-      in: query
-      required: false
-      schema: { type: boolean }
     RelayStateFilter:
       name: state
       in: query
@@ -1297,13 +1269,13 @@ components:
     Integration:
       type: object
       additionalProperties: false
-      required: [id, type, name, status, disabled, configuration, toolAvailability, createdAt]
+      required: [id, type, name, status, disconnected, configuration, toolAvailability, createdAt]
       properties: &integration-properties
         id: { $ref: "#/components/schemas/UUID" }
         type: { type: string, pattern: "^[a-z][a-z0-9_]{0,63}$" }
         name: { type: string, minLength: 1, maxLength: 128 }
         status: { oneOf: [{ type: string, enum: [verified, failed] }, { type: "null" }] }
-        disabled: { type: boolean }
+        disconnected: { type: boolean }
         configuration: { type: object, additionalProperties: true }
         relayId: { $ref: "#/components/schemas/UUID" }
         webhook: { $ref: "#/components/schemas/WebhookReference" }
@@ -1315,7 +1287,7 @@ components:
     IntegrationOperation:
       type: object
       additionalProperties: false
-      required: [id, type, name, status, disabled, configuration, toolAvailability, createdAt]
+      required: [id, type, name, status, disconnected, configuration, toolAvailability, createdAt]
       properties:
         <<: *integration-properties
         verificationNote: { type: string, maxLength: 1024 }
@@ -1407,13 +1379,13 @@ components:
     RelayIntegration:
       type: object
       additionalProperties: false
-      required: [id, type, name, status, disabled]
+      required: [id, type, name, status, disconnected]
       properties:
         id: { $ref: "#/components/schemas/UUID" }
         type: { type: string, minLength: 1, maxLength: 64 }
         name: { type: string, minLength: 1, maxLength: 128 }
         status: { oneOf: [{ type: string, enum: [verified, failed] }, { type: "null" }] }
-        disabled: { type: boolean }
+        disconnected: { type: boolean }
     RelayIntegrationList:
       type: object
       additionalProperties: false

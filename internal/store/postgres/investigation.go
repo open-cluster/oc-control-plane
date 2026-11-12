@@ -505,7 +505,7 @@ func (p *Database) InvestigationCandidates(
 	rows, err := pool.Query(ctx, `
 		SELECT `+integrationColumns+`
 		  FROM integration
-		 WHERE org_id = $1 AND NOT disabled
+		 WHERE org_id = $1 AND NOT disconnected
 		 ORDER BY name`, organization)
 	if err != nil {
 		return nil, fmt.Errorf("listing investigation candidates: %w", err)

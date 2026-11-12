@@ -40,6 +40,9 @@ func (p *Database) RecordSlackMessage(
 		return SlackMessageOutcome{}, fmt.Errorf("beginning a slack message: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
+	if err := lockActiveIntegration(ctx, transaction, organization, said.Integration); err != nil {
+		return SlackMessageOutcome{}, err
+	}
 
 	// Insert the claim first so concurrent redeliveries cannot both pass a read-then-write check.
 	deliveryID := uuid.New()
