@@ -277,19 +277,34 @@ paths:
       <<: *privileged-write
       operationId: startIntegrationConnect
       summary: Start provider authorization
+      parameters:
+        - name: existing
+          in: query
+          description: Set to true to authorize an already-installed GitHub App. Omit for a new installation or for other providers.
+          schema: { type: string, enum: ['true'] }
+        - name: owner
+          in: query
+          description: GitHub user or organization login that owns the installation. Use with existing=true to choose among installations.
+          schema: { type: string }
       tags: [Integration Types]
       responses:
         "200": { $ref: "#/components/responses/ConnectStarted" }
+        "400": { $ref: "#/components/responses/ErrorResponse" }
         default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/integrations/connect/callback:
     get:
       <<: *authenticated-read
       operationId: completeIntegrationConnect
       summary: Complete provider authorization
+      description: Returns to OpenCluster with a connect outcome. installation-ambiguous means a GitHub owner must be chosen before anything is connected. Start authorization again with existing=true and owner set to that GitHub username or organization.
       tags: [Integrations]
       parameters:
         - { $ref: "#/components/parameters/OAuthCode" }
         - { $ref: "#/components/parameters/OAuthState" }
+        - name: installation_id
+          in: query
+          description: Installation ID supplied by GitHub when available. Otherwise, OpenCluster verifies the authorized user's installations and requests a choice if several qualify.
+          schema: { type: string, pattern: '^[1-9][0-9]*$' }
       responses:
         "200": { $ref: "#/components/responses/ConnectLanded" }
         "302": { $ref: "#/components/responses/Redirect" }
@@ -1263,7 +1278,7 @@ components:
       additionalProperties: false
       required: [connect]
       properties:
-        connect: { type: string, enum: [connected, refused, unproven, unverified, installation-taken] }
+        connect: { type: string, enum: [connected, refused, unproven, unverified, installation-taken, installation-ambiguous] }
         integrationId: { $ref: "#/components/schemas/UUID" }
         note: { type: string, maxLength: 1024 }
     SecretReference:

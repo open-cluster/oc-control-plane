@@ -7,9 +7,7 @@ Connect GitHub to answer operational questions about repositories, commits, pull
 
 ## Prerequisites
 
-You need the OpenCluster **Admin** role and permission to administer the GitHub App installation. Configure a GitHub App for the deployment. The App needs no webhook.
-
-Set its setup URL to the deployment's public HTTPS origin followed by `/api/v1/integrations/connect/callback` and enable redirect on update. Configure the App ID and a private-key file in [deployment configuration](/self-hosting/configuration#environment-reference). Keep the key on the deployment.
+You need the OpenCluster **Admin** role and a deployment with [GitHub Connect configured](/self-hosting/configuration#github-app-setup). Sign in to GitHub as the owner of the personal account or GitHub organization where you want to install the App.
 
 ## GitHub App permissions
 
@@ -21,23 +19,24 @@ Set its setup URL to the deployment's public HTTPS origin followed by `/api/v1/i
 | Checks | Read |
 | Actions | Read |
 
+For GitHub organization installations, also grant **Organization permissions → Members: Read-only** so OpenCluster can verify that you own the organization. Personal installations require the personal account owner and do not need the Members permission.
+
 ## Connect
 
-The current self-hosted deployment uses an advanced API-only browser procedure until the frontend ships.
+GitHub Connect is currently available through the API. You authorize access in your browser without entering App credentials or installation IDs.
 
-1. Start the [browser authorization flow](/api-reference/overview#authorize-github-or-slack-in-a-browser) with type `github`.
-2. In GitHub, choose the account and select the repositories OpenCluster should read. Confirm the requested permissions.
-3. Return to OpenCluster in the same browser session. The [authorization reference](/api-reference/overview#authorize-github-or-slack-in-a-browser) explains how to confirm setup.
+1. Start GitHub Connect using the [browser authorization steps](/api-reference/overview#authorize-github-or-slack-in-a-browser). Choose whether to install the App or connect an App you already installed.
+2. In GitHub, choose your account and authorize the App. For a new installation, select the repositories OpenCluster should read.
+3. GitHub returns you to OpenCluster. Keep the same browser session open and confirm that the Integration is verified.
 
-Use GitHub's installation settings to change the repository selection. Repeating setup for the same installation in the same Organization refreshes the Integration.
+For an existing App, OpenCluster connects it automatically when only one installation qualifies. If several qualify, choose the owning GitHub username or organization and authorize again. Each installation can belong to one OpenCluster Organization.
 
 ## After connection
 
-The connection check confirms that the configured App can access the installation. OpenCluster reads only repositories selected for the installation, with bounded file, diff and log results. For example, ask “What changed in checkout before CI started failing?” OpenCluster can read commits and patches, a known pull request and checks, workflow runs and bounded job logs, known files, and releases. Code search and writes are unavailable.
+OpenCluster reads only the repositories selected for the installation. For example, ask “What changed in checkout before CI started failing?” OpenCluster can read commits, pull requests, workflow runs, job logs, known files, and releases. Large files, diffs, and logs may be shortened. Code search and writes are unavailable.
 
 ## Troubleshooting
 
-- **GitHub is unavailable for installation.** Check the App settings, private key and deployment public URL.
-- **Setup refused.** Confirm your browser is signed in to OpenCluster and your GitHub account can administer the installation. Restart setup if the link expired.
-- **Missing repositories or reads.** Check the installation's repository selection and App permissions, then verify again.
-- **Key rotation.** Configure the replacement key, restart and verify before revoking the old key. Uninstalling the App revokes access independently.
+- **Connect is unavailable.** Ask your deployment administrator to check the [GitHub App setup](/self-hosting/configuration#github-app-setup).
+- **Authorization failed or expired.** Check that you are signed in as the owner in GitHub and that any new App permissions have been approved. Start Connect again.
+- **Repositories are missing.** Update the repository selection in GitHub's installation settings, then verify the Integration again.

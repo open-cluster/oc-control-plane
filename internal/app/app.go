@@ -125,7 +125,7 @@ func Run(
 		alertmanager.Definition(),
 		kubernetes.Definition(kubernetes.RelayExecutor{Database: database}),
 		slack.Definition(slack.NewClient(options.SlackAPIURL), slackInstaller, cfg.SlackSigningSecret != ""),
-		github.Definition(gitHubApp, gitHubClient),
+		github.Definition(gitHubApp, gitHubClient, cfg.GitHubClientID, cfg.GitHubClientSecret),
 		genericwebhook.Definition(),
 		prometheus.Definition(),
 		loki.Definition(),

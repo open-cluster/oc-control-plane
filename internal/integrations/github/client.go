@@ -64,6 +64,7 @@ func NewClient(baseURL string) *Client {
 func (c *Client) reachesTheVendorsOwnAPI() bool { return c != nil && c.baseURL == defaultBaseURL }
 
 type Installation struct {
+	AccountID           int64
 	Account             string
 	AccountType         string
 	Suspended           bool
@@ -125,6 +126,7 @@ func (c *Client) Installation(
 ) (Installation, error) {
 	var decoded struct {
 		Account struct {
+			ID    int64  `json:"id"`
 			Login string `json:"login"`
 			Type  string `json:"type"`
 		} `json:"account"`
@@ -137,6 +139,7 @@ func (c *Client) Installation(
 		return Installation{}, err
 	}
 	return Installation{
+		AccountID:           decoded.Account.ID,
 		Account:             decoded.Account.Login,
 		AccountType:         decoded.Account.Type,
 		Suspended:           decoded.SuspendedAt != nil,

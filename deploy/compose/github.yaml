@@ -1,0 +1,13 @@
+services:
+  control-plane:
+    environment:
+      OC_GITHUB_APP_ID: ${OPENCLUSTER_GITHUB_APP_ID:?set the existing GitHub App ID}
+      OC_GITHUB_CLIENT_ID: ${OPENCLUSTER_GITHUB_CLIENT_ID:-}
+      OC_GITHUB_APP_PRIVATE_KEY_FILE: /run/secrets/github_app_private_key
+      OC_GITHUB_CLIENT_SECRET: ${OPENCLUSTER_GITHUB_CLIENT_SECRET:-}
+    secrets:
+      - github_app_private_key
+
+secrets:
+  github_app_private_key:
+    file: ${OPENCLUSTER_GITHUB_APP_PRIVATE_KEY_FILE:?set the existing GitHub private-key file}

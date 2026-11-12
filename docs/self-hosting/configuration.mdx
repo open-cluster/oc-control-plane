@@ -53,10 +53,28 @@ for Compose rather than the standalone `.env.example`.
 | Database DSN and encryption key | A running HTTP service. Retain the encryption key across restarts. Recovery commands need only the database DSN. |
 | AI provider, exact model, and API key | Together, to enable Investigations. Without them, the API remains available and Investigation requests report unavailability. |
 | OIDC issuer, client ID, and client secret | Together, when using OIDC. Local authentication remains available. |
-| GitHub App ID and private key | Together, when using GitHub App installation. |
+| GitHub App credentials | Optional. The App ID and private key allow reads from existing Integrations. Connect also needs the OAuth client ID and secret. |
 | Slack App client ID and secret | Together, for Slack installation. Signed inbound events also require the signing secret. |
 | Relay listener and SPKI pins | When enabling Relay. Use the deployment's separate Relay TLS settings. |
 | Logs, telemetry, session lifetime, worker and model limits | Optional overrides with existing defaults. |
+
+## GitHub App setup
+
+GitHub and Slack App credentials belong to the deployment. Other Integration Types remain available through the API when these credentials are absent.
+
+Configure a GitHub App with the [permissions for the GitHub Integration](/integrations/source-control/github#github-app-permissions). OpenCluster reads from existing GitHub Integrations using the App ID and private key.
+
+To enable GitHub Connect, also supply the App's OAuth client ID and client secret. In GitHub, enable **Request user authorization (OAuth) during installation**. Set the first callback URL to your OpenCluster public HTTPS origin followed by `/api/v1/integrations/connect/callback`. Leave the Setup URL empty. The App does not need a webhook.
+
+- **Docker Compose.** Set `OPENCLUSTER_GITHUB_APP_ID` and `OPENCLUSTER_GITHUB_APP_PRIVATE_KEY_FILE` to the App ID and absolute path to its private key. Add the optional override to your Compose command:
+
+  ```sh
+  docker compose -f deploy/compose/compose.yaml -f deploy/compose/github.yaml up -d
+  ```
+
+  For Connect, also supply `OPENCLUSTER_GITHUB_CLIENT_ID` and `OPENCLUSTER_GITHUB_CLIENT_SECRET` in your Compose environment.
+- **Helm.** Set `github.appID` and put the private key in the existing credentials Secret under `github.privateKeyKey`. For Connect, also set `github.clientID` and put the OAuth secret in the same Secret under `github.clientSecretKey`. These key settings name entries in the Secret.
+- **Standalone.** Use the GitHub variables in the [environment reference](#environment-reference). Prefer the `_FILE` inputs for credentials.
 
 ## Backend listener and public origin
 
@@ -131,6 +149,8 @@ slack:
 github:
   appID: "12345"
   privateKeyFile: /run/secrets/github_private_key
+  clientID: your-github-oauth-client-id
+  clientSecretFile: /run/secrets/github_client_secret
 security:
   encryptionKeyFile: /run/secrets/encryption_key
 ```
@@ -257,6 +277,8 @@ and training terms before production use.
 | `OC_SLACK_CLIENT_ID` | Deployment Slack App client ID. |
 | `OC_SLACK_CLIENT_SECRET` / `OC_SLACK_CLIENT_SECRET_FILE` | Slack App client-secret file. Direct value or file. Do not set both. |
 | `OC_SLACK_SIGNING_SECRET` / `OC_SLACK_SIGNING_SECRET_FILE` | Slack request signing-secret file. Direct value or file. Do not set both. |
+| `OC_GITHUB_CLIENT_ID` | OAuth client ID for new GitHub authorization. |
+| `OC_GITHUB_CLIENT_SECRET` / `OC_GITHUB_CLIENT_SECRET_FILE` | OAuth client secret. Use a direct value or file. Do not set both. |
 | `OC_GITHUB_APP_ID` | Deployment GitHub App ID. |
 | `OC_GITHUB_APP_PRIVATE_KEY` / `OC_GITHUB_APP_PRIVATE_KEY_FILE` | GitHub App private-key file. Direct value or file. Do not set both. |
 

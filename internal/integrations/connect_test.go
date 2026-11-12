@@ -55,11 +55,11 @@ func sealingDefinition(authorized *bool) Definition {
 	}
 }
 
-func startConnectAgainst(t *testing.T, handlers Handlers) *httptest.ResponseRecorder {
+func startConnectAgainst(t *testing.T, handlers Handlers, query string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	request := httptest.NewRequest(http.MethodPost,
-		"/api/v1/integration-types/stub/connect", nil)
+		"/api/v1/integration-types/stub/connect"+query, nil)
 	request.Header.Set("Origin", "https://console.example.com")
 	router, err := authz.Router([]authz.Route{
 		{Method: http.MethodPost, Pattern: "/api/v1/integration-types/{type}/connect",
@@ -95,7 +95,7 @@ func TestStartConnectRefusesBeforeTheBrowserLeavesWhenNothingCanSeal(t *testing.
 		Logger:    slog.New(slog.DiscardHandler),
 		Sealer:    seal.Sealer{},
 		PublicURL: "https://opencluster.example",
-	})
+	}, "")
 
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("starting a connect with no sealing key = %d, want 503: %s",
@@ -128,7 +128,7 @@ func TestStartConnectWithoutASealingKeyStillServesATypeThatSealsNothing(t *testi
 		Logger:    slog.New(slog.DiscardHandler),
 		Sealer:    seal.Sealer{},
 		PublicURL: "https://opencluster.example",
-	})
+	}, "")
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("starting a credential-free connect = %d, want 200: %s",
@@ -136,6 +136,31 @@ func TestStartConnectWithoutASealingKeyStillServesATypeThatSealsNothing(t *testi
 	}
 	if !authorized {
 		t.Error("no authorization URL was built for a flow that needs no sealing key")
+	}
+}
+
+func TestStartConnectCanAuthorizeAnExistingInstallation(t *testing.T) {
+	definition := sealingDefinition(new(bool))
+	definition.Connect.SealsCredential = false
+	definition.Connect.AuthorizeExisting = func(_ context.Context, state, _, owner string) (string, string, error) {
+		if owner != "example-org" {
+			t.Fatalf("existing installation owner = %q", owner)
+		}
+		return "https://vendor.example/authorize", state, nil
+	}
+	catalog, err := NewCatalog(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := startConnectAgainst(t, Handlers{
+		Store:     recordingConnectStore{},
+		Catalog:   catalog,
+		Logger:    slog.New(slog.DiscardHandler),
+		PublicURL: "https://opencluster.example",
+	}, "?existing=true&owner=example-org")
+	if recorder.Code != http.StatusOK ||
+		!strings.Contains(recorder.Body.String(), "https://vendor.example/authorize") {
+		t.Fatalf("unexpected existing installation response: %d %s", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -191,6 +216,47 @@ func completeConnectAgainst(
 	recorder := httptest.NewRecorder()
 	handlers.completeConnect(recorder, request)
 	return recorder
+}
+
+func TestAnAmbiguousInstallationReturnsToTheRequestedPage(t *testing.T) {
+	principal := connectingPrincipal(t, "11111111-1111-4111-8111-111111111111")
+	definition := sealingDefinition(new(bool))
+	definition.Connect.Redeem = func(context.Context, ConnectReturn) (ConnectBinding, error) {
+		return ConnectBinding{}, ErrConnectAmbiguousInstallation
+	}
+	catalog, err := NewCatalog(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &capturingStore{flow: ConnectFlow{
+		Organization: principal.Organization().String(),
+		Provider:     definition.Key,
+		Principal:    principal.UserID().String(),
+		ReturnTo:     "/integrations",
+	}}
+	recorder := completeConnectAgainst(t, Handlers{
+		Store:     store,
+		Catalog:   catalog,
+		Logger:    slog.New(slog.DiscardHandler),
+		PublicURL: "https://opencluster.example",
+	}, principal)
+	if recorder.Code != http.StatusFound ||
+		recorder.Header().Get("Location") != "https://opencluster.example/integrations?connect=installation-ambiguous" {
+		t.Fatalf("unexpected ambiguous installation response: %d %s", recorder.Code, recorder.Header().Get("Location"))
+	}
+	recorder = completeConnectAgainst(t, Handlers{
+		Store:   store,
+		Catalog: catalog,
+		Logger:  slog.New(slog.DiscardHandler),
+	}, principal)
+	if recorder.Code != http.StatusOK ||
+		!strings.Contains(recorder.Body.String(), `"connect":"installation-ambiguous"`) ||
+		!strings.Contains(recorder.Body.String(), "Choose the GitHub username or organization you want to connect, then authorize again.") {
+		t.Fatalf("unexpected installation selection response: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if store.created.ID != uuid.Nil || store.reVerified || store.replaced != nil {
+		t.Fatal("an ambiguous installation changed an Integration")
+	}
 }
 
 func TestACredentialFromAProvenReturnIsSealedOntoTheRecord(t *testing.T) {

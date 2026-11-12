@@ -7,13 +7,136 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
+
+func TestConnectStartsNativeInstallationWithOAuthCredentials(t *testing.T) {
+	vendor := newFakeGitHub(t)
+	vendor.answer("/app", `{"slug":"opencluster-app"}`)
+	client := NewClient(vendor.URL)
+	app, err := NewApp("12345", pemPKCS1(testKey(t)), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if Definition(app, client, "", "").Connectable() {
+		t.Fatal("App key alone must not enable installation binding without user authorization")
+	}
+
+	connect := Definition(app, client, "client-id", "client-secret").Connect
+	authorizationURL, err := connect.Authorize(testContext(t), "connect-state", "https://control.example/callback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := url.Parse(authorizationURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Path != "/apps/opencluster-app/installations/new" || target.Query().Get("state") != "connect-state" {
+		t.Fatalf("unexpected installation authorization URL: %s", authorizationURL)
+	}
+	authorizationURL, boundState, err := connect.AuthorizeExisting(testContext(t), "connect-state", "https://control.example/callback", "Example-Org")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err = url.Parse(authorizationURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Path != "/login/oauth/authorize" ||
+		target.Query().Get("state") != boundState || boundState == "connect-state" ||
+		strings.Contains(boundState, "Example-Org") ||
+		target.Query().Get("redirect_uri") != "https://control.example/callback" {
+		t.Fatalf("unexpected existing installation authorization URL: %s", authorizationURL)
+	}
+}
+
+func TestConnectVerifiesUserInstallationOwnership(t *testing.T) {
+	for _, scenario := range []struct {
+		name, installations, membership string
+		accepted                        bool
+		installationIDs                 []string
+		personalUser                    string
+	}{
+		{"organization owner", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":99}}`, true, []string{"7"}, ""},
+		{"forged installation", `{"installations":[{"id":8}]}`, `{}`, false, []string{"7"}, ""},
+		{"repository collaborator", `{"installations":[{"id":7}]}`, `{"state":"active","role":"member","organization":{"id":99}}`, false, []string{"7"}, ""},
+		{"another organization", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":100}}`, false, []string{"7"}, ""},
+		{"pending membership", `{"installations":[{"id":7}]}`, `{"state":"pending","role":"admin","organization":{"id":99}}`, false, []string{"7"}, ""},
+		{"unavailable membership proof", `{"installations":[{"id":7}]}`, `{}`, false, []string{"7"}, ""},
+		{"personal owner", `{"installations":[{"id":7}]}`, "", true, []string{"7"}, `{"id":99}`},
+		{"different personal user", `{"installations":[{"id":7}]}`, "", false, []string{"7"}, `{"id":42}`},
+		{"existing personal installation", `{"installations":[{"id":7}]}`, "", true, nil, `{"id":99}`},
+		{"existing organization installation", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":99}}`, true, nil, ""},
+		{"no accessible installation", `{"installations":[]}`, "", false, nil, `{"id":99}`},
+		{"one owned installation and one with read access", `{"installations":[{"id":9},{"id":7}]}`, "", true, nil, `{"id":99}`},
+		{"multiple owned installations", `{"installations":[{"id":7},{"id":8}]}`, "", false, nil, `{"id":99}`},
+		{"explicit installation with another owned installation", `{"installations":[{"id":8},{"id":7}]}`, "", true, []string{"7"}, `{"id":99}`},
+		{"invalid explicit installation", `{"installations":[{"id":7}]}`, "", false, []string{"invalid"}, `{"id":99}`},
+		{"ambiguous installation ID", `{"installations":[{"id":7}]}`, "", false, []string{"7", "8"}, `{"id":99}`},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			vendor := newFakeGitHub(t)
+			vendor.answer("/login/oauth/access_token", `{"access_token":"user-token","token_type":"bearer"}`)
+			vendor.answer("/user/installations", scenario.installations)
+			vendor.answer("/app/installations/8", `{"account":{"id":100,"login":"another-org","type":"Organization"}}`)
+			vendor.answer("/user/memberships/orgs/another-org", `{"state":"active","role":"admin","organization":{"id":100}}`)
+			vendor.answer("/app/installations/9", `{"account":{"id":101,"login":"read-only-org","type":"Organization"}}`)
+			vendor.answer("/user/memberships/orgs/read-only-org", `{"state":"active","role":"member","organization":{"id":101}}`)
+			if scenario.personalUser != "" {
+				vendor.answer("/app/installations/7", `{"id":7,"account":{"id":99,"login":"account-owner","type":"User"}}`)
+				vendor.answer("/user", scenario.personalUser)
+			} else {
+				vendor.answer("/app/installations/7", `{"id":7,"account":{"id":99,"login":"controlled-org","type":"Organization"}}`)
+				vendor.answer("/user", `{"id":42}`)
+				vendor.answer("/user/memberships/orgs/controlled-org", scenario.membership)
+			}
+			client := NewClient(vendor.URL)
+			app, err := NewApp("12345", pemPKCS1(testKey(t)), client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			authorization := Definition(app, client, "client-id", "client-secret").Connect
+			returned := integrations.ConnectReturn{
+				Callback: "https://control.example/callback",
+				Query: url.Values{
+					"code":            {"user-code"},
+					"installation_id": scenario.installationIDs,
+				},
+			}
+			installation, err := authorization.Redeem(testContext(t), returned)
+			if (err == nil) != scenario.accepted {
+				t.Fatalf("accepted = %v, want %v", err == nil, scenario.accepted)
+			}
+			if scenario.accepted && (installation.Installation == nil ||
+				len(installation.Installation.Key) != 1 || installation.Installation.Key[0] != "7") {
+				t.Fatal("callback did not bind the verified installation")
+			}
+			if scenario.name == "multiple owned installations" {
+				if !errors.Is(err, integrations.ErrConnectAmbiguousInstallation) {
+					t.Fatalf("multiple owned installations must request selection: %v", err)
+				}
+				_, state, err := authorization.AuthorizeExisting(testContext(t), "state", returned.Callback, "Account-Owner")
+				if err != nil {
+					t.Fatal(err)
+				}
+				returned.Query.Set("state", state)
+				installation, err := authorization.Redeem(testContext(t), returned)
+				if err != nil || installation.Installation == nil || installation.Installation.Key[0] != "7" {
+					t.Fatalf("explicit owner did not disambiguate existing installation: %v", err)
+				}
+			}
+		})
+	}
+}
 
 func testKey(t *testing.T) *rsa.PrivateKey {
 	t.Helper()

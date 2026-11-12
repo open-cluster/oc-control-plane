@@ -47,3 +47,10 @@ relay:
 resources: {}
 
 logLevel: info
+
+github:
+  appID: ""
+  clientID: ""
+  # Keys in credentials.existingSecret when appID is supplied.
+  privateKeyKey: github-app-private-key
+  clientSecretKey: github-client-secret

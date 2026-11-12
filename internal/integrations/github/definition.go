@@ -19,8 +19,8 @@ const (
 	toolListReleases     = "github_list_releases"
 )
 
-func Definition(app *App, client *Client) integrations.Definition {
-	where := deployment{app: app, client: client}
+func Definition(app *App, client *Client, clientID, clientSecret string) integrations.Definition {
+	githubDeployment := deployment{app: app, client: client}
 	return integrations.Definition{
 		Key: "github", Name: "GitHub",
 		Description: "Give investigations read-only access to selected repositories for " +
@@ -35,9 +35,9 @@ func Definition(app *App, client *Client) integrations.Definition {
 					Note:   "the integration carries no usable installation identity; reconnect it and verify again",
 				}
 			}
-			return probe(ctx, where, installation)
+			return probe(ctx, githubDeployment, installation)
 		},
-		Connect: connect(app, client),
+		Connect: connect(app, client, clientID, clientSecret),
 	}
 }
 
