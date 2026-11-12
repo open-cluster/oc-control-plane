@@ -18,8 +18,10 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-func TestConnectRequiresOAuthCredentials(t *testing.T) {
-	client := NewClient("")
+func TestConnectStartsNativeInstallationWithOAuthCredentials(t *testing.T) {
+	vendor := newFakeGitHub(t)
+	vendor.answer("/app", `{"slug":"opencluster-app"}`)
+	client := NewClient(vendor.URL)
 	app, err := NewApp("12345", pemPKCS1(testKey(t)), client)
 	if err != nil {
 		t.Fatal(err)
@@ -27,24 +29,38 @@ func TestConnectRequiresOAuthCredentials(t *testing.T) {
 	if Definition(app, client, "", "").Connectable() {
 		t.Fatal("App key alone must not enable installation binding without user authorization")
 	}
+
+	connect := Definition(app, client, "client-id", "client-secret").Connect
+	authorizationURL, err := connect.Authorize(testContext(t), "connect-state", "https://control.example/callback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := url.Parse(authorizationURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Path != "/apps/opencluster-app/installations/new" || target.Query().Get("state") != "connect-state" {
+		t.Fatalf("unexpected installation authorization URL: %s", authorizationURL)
+	}
 }
 
 func TestConnectVerifiesUserInstallationOwnership(t *testing.T) {
 	for _, scenario := range []struct {
 		name, installations, membership string
 		accepted                        bool
-		native                          bool
+		installationIDs                 []string
 		personalUser                    string
 	}{
-		{"native installation owner", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":99}}`, true, true, ""},
-		{"organization owner", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":99}}`, true, false, ""},
-		{"forged installation", `{"installations":[{"id":8}]}`, `{}`, false, true, ""},
-		{"repository collaborator", `{"installations":[{"id":7}]}`, `{"state":"active","role":"member","organization":{"id":99}}`, false, false, ""},
-		{"another organization", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":100}}`, false, false, ""},
-		{"pending membership", `{"installations":[{"id":7}]}`, `{"state":"pending","role":"admin","organization":{"id":99}}`, false, false, ""},
-		{"unavailable membership proof", `{"installations":[{"id":7}]}`, `{}`, false, false, ""},
-		{"personal owner", `{"installations":[{"id":7}]}`, "", true, true, `{"id":99}`},
-		{"different personal user", `{"installations":[{"id":7}]}`, "", false, true, `{"id":42}`},
+		{"organization owner", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":99}}`, true, []string{"7"}, ""},
+		{"forged installation", `{"installations":[{"id":8}]}`, `{}`, false, []string{"7"}, ""},
+		{"repository collaborator", `{"installations":[{"id":7}]}`, `{"state":"active","role":"member","organization":{"id":99}}`, false, []string{"7"}, ""},
+		{"another organization", `{"installations":[{"id":7}]}`, `{"state":"active","role":"admin","organization":{"id":100}}`, false, []string{"7"}, ""},
+		{"pending membership", `{"installations":[{"id":7}]}`, `{"state":"pending","role":"admin","organization":{"id":99}}`, false, []string{"7"}, ""},
+		{"unavailable membership proof", `{"installations":[{"id":7}]}`, `{}`, false, []string{"7"}, ""},
+		{"personal owner", `{"installations":[{"id":7}]}`, "", true, []string{"7"}, `{"id":99}`},
+		{"different personal user", `{"installations":[{"id":7}]}`, "", false, []string{"7"}, `{"id":42}`},
+		{"missing installation ID", `{"installations":[{"id":7}]}`, "", false, nil, `{"id":99}`},
+		{"ambiguous installation ID", `{"installations":[{"id":7}]}`, "", false, []string{"7", "8"}, `{"id":99}`},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			vendor := newFakeGitHub(t)
@@ -65,20 +81,19 @@ func TestConnectVerifiesUserInstallationOwnership(t *testing.T) {
 			}
 			authorization := Definition(app, client, "client-id", "client-secret").Connect
 			returned := integrations.ConnectReturn{
-				ProviderInstallationID: "7",
-				Callback:               "https://control.example/callback",
-				Query:                  url.Values{"code": {"user-code"}, "installation_id": {"999"}},
-			}
-			if scenario.native {
-				returned.ProviderInstallationID = ""
-				returned.Query.Set("installation_id", "7")
+				Callback: "https://control.example/callback",
+				Query: url.Values{
+					"code":            {"user-code"},
+					"installation_id": scenario.installationIDs,
+				},
 			}
 			installation, err := authorization.Redeem(testContext(t), returned)
 			if (err == nil) != scenario.accepted {
 				t.Fatalf("accepted = %v, want %v", err == nil, scenario.accepted)
 			}
-			if scenario.accepted && (installation.Installation == nil || installation.Installation.Key[0] != "7") {
-				t.Fatal("callback overrode the stored installation selection")
+			if scenario.accepted && (installation.Installation == nil ||
+				len(installation.Installation.Key) != 1 || installation.Installation.Key[0] != "7") {
+				t.Fatal("callback did not bind the verified installation")
 			}
 		})
 	}

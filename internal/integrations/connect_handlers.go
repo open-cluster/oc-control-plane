@@ -82,17 +82,7 @@ func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request
 		return
 	}
 
-	query, err := url.ParseQuery(request.URL.RawQuery)
-	if err != nil {
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: "invalid authorization query"})
-		return
-	}
-	if selections, supplied := query["providerInstallationId"]; supplied &&
-		(len(selections) != 1 || selections[0] == "") {
-		h.fail(writer, request, ErrInvalidConnectSelection)
-		return
-	}
-	returnTo, ok := h.returnTarget(writer, query.Get("returnTo"))
+	returnTo, ok := h.returnTarget(writer, request.URL.Query().Get("returnTo"))
 	if !ok {
 		return
 	}
@@ -105,20 +95,18 @@ func (h Handlers) startConnect(writer http.ResponseWriter, request *http.Request
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	providerInstallationID := query.Get("providerInstallationId")
-	authorization, err := definition.Connect.Authorize(ctx, state, h.callbackURL(), providerInstallationID)
+	authorization, err := definition.Connect.Authorize(ctx, state, h.callbackURL())
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
 
 	flow := ConnectFlow{
-		ProviderInstallationID: providerInstallationID,
-		Organization:           organization.String(),
-		Provider:               definition.Key,
-		Principal:              principal.UserID().String(),
-		ReturnTo:               returnTo,
-		ExpiresAt:              time.Now().Add(connectFlowLifetime),
+		Organization: organization.String(),
+		Provider:     definition.Key,
+		Principal:    principal.UserID().String(),
+		ReturnTo:     returnTo,
+		ExpiresAt:    time.Now().Add(connectFlowLifetime),
 	}
 	if err := h.Store.StartConnectFlow(ctx, organization, flow, state); err != nil {
 		h.fail(writer, request, err)
@@ -180,9 +168,8 @@ func (h Handlers) completeConnect(writer http.ResponseWriter, request *http.Requ
 	}
 
 	bound, err := definition.Connect.Redeem(ctx, ConnectReturn{
-		Query:                  query,
-		Callback:               h.callbackURL(),
-		ProviderInstallationID: flow.ProviderInstallationID,
+		Query:    query,
+		Callback: h.callbackURL(),
 	})
 	if err != nil {
 		h.Logger.WarnContext(ctx, "an integration connect could not be proven",

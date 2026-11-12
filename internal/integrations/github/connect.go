@@ -22,23 +22,10 @@ func connect(app *App, client *Client, clientID, clientSecret string) *integrati
 		return nil
 	}
 	return &integrations.Connect{
-		Authorize: func(ctx context.Context, state, callback, providerInstallationID string) (string, error) {
+		Authorize: func(ctx context.Context, state, callback string) (string, error) {
 			if state == "" || callback == "" {
 				return "", errors.New("a github installation needs state and callback URLs")
 			}
-			if providerInstallationID != "" {
-				id, err := strconv.ParseInt(providerInstallationID, 10, 64)
-				if err != nil || id <= 0 {
-					return "", integrations.ErrInvalidConnectSelection
-				}
-				parameters := url.Values{
-					"client_id":    {clientID},
-					"redirect_uri": {callback},
-					"state":        {state},
-				}
-				return webURL + "/login/oauth/authorize?" + parameters.Encode(), nil
-			}
-
 			jwt, err := app.jwt(time.Now())
 			if err != nil {
 				return "", err
@@ -53,15 +40,11 @@ func connect(app *App, client *Client, clientID, clientSecret string) *integrati
 		Redeem: func(ctx context.Context, returned integrations.ConnectReturn) (
 			integrations.ConnectBinding, error,
 		) {
-			providerInstallationID := returned.ProviderInstallationID
-			if providerInstallationID == "" {
-				selections := returned.Query["installation_id"]
-				if len(selections) != 1 {
-					return integrations.ConnectBinding{}, errInvalidInstallation
-				}
-				providerInstallationID = selections[0]
+			installationIDs := returned.Query["installation_id"]
+			if len(installationIDs) != 1 {
+				return integrations.ConnectBinding{}, errInvalidInstallation
 			}
-			id, err := strconv.ParseInt(strings.TrimSpace(providerInstallationID), 10, 64)
+			id, err := strconv.ParseInt(strings.TrimSpace(installationIDs[0]), 10, 64)
 			if err != nil || id < 1 {
 				return integrations.ConnectBinding{}, errInvalidInstallation
 			}

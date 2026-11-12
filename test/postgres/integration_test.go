@@ -157,14 +157,14 @@ func TestIntegrationConnectFlowIsDisposable(t *testing.T) {
 	ensureOrganization(t, connection, org)
 
 	wanted := integrations.ConnectFlow{
-		Organization: org.String(), Provider: "github", Principal: "user-1", ProviderInstallationID: "7",
+		Organization: org.String(), Provider: "github", Principal: "user-1",
 		ReturnTo: "/integrations", ExpiresAt: time.Now().Add(time.Minute),
 	}
 	if err := database.StartConnectFlow(ctx, org, wanted, "live-state"); err != nil {
 		t.Fatal(err)
 	}
 	got, err := database.RedeemConnectFlow(ctx, "live-state")
-	if err != nil || got.Provider != wanted.Provider || got.Principal != wanted.Principal || got.ProviderInstallationID != wanted.ProviderInstallationID {
+	if err != nil || got.Provider != wanted.Provider || got.Principal != wanted.Principal {
 		t.Fatalf("redeemed flow = %+v, error = %v", got, err)
 	}
 	if _, err := database.RedeemConnectFlow(ctx, "live-state"); !errors.Is(err, integrations.ErrConnectFlowUnknown) {

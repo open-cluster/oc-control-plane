@@ -19,7 +19,7 @@ You need the OpenCluster **Admin** role and a deployment with [GitHub Connect co
 | Checks | Read |
 | Actions | Read |
 
-For GitHub organization installations, also grant **Organization permissions → Members: Read-only** so OpenCluster can verify that you own the organization. If you add this permission to an existing installation, a GitHub organization owner must approve it before connecting again. Personal installations require the personal account owner and do not need the Members permission.
+For GitHub organization installations, also grant **Organization permissions → Members: Read-only** so OpenCluster can verify that you own the organization. Personal installations require the personal account owner and do not need the Members permission.
 
 ## Connect
 
@@ -27,7 +27,7 @@ For GitHub organization installations, also grant **Organization permissions →
 2. In GitHub, choose the account and select the repositories OpenCluster should read. Install and authorize the App.
 3. GitHub returns you to OpenCluster. Keep the same browser session open and confirm that the Integration is verified.
 
-If the App is already installed, [start provider authorization](/api-reference/integration-types/start-provider-authorization) with the installation ID to connect without reinstalling. Use the same option if GitHub returns without selecting an installation. An installation can belong to one OpenCluster Organization. Authorizing it again in that Organization refreshes the Integration.
+Connect uses the GitHub installation flow. If GitHub does not identify an existing installation on return, OpenCluster cannot link or reconnect it. Integrations that are already connected continue to work. Each installation can belong to one OpenCluster Organization.
 
 ## After connection
 

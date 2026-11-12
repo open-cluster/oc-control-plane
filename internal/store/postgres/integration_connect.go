@@ -28,10 +28,10 @@ func (p *Database) StartConnectFlow(
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO integration_connect_flow (org_id, provider, principal,
-		                                      state_digest, return_to, expires_at, provider_installation_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		                                      state_digest, return_to, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
 		organization, flow.Provider, flow.Principal, digest[:],
-		flow.ReturnTo, flow.ExpiresAt, flow.ProviderInstallationID); err != nil {
+		flow.ReturnTo, flow.ExpiresAt); err != nil {
 		return fmt.Errorf("starting a connect flow: %w", err)
 	}
 	return nil
@@ -46,9 +46,9 @@ func (p *Database) RedeemConnectFlow(
 	err := p.pool.QueryRow(ctx, `
 			DELETE FROM integration_connect_flow
 			 WHERE state_digest = $1 AND expires_at > now()
-			RETURNING org_id, provider, principal, return_to, expires_at, provider_installation_id`,
+			RETURNING org_id, provider, principal, return_to, expires_at`,
 		digest[:]).Scan(&flow.Organization, &flow.Provider, &flow.Principal,
-		&flow.ReturnTo, &flow.ExpiresAt, &flow.ProviderInstallationID)
+		&flow.ReturnTo, &flow.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return integrations.ConnectFlow{}, integrations.ErrConnectFlowUnknown
 	}

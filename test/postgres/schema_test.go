@@ -73,7 +73,6 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 		"0002_simplify_conversation_investigation_contracts",
 		"0003_cleanup_conversation_schema",
 		"0004_tool_run_observation",
-		"0005_connect_installation_selection",
 	}) {
 		t.Fatalf("applied migrations = %v", applied)
 	}
@@ -305,7 +304,6 @@ func TestCleanupMigrationValidatesAndConvertsPostmortemReviewers(t *testing.T) {
 		"0002_simplify_conversation_investigation_contracts",
 		"0003_cleanup_conversation_schema",
 		"0004_tool_run_observation",
-		"0005_connect_installation_selection",
 	}) {
 		t.Fatalf("repaired reviewer migration applied %v: %v", applied, err)
 	}
@@ -390,7 +388,6 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 		"0002_simplify_conversation_investigation_contracts",
 		"0003_cleanup_conversation_schema",
 		"0004_tool_run_observation",
-		"0005_connect_installation_selection",
 	}) {
 		t.Fatalf("fresh migration applied %v, want every schema migration", applied)
 	}

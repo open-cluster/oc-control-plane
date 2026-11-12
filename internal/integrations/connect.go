@@ -8,30 +8,26 @@ import (
 )
 
 var ErrConnectFlowUnknown = errors.New("connect flow unknown")
-var ErrInvalidConnectSelection = errors.New(
-	"providerInstallationId is only accepted for GitHub and must be a single positive installation ID")
 
 const connectFlowLifetime = 15 * time.Minute
 
 type ConnectFlow struct {
-	ProviderInstallationID string
-	Organization           string
-	Provider               Provider
-	Principal              string
-	ReturnTo               string
-	ExpiresAt              time.Time
+	Organization string
+	Provider     Provider
+	Principal    string
+	ReturnTo     string
+	ExpiresAt    time.Time
 }
 
 type Connect struct {
 	SealsCredential bool
-	Authorize       func(ctx context.Context, state, callback, providerInstallationID string) (string, error)
+	Authorize       func(ctx context.Context, state, callback string) (string, error)
 	Redeem          func(ctx context.Context, returned ConnectReturn) (ConnectBinding, error)
 }
 
 type ConnectReturn struct {
-	ProviderInstallationID string
-	Query                  url.Values
-	Callback               string
+	Query    url.Values
+	Callback string
 }
 
 type ConnectBinding struct {
