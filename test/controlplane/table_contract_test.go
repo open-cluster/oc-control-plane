@@ -23,7 +23,6 @@ func TestEveryListOperationUsesOneQueryContract(t *testing.T) {
 	}{
 		"members":               {base + "/members", "members"},
 		"audit events":          {base + "/audit-events", "events"},
-		"integration types":     {base + "/integration-types", "types"},
 		"integrations":          {base + "/integrations", "items"},
 		"relays":                {base + "/relays", "items"},
 		"relay integrations":    {base + "/relays/" + registration + "/integrations", "items"},
@@ -76,6 +75,11 @@ func TestEveryListOperationUsesOneQueryContract(t *testing.T) {
 				status, body = plane.call(t, http.MethodGet, endpoint+"?"+query, nil)
 				if status != http.StatusBadRequest {
 					t.Errorf("%s?%s = %d, want 400: %s", endpoint, query, status, body)
+				}
+				var refusal map[string]string
+				decodeInto(t, body, &refusal)
+				if len(refusal) != 1 || refusal["error"] == "" {
+					t.Fatalf("inconsistent product error: %s", body)
 				}
 			}
 		})

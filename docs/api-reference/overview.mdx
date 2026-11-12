@@ -24,19 +24,13 @@ for clipping, timing, sensitivity, and retention semantics.
 
 ## Integration catalog
 
-Use `GET /api/v1/integration-types` to discover registered types, their Tools, setup
-capabilities, and configured counts. An omitted `tools` list means no query Tools.
-`receivesWebhooks` identifies alert intake. Per-Integration `toolAvailability` reports
-which operations are eligible under the last verification and recorded grants. This is not a live health check.
+Use `GET /api/v1/integration-types` for the supported-provider catalog. Each card contains only `key`, `name`, `description`, and `category`, ordered by key. The catalog has no query parameters, pagination, configured counts, or public Tool schemas.
 
-The configuration examples below describe credential inputs. Secret inputs
-are accepted during setup and never returned in configuration reads.
+Select a provider with `GET /api/v1/integration-types/{type}`. Detail adds `requiresRelay`, `supportsConnect`, and `configurationFields`. Each field contains `key`, `type`, `required`, `secret`, and applicable `options`. No secret values or deployment credentials are returned. Field order follows the provider's configuration. An unknown key returns 404.
 
-The pre-production catalog response no longer includes `logo`, `available`, `capabilities`,
-`secretFields`, `documentationSlug`, `documentationUrl`, `productDocumentationUrl`, or
-`configurationSchema`. API clients use the type key for branding, registered catalog
-membership for type availability, and `tools` for operations. Setup instructions and
-vendor references remain in the integration guides.
+`required` describes unconditional manual-creation requirements. Provider checks still enforce conditional rules, such as a Basic username and token. Supply `relayId` at the top level when required. `supportsConnect` means the deployment can start provider authorization, not that delivery or provider availability has been tested. GitHub requires provider authorization. Slack also supports existing read-only tokens.
+
+Use `GET /api/v1/integrations` separately for the active connections owned by your Organization. Multiple instances can share a type. Instance lists retain pagination and search. Per-Integration `toolAvailability` reports verified grants and eligibility for registered operations. It is not a live health check. Setup guides explain provider access and authentication requirements.
 
 ## Authentication
 
@@ -126,7 +120,7 @@ Prometheus checks the expected result of `vector(1)`. Loki checks a one-minute l
 **Advanced workaround for API-only deployments.** Use your browser's developer console
 to start authorization with the same browser session that receives the provider callback.
 
-Use the deployment's public HTTPS origin. Check `supportsConnect` for the Integration type in `GET /api/v1/integration-types`.
+Use the deployment's public HTTPS origin. Check `supportsConnect` in `GET /api/v1/integration-types/{type}`.
 
 1. Open `/healthz` on the OpenCluster origin in your browser. For OIDC, first visit `/api/v1/auth/oidc/start` on that origin and complete sign-in. For local authentication, open the browser's developer console on the OpenCluster origin and run:
 
@@ -323,7 +317,7 @@ Save this example as private `loki.json`, then use the [shared creation command]
 }
 ```
 
-Omit `tenantId` unless Loki requires a single tenant header. Omit the token only for a trusted endpoint that allows unauthenticated reads. For Basic authentication, including Grafana Cloud Loki, set `auth` to `basic`, add `username` from your Loki settings and use a read-only token.
+Omit `tenantId` unless Loki requires a single tenant header. For a trusted endpoint that allows unauthenticated reads, set `auth` to `none` and omit both token and username. Legacy bearer configuration without a token remains supported. For Basic authentication, including Grafana Cloud Loki, set `auth` to `basic`, add `username` from your Loki settings and use a read-only token.
 
 ### Tempo configuration
 
@@ -475,6 +469,6 @@ limitation. It does not substitute another run or claim fresh verification.
 
 Kubernetes verification records advertised Relay capabilities. A partial set can still return `verified`, including when no query operation is available. It does not test Kubernetes RBAC. GitHub verification checks installation and repository access, not every operation's permissions. An installation with no selected repositories can still verify.
 
-Slack's `inbound.available` currently indicates a configured signing secret and provider installation. It does not prove delivery. Check `disconnected`, event delivery, granted scopes, and model-provider configuration when diagnosing replies. `verificationNote` is transient response guidance and is not reconstructed on ordinary reads.
+The generic `inbound` response metadata is no longer returned. For Slack replies, check the installed app, deployment signing secret, event subscriptions, channel membership, granted scopes, model configuration, and `disconnected`. Pasted tokens provide read access without installed-app mentions. `verificationNote` is transient response guidance and is not reconstructed on ordinary reads.
 
 Investigation lifecycle is separate from assessment certainty. `queued` means waiting and `running` means assigned for execution, including interrupted work awaiting recovery. Terminal states are `concluded`, `failed`, and `cancelled`. Read `conclusionStatus`, `limitations`, `stoppedBy`, and `error` to interpret the outcome. The concluded event's payload `status` describes the assessment. Historical results may retain `verified_cause`. `concludedAt` records any terminal transition.

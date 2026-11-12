@@ -120,6 +120,7 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 		"GET /api/v1/incidents/{incident}/alert-events",
 		"GET /api/v1/incidents/{incident}/postmortem",
 		"GET /api/v1/integration-types",
+		"GET /api/v1/integration-types/{type}",
 		"GET /api/v1/integrations",
 		"GET /api/v1/integrations/connect/callback",
 		"GET /api/v1/integrations/{integration}",
@@ -383,7 +384,8 @@ func TestTheCorrectedPathsAreTheOnesServed(t *testing.T) {
 		reason string
 	}{
 		{"GET /api/v1/integration-types",
-			"the catalog is Organization-scoped so configured Integrations can be counted per tenant"},
+			"supported provider discovery requires integration.read"},
+		{"GET /api/v1/integration-types/{type}", "setup detail uses the existing provider key and read permission"},
 		{"GET /api/v1/integrations",
 			"Integrations list Organization-wide; org_id is the only boundary"},
 		{"POST /api/v1/integrations",

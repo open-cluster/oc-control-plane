@@ -9,7 +9,7 @@ Connect Loki to find service errors, deployment messages and other log entries d
 
 You need the OpenCluster **Admin** role, a Loki endpoint reachable from OpenCluster and permission to run log queries. Use an approved HTTPS URL, including any proxy prefix and excluding the Loki API path. See [network and credential requirements](/security/overview).
 
-Use bearer or Basic authentication with a read-only token. Basic authentication also needs a username. Grafana Cloud uses its Loki username and token. Supply a tenant ID only when your endpoint requires it.
+Use bearer or Basic authentication with a read-only token. Basic authentication also needs a username. Grafana Cloud uses its Loki username and token. For a trusted endpoint that requires no authentication, select `none` and omit token and username. Legacy bearer configuration with no token remains supported. Supply a tenant ID only when your endpoint requires it.
 
 Use the [Loki configuration example](/api-reference/overview#loki-configuration) to connect through the API.
 
@@ -25,4 +25,4 @@ A read covers at most the latest 24 hours of the requested interval, up to 200 e
 
 - Check the endpoint, token, Basic username and tenant if verification fails.
 - If a query returns no entries, check your labels, ingestion delay and retention. For an incomplete result, try a narrower interval or selector.
-- To replace the token, PATCH the Integration with its full configuration and the new token. Verify again after changes to the endpoint or tenant.
+- To replace the token, PATCH the Integration with its full configuration and the new token. Verify again after changes to the endpoint or tenant. To change a credential-bearing connection to unauthenticated access, Disconnect and create a new Integration. Saved credentials cannot silently carry into that mode.

@@ -16,8 +16,8 @@ import (
 func TestLocalUserChangesPasswordAndDeletesAllSessions(t *testing.T) {
 	plane := startIdentityPlane(t)
 	base := "http://" + plane.api + "/api/v1"
-	oldPassword := "initial administrator password"
-	newPassword := "replacement administrator password"
+	oldPassword := strings.Repeat("界", 4)
+	newPassword := strings.Repeat("é", 6)
 	first := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin", oldPassword)
 	login := func(password string) answer {
 		return plane.call(t, http.MethodPost, base+"/auth/local/sign-in", map[string]any{
@@ -32,6 +32,8 @@ func TestLocalUserChangesPasswordAndDeletesAllSessions(t *testing.T) {
 	}{
 		{map[string]any{"currentPassword": "incorrect", "newPassword": newPassword}, http.StatusForbidden},
 		{map[string]any{"currentPassword": oldPassword, "newPassword": "short"}, http.StatusBadRequest},
+		{map[string]any{"currentPassword": oldPassword, "newPassword": strings.Repeat("界", 3)}, http.StatusBadRequest},
+		{map[string]any{"currentPassword": oldPassword, "newPassword": strings.Repeat("界", 342)}, http.StatusBadRequest},
 		{map[string]any{"currentPassword": oldPassword, "newPassword": newPassword, "userId": "someone-else"}, http.StatusBadRequest},
 	} {
 		refused := plane.call(t, http.MethodPut, base+"/auth/local/password", invalid.body, asSession(first))
@@ -91,7 +93,7 @@ func TestRecoveryCLIAfterBootstrapRetirement(t *testing.T) {
 		config.EnvDatabaseDSNFile+"="+writeSecret("dsn", plane.dsn),
 		config.EnvSealingKeyFile+"=", config.EnvModelProvider+"=anthropic",
 		config.EnvModelName+"=", config.EnvModelKeyFile+"=")
-	const recoveredPassword = "recovered administrator password"
+	const recoveredPassword = "界界界界"
 	command.Stdin = strings.NewReader(recoveredPassword + "\n")
 	output, err := command.CombinedOutput()
 	if err != nil {

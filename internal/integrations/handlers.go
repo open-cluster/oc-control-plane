@@ -41,6 +41,7 @@ func (h Handlers) Routes() []authz.Route {
 
 	return []authz.Route{
 		{Method: http.MethodGet, Pattern: base + "/integration-types", Permission: authz.IntegrationRead, Handler: http.HandlerFunc(h.types)},
+		{Method: http.MethodGet, Pattern: base + "/integration-types/{type}", Permission: authz.IntegrationRead, Handler: http.HandlerFunc(h.typeDetail)},
 		{Method: http.MethodGet, Pattern: base + "/integrations", Permission: authz.IntegrationRead, Handler: http.HandlerFunc(h.list)},
 		{Method: http.MethodPost, Pattern: base + "/integrations", Permission: authz.IntegrationCreate, Handler: http.HandlerFunc(h.create)},
 		{Method: http.MethodPost, Pattern: base + "/integration-types/{type}/connect", Permission: authz.IntegrationCreate, Handler: http.HandlerFunc(h.startConnect)},
@@ -54,38 +55,44 @@ func (h Handlers) Routes() []authz.Route {
 }
 
 func (h Handlers) types(writer http.ResponseWriter, request *http.Request) {
-	query, err := listing.Parse(request.URL.Query(), listing.Spec{
-		DefaultSort: listing.Sort{Field: "key"},
-	})
-	if err != nil {
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
+	if len(request.URL.Query()) != 0 {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: "the integration type catalog does not accept query parameters"})
 		return
 	}
-	principal := h.caller(request)
-	organization := h.organization(request)
-	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
-	defer cancel()
-
-	counts, err := h.Store.CountIntegrationsByProvider(ctx, principal, organization)
-	if err != nil {
-		h.fail(writer, request, err)
-		return
-	}
-	configured := make(map[Provider]int, len(counts))
-	for _, count := range counts {
-		configured[count.Provider] = count.Count
-	}
-
-	definitions, next, err := listing.SlicePage(h.Catalog.All(), query)
-	if err != nil {
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
-		return
-	}
-	views := make([]typeView, 0, len(definitions))
+	definitions := h.Catalog.All()
+	integrationTypes := make([]integrationTypeView, 0, len(definitions))
 	for _, definition := range definitions {
-		views = append(views, typeViewOf(definition, configured[definition.Key], h.WebhookTypes[definition.Key]))
+		integrationTypes = append(integrationTypes, integrationTypeViewOf(definition))
 	}
-	writeJSON(writer, http.StatusOK, typeListView{Types: views, Next: listing.CursorPtr(next)})
+	writeJSON(writer, http.StatusOK, integrationTypeListView{Types: integrationTypes})
+}
+
+func (h Handlers) typeDetail(writer http.ResponseWriter, request *http.Request) {
+	definition, known := h.Catalog.Lookup(Provider(request.PathValue("type")))
+	if !known {
+		writeJSON(writer, http.StatusNotFound, errorView{Error: "integration type not found"})
+		return
+	}
+	configurationFields := make([]configurationFieldView, 0, len(definition.Config))
+	for _, field := range definition.Config {
+		configurationFields = append(configurationFields, configurationFieldView{
+			Key:      field.Key,
+			Type:     string(field.Type),
+			Required: field.Required,
+			Secret:   field.Secret,
+			Options:  field.Options,
+		})
+	}
+	supportsConnect := definition.Connectable() && h.PublicURL != ""
+	if supportsConnect && definition.Connect.SealsCredential {
+		supportsConnect = h.Sealer.Configured()
+	}
+	writeJSON(writer, http.StatusOK, integrationTypeDetailView{
+		integrationTypeView: integrationTypeViewOf(definition),
+		RequiresRelay:       definition.RequiresRelay,
+		SupportsConnect:     supportsConnect,
+		ConfigurationFields: configurationFields,
+	})
 }
 
 var listSpec = listing.Spec{
@@ -249,7 +256,6 @@ func (h Handlers) probeAndSeal(
 }
 
 func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
-	_ = h.caller(request)
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return

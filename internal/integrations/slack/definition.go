@@ -6,8 +6,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
-func Definition(client *Client, installer *Installer, servesEvents bool) integrations.Definition {
-	connection := connect(installer, client)
+func Definition(client *Client, installer *Installer) integrations.Definition {
 	return integrations.Definition{
 		Key:  "slack",
 		Name: "Slack",
@@ -26,19 +25,6 @@ func Definition(client *Client, installer *Installer, servesEvents bool) integra
 		Probe: func(ctx context.Context, input integrations.ProbeInput) integrations.Verification {
 			return probe(ctx, client, input.Credential)
 		},
-		Inbound: func(integration integrations.Integration) integrations.InboundAvailability {
-			if !servesEvents {
-				return integrations.InboundAvailability{
-					Reason: "this deployment has no Slack signing secret for inbound app mentions",
-				}
-			}
-			if integration.Installation == nil {
-				return integrations.InboundAvailability{
-					Reason: "app mentions require an installed Slack app; pasted tokens only support reading",
-				}
-			}
-			return integrations.InboundAvailability{Available: true}
-		},
-		Connect: connection,
+		Connect: connect(installer, client),
 	}
 }

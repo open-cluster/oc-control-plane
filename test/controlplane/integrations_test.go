@@ -173,10 +173,6 @@ type integrationBody struct {
 	VerifiedAt       string                 `json:"verifiedAt"`
 	VerificationNote string                 `json:"verificationNote"`
 	ToolAvailability []toolAvailabilityBody `json:"toolAvailability"`
-	Inbound          *struct {
-		Available bool   `json:"available"`
-		Reason    string `json:"reason"`
-	} `json:"inbound"`
 }
 
 type toolAvailabilityBody struct {
@@ -232,69 +228,89 @@ func alertmanagerPayload(fingerprint, groupKey string) []byte {
 func TestIntegrationTypeCatalog(t *testing.T) {
 	plane := startIntegrationPlane(t)
 	base := plane.base(surfaceOrg)
-
 	status, body := plane.call(t, http.MethodGet, base+"/integration-types", nil)
 	if status != http.StatusOK {
-		t.Fatalf("reading the catalog = %d: %s", status, body)
+		t.Fatalf("catalog = %d: %s", status, body)
 	}
-	var rawCatalog struct {
-		Types []map[string]json.RawMessage `json:"types"`
+	var catalog map[string]json.RawMessage
+	decodeInto(t, body, &catalog)
+	if len(catalog) != 1 {
+		t.Fatalf("catalog must contain only types: %s", body)
 	}
-	decodeInto(t, body, &rawCatalog)
-	for _, entry := range rawCatalog.Types {
-		for _, removed := range []string{"logo", "available", "capabilities", "secretFields", "documentationSlug", "documentationUrl", "configurationSchema", "productDocumentationUrl"} {
-			if _, present := entry[removed]; present {
-				t.Errorf("catalog type %s still contains %s", entry["key"], removed)
+	var integrationTypes []map[string]json.RawMessage
+	decodeInto(t, string(catalog["types"]), &integrationTypes)
+	keys := []string{"alertmanager", "generic_webhook", "github", "kubernetes", "loki", "prometheus", "slack", "tempo"}
+	if len(integrationTypes) != len(keys) {
+		t.Fatalf("catalog count = %d", len(integrationTypes))
+	}
+	for index, integrationType := range integrationTypes {
+		if len(integrationType) != 4 {
+			t.Fatalf("catalog card has extra fields: %v", integrationType)
+		}
+		for _, field := range []string{"key", "name", "description", "category"} {
+			if integrationType[field] == nil {
+				t.Fatalf("card is missing %s", field)
+			}
+		}
+		var key string
+		decodeInto(t, string(integrationType["key"]), &key)
+		if key != keys[index] {
+			t.Fatalf("catalog key = %q, want %q", key, keys[index])
+		}
+	}
+	for _, key := range []string{"loki", "slack", "github", "kubernetes", "alertmanager"} {
+		status, body := plane.call(t, http.MethodGet, base+"/integration-types/"+key, nil)
+		if status != http.StatusOK {
+			t.Fatalf("type detail %s = %d: %s", key, status, body)
+		}
+		var detail struct {
+			Key                 string                       `json:"key"`
+			RequiresRelay       bool                         `json:"requiresRelay"`
+			SupportsConnect     bool                         `json:"supportsConnect"`
+			ConfigurationFields []map[string]json.RawMessage `json:"configurationFields"`
+		}
+		decodeInto(t, body, &detail)
+		if detail.Key != key || detail.RequiresRelay != (key == "kubernetes") || detail.SupportsConnect {
+			t.Fatalf("unexpected type detail: %s", body)
+		}
+		var rawDetail map[string]json.RawMessage
+		decodeInto(t, body, &rawDetail)
+		if len(rawDetail) != 7 || detail.ConfigurationFields == nil {
+			t.Fatalf("unexpected detail shape: %s", body)
+		}
+		for _, field := range detail.ConfigurationFields {
+			for _, property := range []string{"key", "type", "required", "secret"} {
+				if field[property] == nil {
+					t.Fatalf("configuration field missing %s: %v", property, field)
+				}
+			}
+			if len(field) > 5 {
+				t.Fatalf("unsafe configuration projection: %v", field)
+			}
+		}
+		if key == "slack" && (len(detail.ConfigurationFields) != 1 || string(detail.ConfigurationFields[0]["key"]) != "\"botToken\"" || string(detail.ConfigurationFields[0]["secret"]) != "true" || string(detail.ConfigurationFields[0]["required"]) != "true") {
+			t.Fatalf("manual Slack token metadata = %s", body)
+		}
+		if key == "loki" {
+			for _, field := range detail.ConfigurationFields {
+				if string(field["key"]) == "\"auth\"" && string(field["options"]) != `["none","bearer","basic"]` {
+					t.Fatalf("Loki authentication metadata = %s", body)
+				}
+				if string(field["key"]) == "\"url\"" && (string(field["required"]) != "true" || string(field["secret"]) != "false") {
+					t.Fatalf("Loki URL metadata = %s", body)
+				}
 			}
 		}
 	}
-	type catalogType struct {
-		Key         string `json:"key"`
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Category    string `json:"category"`
-		Tools       []struct {
-			Name string `json:"name"`
-		} `json:"tools"`
-		RequiresRelay    bool `json:"requiresRelay"`
-		ReceivesWebhooks bool `json:"receivesWebhooks"`
-		Configured       int  `json:"configured"`
+	status, body = plane.call(t, http.MethodGet, base+"/integration-types/unknown", nil)
+	var refusal map[string]string
+	decodeInto(t, body, &refusal)
+	if status != http.StatusNotFound || len(refusal) != 1 || refusal["error"] == "" {
+		t.Fatalf("unknown type = %d: %s", status, body)
 	}
-	var catalog struct {
-		Types []catalogType `json:"types"`
-	}
-	decodeInto(t, body, &catalog)
-
-	byKey := map[string]int{}
-	for index, entry := range catalog.Types {
-		byKey[entry.Key] = index
-	}
-	wantKeys := []string{"alertmanager", "generic_webhook", "github", "kubernetes", "loki", "prometheus", "slack", "tempo"}
-	if len(catalog.Types) != len(wantKeys) {
-		t.Fatalf("catalog has %d types, want %d: %s", len(catalog.Types), len(wantKeys), body)
-	}
-	for index, wanted := range wantKeys {
-		if catalog.Types[index].Key != wanted {
-			t.Errorf("catalog type %d = %q, want %q", index, catalog.Types[index].Key, wanted)
-		}
-	}
-
-	alertmanager := catalog.Types[byKey["alertmanager"]]
-	if !alertmanager.ReceivesWebhooks || alertmanager.RequiresRelay {
-		t.Errorf("alertmanager should receive webhooks and need no relay: %+v", alertmanager)
-	}
-	if len(alertmanager.Tools) != 0 {
-		t.Errorf("alertmanager is an inbound alert source, not an investigation read provider: %+v",
-			alertmanager.Tools)
-	}
-
-	kubernetes := catalog.Types[byKey["kubernetes"]]
-	if !kubernetes.RequiresRelay || kubernetes.ReceivesWebhooks {
-		t.Errorf("kubernetes should require a relay and receive no webhooks: %+v", kubernetes)
-	}
-	if len(kubernetes.Tools) != 3 {
-		t.Errorf("kubernetes declares %d read Tools, want its three bounded Relay reads",
-			len(kubernetes.Tools))
+	status, body = plane.call(t, http.MethodPost, base+"/integrations", map[string]any{"type": "github", "name": "Unauthenticated installation"})
+	if status != http.StatusBadRequest {
+		t.Fatalf("manual GitHub creation = %d: %s", status, body)
 	}
 }
 

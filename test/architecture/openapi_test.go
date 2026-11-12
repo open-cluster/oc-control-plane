@@ -289,7 +289,7 @@ func TestOpenAPIListOperationsDeclareTheirQueryCapabilities(t *testing.T) {
 	expected := map[string][]string{
 		"listMembers":             paged,
 		"listAuditEvents":         paged,
-		"listIntegrationTypes":    paged,
+		"listIntegrationTypes":    {},
 		"listIntegrations":        append(slices.Clone(paged), "IntegrationSearch", "IntegrationSort", "IntegrationTypeFilter", "RelayFilter"),
 		"listRelays":              append(slices.Clone(paged), "RelaySearch", "RelaySort", "RelayStateFilter", "RelayVersionFilter", "RelayCapabilityFilter"),
 		"listRelayIntegrations":   paged,
@@ -368,10 +368,20 @@ func TestOpenAPIIntegrationCatalogOmitsSchemaAndGuideURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	catalog := document.Components.Schemas["IntegrationType"]
-	for _, removed := range []string{"configurationSchema", "productDocumentationUrl"} {
+	if len(catalog.Properties) != 4 || len(catalog.Required) != 4 {
+		t.Fatalf("catalog fields = %v", catalog.Properties)
+	}
+	for _, removed := range []string{"configurationSchema", "productDocumentationUrl", "configured", "tools", "receivesWebhooks", "requiresRelay", "supportsConnect"} {
 		if _, present := catalog.Properties[removed]; present || slices.Contains(catalog.Required, removed) {
 			t.Errorf("IntegrationType still declares %s", removed)
 		}
+	}
+	detail := document.Components.Schemas["IntegrationTypeDetail"]
+	if len(detail.Properties) != 7 || len(detail.Required) != 7 || detail.Properties["configurationFields"].Items == nil || detail.Properties["configurationFields"].Items.Ref != "#/components/schemas/ConfigurationField" {
+		t.Fatal("type detail does not describe the setup projection")
+	}
+	if fields := document.Components.Schemas["ConfigurationField"]; !slices.Equal(fields.Required, []string{"key", "type", "required", "secret"}) || len(fields.Properties) != 5 {
+		t.Fatalf("configuration fields = %+v", fields)
 	}
 }
 

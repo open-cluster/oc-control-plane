@@ -227,45 +227,6 @@ func (p *Database) QueryIntegrations(
 	return list, nil
 }
 
-func (p *Database) CountIntegrationsByProvider(
-	ctx context.Context, principal authz.Principal, organization uuid.UUID,
-) ([]integrations.ProviderCount, error) {
-	if principal.Organization() != organization {
-		return nil, ErrNotAMember
-	}
-	pool, err := p.poolForOrganization(organization)
-	if err != nil {
-		return nil, err
-	}
-
-	rows, err := pool.Query(ctx, `
-		SELECT provider, count(*)
-		  FROM integration
-		 WHERE org_id = $1 AND NOT disconnected
-		 GROUP BY provider`, organization)
-	if err != nil {
-		return nil, fmt.Errorf("counting integrations: %w", err)
-	}
-	defer rows.Close()
-
-	counts := make([]integrations.ProviderCount, 0, 4)
-	for rows.Next() {
-		var (
-			provider integrations.Provider
-			count    int
-		)
-		if err := rows.Scan(&provider, &count); err != nil {
-			return nil, fmt.Errorf("scanning an integration count: %w", err)
-		}
-		counts = append(counts, integrations.ProviderCount{
-			Provider: provider, Count: count})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("counting integrations: %w", err)
-	}
-	return counts, nil
-}
-
 func (p *Database) UpdateIntegration(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
 	id uuid.UUID, update integrations.IntegrationUpdate,

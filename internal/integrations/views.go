@@ -12,62 +12,38 @@ type errorView struct {
 	Error string `json:"error"`
 }
 
-type typeView struct {
-	Key              string     `json:"key"`
-	Name             string     `json:"name"`
-	Description      string     `json:"description"`
-	Category         string     `json:"category"`
-	RequiresRelay    bool       `json:"requiresRelay"`
-	ReceivesWebhooks bool       `json:"receivesWebhooks"`
-	SupportsConnect  bool       `json:"supportsConnect"`
-	Tools            []toolView `json:"tools,omitempty"`
-	Configured       int        `json:"configured"`
-}
-
-type toolView struct {
-	Name        string             `json:"name"`
-	Description string             `json:"description"`
-	Arguments   []toolArgumentView `json:"arguments,omitempty"`
-}
-
-type toolArgumentView struct {
+type integrationTypeView struct {
+	Key         string `json:"key"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	Type        string `json:"type"`
-	Required    bool   `json:"required,omitempty"`
+	Category    string `json:"category"`
 }
 
-type typeListView struct {
-	Types []typeView `json:"types"`
-	Next  *string    `json:"next"`
+type configurationFieldView struct {
+	Key      string   `json:"key"`
+	Type     string   `json:"type"`
+	Required bool     `json:"required"`
+	Secret   bool     `json:"secret"`
+	Options  []string `json:"options,omitempty"`
 }
 
-func typeViewOf(definition Definition, configured int, receivesWebhooks bool) typeView {
-	tools := make([]toolView, 0, len(definition.Tools))
-	for _, tool := range definition.Tools {
-		arguments := make([]toolArgumentView, 0, len(tool.Arguments))
-		for _, argument := range tool.Arguments {
-			arguments = append(arguments, toolArgumentView{
-				Name:        argument.Name,
-				Description: argument.Description,
-				Type:        string(argument.Type),
-				Required:    argument.Required,
-			})
-		}
-		tools = append(tools, toolView{
-			Name: tool.Name, Description: tool.Description, Arguments: arguments,
-		})
-	}
-	return typeView{
-		Key:              string(definition.Key),
-		Name:             definition.Name,
-		Description:      definition.Description,
-		Category:         string(definition.Category),
-		RequiresRelay:    definition.RequiresRelay,
-		ReceivesWebhooks: receivesWebhooks,
-		SupportsConnect:  definition.Connectable(),
-		Tools:            tools,
-		Configured:       configured,
+type integrationTypeDetailView struct {
+	integrationTypeView
+	RequiresRelay       bool                     `json:"requiresRelay"`
+	SupportsConnect     bool                     `json:"supportsConnect"`
+	ConfigurationFields []configurationFieldView `json:"configurationFields"`
+}
+
+type integrationTypeListView struct {
+	Types []integrationTypeView `json:"types"`
+}
+
+func integrationTypeViewOf(definition Definition) integrationTypeView {
+	return integrationTypeView{
+		Key:         string(definition.Key),
+		Name:        definition.Name,
+		Description: definition.Description,
+		Category:    string(definition.Category),
 	}
 }
 
@@ -81,29 +57,23 @@ type credentialView struct {
 }
 
 type integrationView struct {
-	ID               string                   `json:"id"`
-	Type             string                   `json:"type"`
-	Name             string                   `json:"name"`
-	Status           *string                  `json:"status"`
-	Disconnected     bool                     `json:"disconnected"`
-	Configuration    map[string]any           `json:"configuration"`
-	RelayID          string                   `json:"relayId,omitempty"`
-	Webhook          *webhookView             `json:"webhook,omitempty"`
-	Credential       *credentialView          `json:"credential,omitempty"`
-	VerifiedAt       string                   `json:"verifiedAt,omitempty"`
-	VerificationNote string                   `json:"verificationNote,omitempty"`
-	Inbound          *inboundAvailabilityView `json:"inbound,omitempty"`
-	ToolAvailability []toolAvailabilityView   `json:"toolAvailability"`
-	CreatedAt        string                   `json:"createdAt"`
+	ID               string                 `json:"id"`
+	Type             string                 `json:"type"`
+	Name             string                 `json:"name"`
+	Status           *string                `json:"status"`
+	Disconnected     bool                   `json:"disconnected"`
+	Configuration    map[string]any         `json:"configuration"`
+	RelayID          string                 `json:"relayId,omitempty"`
+	Webhook          *webhookView           `json:"webhook,omitempty"`
+	Credential       *credentialView        `json:"credential,omitempty"`
+	VerifiedAt       string                 `json:"verifiedAt,omitempty"`
+	VerificationNote string                 `json:"verificationNote,omitempty"`
+	ToolAvailability []toolAvailabilityView `json:"toolAvailability"`
+	CreatedAt        string                 `json:"createdAt"`
 }
 
 type toolAvailabilityView struct {
 	Tool      string `json:"tool"`
-	Available bool   `json:"available"`
-	Reason    string `json:"reason,omitempty"`
-}
-
-type inboundAvailabilityView struct {
 	Available bool   `json:"available"`
 	Reason    string `json:"reason,omitempty"`
 }
@@ -121,15 +91,8 @@ type rotatedView struct {
 func (h Handlers) viewOf(integration Integration) integrationView {
 	typeKey := ""
 	availability := []toolAvailabilityView{}
-	var inbound *inboundAvailabilityView
 	if definition, known := h.Catalog.Lookup(integration.Provider); known {
 		typeKey = string(definition.Key)
-		if definition.Inbound != nil {
-			reported := definition.Inbound(integration)
-			inbound = &inboundAvailabilityView{
-				Available: reported.Available, Reason: reported.Reason,
-			}
-		}
 		for _, toolAvailability := range ToolAvailabilityFor(definition, integration) {
 			availability = append(availability, toolAvailabilityView(toolAvailability))
 		}
@@ -141,7 +104,6 @@ func (h Handlers) viewOf(integration Integration) integrationView {
 		Disconnected:     integration.Disconnected,
 		Configuration:    integration.Configuration,
 		CreatedAt:        stamp(integration.CreatedAt),
-		Inbound:          inbound,
 		ToolAvailability: availability,
 	}
 	if status := integration.Status.String(); status != "" {

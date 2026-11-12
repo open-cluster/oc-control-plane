@@ -59,11 +59,6 @@ type ProbeInput struct {
 	Credential  string
 }
 
-type InboundAvailability struct {
-	Available bool
-	Reason    string
-}
-
 type Definition struct {
 	Key           Provider
 	Name          string
@@ -75,7 +70,6 @@ type Definition struct {
 
 	Verify  func(VerifyInput) Verification
 	Probe   func(ctx context.Context, input ProbeInput) Verification
-	Inbound func(Integration) InboundAvailability
 	Connect *Connect
 }
 

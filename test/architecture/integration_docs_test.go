@@ -23,7 +23,7 @@ func TestEveryIntegrationHasItsDocumentedProductRolePage(t *testing.T) {
 	catalog, err := integrations.NewCatalog(
 		alertmanager.Definition(),
 		kubernetes.Definition(),
-		slack.Definition(slack.NewClient(""), nil, false),
+		slack.Definition(slack.NewClient(""), nil),
 		github.Definition(nil, github.NewClient(""), "", ""),
 		genericwebhook.Definition(),
 		prometheus.Definition(),

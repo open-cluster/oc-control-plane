@@ -20,7 +20,7 @@ func Definition() integrations.Definition {
 			{Key: "tenantId", Type: integrations.FieldString},
 			{Key: "url", Type: integrations.FieldString, Required: true},
 			{Key: "token", Type: integrations.FieldString, Secret: true},
-			{Key: "auth", Type: integrations.FieldString, Required: true, Options: []string{"bearer", "basic"}},
+			{Key: "auth", Type: integrations.FieldString, Required: true, Options: []string{"none", "bearer", "basic"}},
 		},
 		Probe: probe,
 		Tools: []integrations.Tool{queryTool()},

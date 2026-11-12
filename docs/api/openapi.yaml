@@ -45,8 +45,8 @@ paths:
         '503':
           $ref: '#/components/responses/Unavailable'
       operationId: bootstrapLocalAdmin
-      summary: Create the initial local account
-      description: Available only before the deployment has any Organization or User. Protect an uninitialized installation with trusted private network access, because the first caller can claim Admin ownership. Atomically creates the initial Organization, Admin User, password verifier, Membership, session, and audit event. Requires Origin matching OC_PUBLIC_URL even without a cookie. Success issues the secure HttpOnly __Host-oc_session cookie; call GET /api/v1/session next without signing in again. Existing Organizations or Users close signup for supported account lifecycle operations.
+      summary: Create initial account
+      description: Creates the first organization and administrator and starts a session. Only available before initialization.
       tags:
         - Authentication
       requestBody:
@@ -76,8 +76,8 @@ paths:
         '503':
           $ref: '#/components/responses/Unavailable'
       operationId: changeLocalPassword
-      summary: Change the authenticated User's local password
-      description: Reauthenticate with the current password. Successful change deletes all User sessions, clears the cookie and requires sign-in again. OIDC credentials remain with the provider. Passwords are limited to 1024 bytes; the new password must contain at least 12 bytes.
+      summary: Change local password
+      description: Changes your local password and signs you out of all sessions.
       tags:
         - Authentication
       requestBody:
@@ -96,11 +96,13 @@ paths:
                   minLength: 1
                   maxLength: 1024
                   writeOnly: true
+                  description: Nonempty, at most 1024 UTF-8 bytes. String length bounds count characters. Clients must measure UTF-8 bytes.
                 newPassword:
                   type: string
                   minLength: 1
                   maxLength: 1024
                   writeOnly: true
+                  description: 12–1024 UTF-8 bytes. String length bounds count characters. Clients must measure UTF-8 bytes.
   /api/v1/auth/local/sign-in:
     post:
       security: []
@@ -353,11 +355,30 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
       operationId: listIntegrationTypes
       summary: List integration types
+      description: Returns all supported providers in key order. No query parameters or pagination.
       tags:
         - Integration Types
-      parameters:
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Limit'
+  /api/v1/integration-types/{type}:
+    parameters:
+      - $ref: '#/components/parameters/IntegrationType'
+    get:
+      security:
+        - SessionCookie: []
+      x-opencluster-access: privileged
+      x-opencluster-cookie-csrf: not-required
+      x-opencluster-idempotency: not-applicable
+      responses:
+        '200':
+          $ref: '#/components/responses/IntegrationTypeDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+      operationId: getIntegrationType
+      summary: Get integration type setup
+      description: Returns provider setup fields and connection support. Required fields describe unconditional manual-creation requirements. Provider checks enforce conditional authentication rules.
+      tags:
+        - Integration Types
   /api/v1/integration-types/{type}/connect:
     parameters:
       - $ref: '#/components/parameters/IntegrationType'
@@ -1590,6 +1611,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/AuditEventList'
+    IntegrationTypeDetail:
+      description: Provider setup details.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/IntegrationTypeDetail'
     IntegrationTypeList:
       description: Integration Types served by this build.
       content:
@@ -1910,10 +1937,10 @@ components:
         password:
           type: string
           format: password
-          minLength: 12
+          minLength: 1
           maxLength: 1024
           writeOnly: true
-          example: correct-horse-placeholder
+          description: 12–1024 UTF-8 bytes. String length bounds count characters. Clients must measure UTF-8 bytes.
     LocalSignInRequest:
       type: object
       additionalProperties: false
@@ -1929,10 +1956,8 @@ components:
         password:
           type: string
           format: password
-          minLength: 12
-          maxLength: 1024
           writeOnly: true
-          example: correct-horse-placeholder
+          description: Verified against the existing credential. Creation-length rules are not reapplied. JSON decoding is bounded to 64 KiB.
     SessionUser:
       type: object
       additionalProperties: false
@@ -2147,9 +2172,10 @@ components:
         password:
           type: string
           format: password
-          minLength: 12
+          minLength: 1
           maxLength: 1024
           writeOnly: true
+          description: 12–1024 UTF-8 bytes. String length bounds count characters. Clients must measure UTF-8 bytes.
         role:
           type: string
           enum:
@@ -2197,48 +2223,6 @@ components:
           type: integer
           minimum: 1
           maximum: 3650
-    IntegrationToolArgument:
-      type: object
-      additionalProperties: false
-      required:
-        - name
-        - description
-        - type
-      properties:
-        name:
-          type: string
-          minLength: 1
-          maxLength: 128
-        description:
-          type: string
-          minLength: 1
-          maxLength: 2048
-        type:
-          type: string
-          enum:
-            - string
-            - integer
-        required:
-          type: boolean
-    IntegrationTool:
-      type: object
-      additionalProperties: false
-      required:
-        - name
-        - description
-      properties:
-        name:
-          type: string
-          minLength: 1
-          maxLength: 128
-        description:
-          type: string
-          minLength: 1
-          maxLength: 4096
-        arguments:
-          type: array
-          items:
-            $ref: '#/components/schemas/IntegrationToolArgument'
     IntegrationType:
       type: object
       additionalProperties: false
@@ -2247,10 +2231,61 @@ components:
         - name
         - description
         - category
+      properties:
+        key:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{0,63}$
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        description:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        category:
+          type: string
+          enum:
+            - alerting
+            - infrastructure
+            - collaboration
+            - source-control
+            - observability
+    ConfigurationField:
+      type: object
+      additionalProperties: false
+      required:
+        - key
+        - type
+        - required
+        - secret
+      properties:
+        key:
+          type: string
+        type:
+          type: string
+          enum:
+            - string
+            - integer
+        required:
+          type: boolean
+        secret:
+          type: boolean
+        options:
+          type: array
+          items:
+            type: string
+    IntegrationTypeDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - key
+        - name
+        - description
+        - category
         - requiresRelay
-        - receivesWebhooks
         - supportsConnect
-        - configured
+        - configurationFields
       properties:
         key:
           type: string
@@ -2273,33 +2308,23 @@ components:
             - observability
         requiresRelay:
           type: boolean
-        receivesWebhooks:
-          type: boolean
         supportsConnect:
           type: boolean
-        tools:
+          description: Deployment prerequisites support starting provider authorization. Provider availability is not checked.
+        configurationFields:
           type: array
           items:
-            $ref: '#/components/schemas/IntegrationTool'
-        configured:
-          type: integer
-          minimum: 0
+            $ref: '#/components/schemas/ConfigurationField'
     IntegrationTypeList:
       type: object
       additionalProperties: false
       required:
         - types
-        - next
       properties:
         types:
           type: array
           items:
             $ref: '#/components/schemas/IntegrationType'
-        next:
-          oneOf:
-            - type: string
-              maxLength: 512
-            - type: 'null'
     ConnectStarted:
       type: object
       additionalProperties: false
@@ -2394,17 +2419,6 @@ components:
           $ref: '#/components/schemas/SecretReference'
         verifiedAt:
           $ref: '#/components/schemas/Timestamp'
-        inbound:
-          type: object
-          additionalProperties: false
-          required:
-            - available
-          properties:
-            available:
-              type: boolean
-            reason:
-              type: string
-              maxLength: 1024
         toolAvailability:
           type: array
           items:
@@ -2465,17 +2479,6 @@ components:
           $ref: '#/components/schemas/SecretReference'
         verifiedAt:
           $ref: '#/components/schemas/Timestamp'
-        inbound:
-          type: object
-          additionalProperties: false
-          required:
-            - available
-          properties:
-            available:
-              type: boolean
-            reason:
-              type: string
-              maxLength: 1024
         toolAvailability:
           type: array
           items:

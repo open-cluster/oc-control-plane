@@ -58,6 +58,10 @@ func newClient(configuration map[string]any, credential string) (*client, error)
 	username, _ := configuration["username"].(string)
 	authorization := ""
 	switch auth {
+	case "none":
+		if credential != "" || username != "" {
+			return nil, errors.New("loki unauthenticated access does not accept a token or username")
+		}
 	case "bearer":
 		if username != "" {
 			return nil, errors.New("loki username is only supported with Basic authentication")
@@ -71,7 +75,7 @@ func newClient(configuration map[string]any, credential string) (*client, error)
 		}
 		authorization = "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+credential))
 	default:
-		return nil, errors.New("loki auth must explicitly select bearer or basic")
+		return nil, errors.New("loki auth must explicitly select none, bearer or basic")
 	}
 	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/loki/api/v1/query_range"
 	return &client{

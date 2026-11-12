@@ -29,7 +29,7 @@ A User has at most one current Organization Membership. Organization Admins can 
 local Users and manage that Membership, but cannot replace an existing User's password. Change your own
 local password with `PUT /api/v1/auth/local/password`, supplying `currentPassword` and
 `newPassword` without an Organization selector. Success deletes all your sessions, including
-the current one, and requires sign-in again. Passwords accept 12–1024 bytes.
+the current one, and requires sign-in again. New passwords for bootstrap, local-user creation, password change and recovery accept 12–1024 UTF-8 bytes. The current password must be nonempty and at most 1024 bytes. OpenAPI string lengths count characters. Clients must measure UTF-8 bytes to match validation. Sign-in verifies the stored credential without reapplying creation-length rules.
 OIDC Users manage their credentials through their identity provider.
 
 Deployment operators can recover an existing enabled local account using its User UUID:
