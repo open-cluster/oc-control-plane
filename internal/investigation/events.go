@@ -305,7 +305,7 @@ func (h Handlers) follow(
 		check, cancel := context.WithTimeout(ctx, eventAuthTimeout)
 		defer cancel()
 		current, err := h.Resolve(request.WithContext(check))
-		return err == nil && check.Err() == nil &&
+		return err == nil && check.Err() == nil && time.Now().Before(deadline) &&
 			current.UserID() == original.UserID() && current.SessionID() == original.SessionID() &&
 			current.Organization() == organization && current.HavePermission(authz.InvestigationRead)
 	}
