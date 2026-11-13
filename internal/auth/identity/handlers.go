@@ -29,7 +29,6 @@ type Handlers struct {
 	OIDCClientID     string
 	OIDCClientSecret string
 	PublicURL        string
-	SessionLifetime  time.Duration
 }
 
 func (h Handlers) Resolve(request *http.Request) (authz.Principal, error) {

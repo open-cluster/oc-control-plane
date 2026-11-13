@@ -66,6 +66,7 @@ func (g Guard) protect(route Route) http.Handler {
 
 		// principal check ---->
 		if err != nil || principal.IsEmpty() {
+			writer.Header().Set("Cache-Control", "no-store")
 			if errors.Is(err, ErrAuthenticationUnavailable) {
 				writeJSON(writer, http.StatusServiceUnavailable, errorView{Error: "authentication unavailable"})
 				return
@@ -76,6 +77,7 @@ func (g Guard) protect(route Route) http.Handler {
 
 		// origin check ---->
 		if !g.originIsAllowed(request) {
+			writer.Header().Set("Cache-Control", "no-store")
 			g.recordRefusal(request, principal, route, "origin not allowed")
 			g.refuseOrigin(writer, request, principal)
 			return

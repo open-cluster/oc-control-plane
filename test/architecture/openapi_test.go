@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/webhooks"
 	"gopkg.in/yaml.v3"
 )
@@ -15,8 +16,9 @@ import (
 type openAPIDocument struct {
 	Paths      map[string]openAPIPath `yaml:"paths"`
 	Components struct {
-		Schemas    map[string]openAPISchema    `yaml:"schemas"`
-		Parameters map[string]openAPIParameter `yaml:"parameters"`
+		SecuritySchemes map[string]struct{ Name string } `yaml:"securitySchemes"`
+		Schemas         map[string]openAPISchema         `yaml:"schemas"`
+		Parameters      map[string]openAPIParameter      `yaml:"parameters"`
 	} `yaml:"components"`
 }
 
@@ -409,6 +411,9 @@ func TestOpenAPISessionDescribesIdentity(t *testing.T) {
 			}
 		}
 		return true
+	}
+	if got := document.Components.SecuritySchemes["SessionCookie"].Name; got != session.CookieName {
+		t.Fatalf("OpenAPI session cookie = %q, want %q", got, session.CookieName)
 	}
 	session := document.Components.Schemas["Session"]
 	if !hasFields(session, "user", "organization") {

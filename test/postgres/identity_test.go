@@ -23,12 +23,8 @@ func TestLocalBootstrapRollsBackUserWhenTheSessionCannotBeIssued(t *testing.T) {
 	if _, err := database.Migrate(context.Background()); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	issued := session.Session{
-		ID: uuid.New(), ExpiresAt: time.Now().UTC().Add(time.Hour),
-	}
-
 	_, _, err := database.BootstrapLocalUser(ctx,
-		"Operations", "admin@example.test", "Admin", "encoded password with sufficient length", issued, nil, "")
+		"Operations", "admin@example.test", "Admin", "encoded password with sufficient length", nil, "")
 	if err == nil {
 		t.Fatal("bootstrap with an invalid session digest succeeded")
 	}
@@ -44,14 +40,13 @@ func TestLocalBootstrapRollsBackUserWhenTheSessionCannotBeIssued(t *testing.T) {
 		(SELECT count(*) FROM session)`).Scan(&rows); err != nil || rows != 0 {
 		t.Fatalf("bootstrap rollback left %d identity rows: %v", rows, err)
 	}
-	issued.ID = uuid.New()
 	user, stored, err := database.BootstrapLocalUser(ctx,
-		"Operations", "admin@example.test", "Admin", "encoded password with sufficient length", issued,
+		"Operations", "admin@example.test", "Admin", "encoded password with sufficient length",
 		make([]byte, 32), "")
 	if err != nil {
 		t.Fatalf("bootstrap after rolled-back session issuance: %v", err)
 	}
-	if user.ID == uuid.Nil || stored.ID == uuid.Nil || stored.ID == issued.ID {
+	if user.ID == uuid.Nil || stored.ID == uuid.Nil {
 		t.Fatalf("database-generated IDs = user:%s session:%s", user.ID, stored.ID)
 	}
 }
@@ -64,9 +59,7 @@ func TestMembershipIsUniqueByUserAndRemovalKeepsTheUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	user, _, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin",
-		"encoded password with sufficient length", session.Session{
-			ExpiresAt: time.Now().UTC().Add(time.Hour),
-		}, make([]byte, 32), "")
+		"encoded password with sufficient length", make([]byte, 32), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +96,7 @@ func TestConcurrentAdminChangesPreserveLastAdmin(t *testing.T) {
 	}
 	user, issued, err := database.BootstrapLocalUser(ctx,
 		"Operations", "admin@example.test", "Admin", "encoded password with sufficient length",
-		session.Session{ExpiresAt: time.Now().UTC().Add(time.Hour)}, make([]byte, 32), "")
+		make([]byte, 32), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,8 +170,7 @@ func TestAUserWithLocalCredentialsCannotBeDeletedByCascade(t *testing.T) {
 	if _, err := database.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	issued := session.Session{ID: uuid.New(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
-	user, _, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", "encoded password with sufficient length", issued, make([]byte, 32), "")
+	user, _, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", "encoded password with sufficient length", make([]byte, 32), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,8 +185,8 @@ func TestAUserWithLocalCredentialsCannotBeDeletedByCascade(t *testing.T) {
 	if _, err := connection.Exec(ctx, `UPDATE app_user SET disabled_at=now() WHERE user_id=$1`, user.ID); err != nil {
 		t.Fatal(err)
 	}
-	issued.ID = uuid.New()
-	_, _, err = database.BootstrapLocalUser(ctx, "Another", "another@example.test", "Another", "encoded password with sufficient length", issued, make([]byte, 32), "")
+
+	_, _, err = database.BootstrapLocalUser(ctx, "Another", "another@example.test", "Another", "encoded password with sufficient length", make([]byte, 32), "")
 	if !errors.Is(err, storage.ErrLocalBootstrapComplete) {
 		t.Fatalf("bootstrap reopened for a disabled User: %v", err)
 	}
@@ -213,12 +205,9 @@ func TestConcurrentLocalBootstrapCreatesOneUser(t *testing.T) {
 	for index := range 2 {
 		go func() {
 			<-start
-			issued := session.Session{
-				ID: uuid.New(), ExpiresAt: time.Now().UTC().Add(time.Hour),
-			}
 			_, _, err := database.BootstrapLocalUser(ctx,
 				"Operations", fmt.Sprintf("admin-%d@example.test", index), "Admin",
-				"encoded password with sufficient length", issued, make([]byte, 32), "")
+				"encoded password with sufficient length", make([]byte, 32), "")
 			results <- err
 		}()
 	}
@@ -251,9 +240,8 @@ func TestRecoveryAndLocalSignInSerializeBothLockOrders(t *testing.T) {
 			if _, err := database.Migrate(ctx); err != nil {
 				t.Fatal(err)
 			}
-			issued := session.Session{ID: uuid.New(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
 			previous := "previous encoded password verifier"
-			user, _, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", previous, issued, make([]byte, 32), "")
+			user, issued, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", previous, make([]byte, 32), "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -277,13 +265,12 @@ func TestRecoveryAndLocalSignInSerializeBothLockOrders(t *testing.T) {
 				CREATE TRIGGER hold_password_audit BEFORE INSERT ON audit_event FOR EACH ROW EXECUTE FUNCTION hold_password_audit()`); err != nil {
 				t.Fatal(err)
 			}
-			issued.ID, issued.UserID = uuid.New(), user.ID
 			digest := make([]byte, 32)
 			digest[0] = 1
 			signedIn := make(chan error, 1)
 			recovered := make(chan error, 1)
 			issue := func() {
-				_, err := database.IssueLocalSession(ctx, organization, issued, digest, principal.Actor(), "", audit.Detail{}, previous)
+				_, err := database.IssueLocalSession(ctx, organization, user.ID, digest, principal.Actor(), "", audit.Detail{}, previous)
 				signedIn <- err
 			}
 			recoverUser := func() {
@@ -340,9 +327,8 @@ func TestLocalSessionIssuanceRejectsReplacedVerifier(t *testing.T) {
 	if _, err := database.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	issued := session.Session{ID: uuid.New(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
 	previous := "previous encoded password verifier"
-	user, issued, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", previous, issued, make([]byte, 32), "")
+	user, _, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", previous, make([]byte, 32), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,10 +341,9 @@ func TestLocalSessionIssuanceRejectsReplacedVerifier(t *testing.T) {
 	if err := database.ChangeLocalPassword(ctx, principal, previous, "replacement encoded password verifier"); err != nil {
 		t.Fatal(err)
 	}
-	issued.ID, issued.UserID = uuid.New(), user.ID
 	digest := make([]byte, 32)
 	digest[0] = 1
-	_, err = database.IssueLocalSession(ctx, organization, issued, digest, principal.Actor(), "", audit.Detail{}, previous)
+	_, err = database.IssueLocalSession(ctx, organization, user.ID, digest, principal.Actor(), "", audit.Detail{}, previous)
 	if !errors.Is(err, storage.ErrLocalCredentialUnknown) {
 		t.Fatalf("issuing with replaced verifier = %v", err)
 	}
@@ -380,10 +365,9 @@ func TestPasswordMutationsRollBackWhenAuditFails(t *testing.T) {
 			if _, err := database.Migrate(ctx); err != nil {
 				t.Fatal(err)
 			}
-			issued := session.Session{ID: uuid.New(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
 			digest := make([]byte, 32)
 			previous := "previous encoded password verifier"
-			user, _, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", previous, issued, digest, "")
+			user, _, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", previous, digest, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -447,9 +431,8 @@ func TestRecoveryTargetsExistingLocalUserAndDeletesSessions(t *testing.T) {
 	if _, err := database.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	issued := session.Session{ID: uuid.New(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
 	digest := make([]byte, 32)
-	user, _, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", "previous encoded password verifier", issued, digest, "")
+	user, _, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", "previous encoded password verifier", digest, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,9 +461,8 @@ func TestSessionCleanupIsGlobalAndBounded(t *testing.T) {
 	if _, err := database.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	issued := session.Session{ID: uuid.New(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
 	user, _, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin",
-		"encoded password with sufficient length", issued, make([]byte, 32), "")
+		"encoded password with sufficient length", make([]byte, 32), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -490,8 +472,8 @@ func TestSessionCleanupIsGlobalAndBounded(t *testing.T) {
 	}
 	defer func() { _ = connection.Close(ctx) }()
 	if _, err := connection.Exec(ctx, `INSERT INTO session
-		(session_id, credential_digest, user_id, expires_at)
-		SELECT md5(n::text)::uuid, decode(md5(n::text) || md5(n::text), 'hex'), $1,
+		(session_id, credential_digest, user_id, created_at, expires_at)
+		SELECT md5(n::text)::uuid, decode(md5(n::text) || md5(n::text), 'hex'), $1, now(),
 		       CASE WHEN n <= 1001 THEN now() - interval '2 days' ELSE now() + interval '1 day' END
 		FROM generate_series(1, 1003) n`, user.ID); err != nil {
 		t.Fatal(err)
@@ -521,9 +503,8 @@ func TestCurrentSessionDeletionRollsBackWhenDeploymentAuditFails(t *testing.T) {
 	if _, err := database.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	issued := session.Session{ID: uuid.New(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
 	digest := make([]byte, 32)
-	user, issued, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", "encoded password with sufficient length", issued, digest, "")
+	user, issued, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", "encoded password with sufficient length", digest, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -566,9 +547,8 @@ func TestSessionLookupIsReadOnly(t *testing.T) {
 	if _, err := database.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	issued := session.Session{ID: uuid.New(), ExpiresAt: time.Now().UTC().Add(time.Hour)}
 	digest := make([]byte, 32)
-	_, issued, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", "encoded password with sufficient length", issued, digest, "")
+	_, issued, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin", "encoded password with sufficient length", digest, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -595,6 +575,112 @@ func TestSessionLookupIsReadOnly(t *testing.T) {
 	}
 }
 
+func TestSessionRefreshSerializesWithExpiryAndRevocation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	dsn := postgresDSN(t)
+	db := openDatabaseForTest(t, dsn)
+	if _, err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	digest := make([]byte, 32)
+	_, issued, err := db.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin",
+		"encoded password with sufficient length", digest, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := db.SessionByToken(ctx, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := authz.NewPrincipal(current.User.ID, issued.ID, "Admin", current.User.Email, current.Membership)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	version := func() string {
+		t.Helper()
+		var value string
+		if err := conn.QueryRow(ctx, `SELECT xmin::text FROM session WHERE session_id=$1`, issued.ID).Scan(&value); err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	before := version()
+	if expiry, changed, err := db.RefreshSession(ctx, principal, digest); err != nil || changed ||
+		!expiry.Equal(issued.ExpiresAt) || version() != before {
+		t.Fatalf("fresh session refresh changed=%t, expires=%v, err=%v", changed, expiry, err)
+	}
+	var cap time.Time
+	if err := conn.QueryRow(ctx, `UPDATE session
+		SET created_at=date_trunc('second', now())-interval '165 hours', expires_at=now()+interval '2 hours'
+		WHERE session_id=$1 RETURNING created_at+interval '168 hours'`, issued.ID).Scan(&cap); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		expiry  time.Time
+		changed bool
+		err     error
+	}
+	results := make(chan result, 2)
+	refresh := func() {
+		expiry, changed, err := db.RefreshSession(ctx, principal, digest)
+		results <- result{expiry, changed, err}
+	}
+	go refresh()
+	go refresh()
+	first, second := <-results, <-results
+	if first.err != nil || second.err != nil || first.changed == second.changed ||
+		!first.expiry.Equal(cap) || !second.expiry.Equal(cap) {
+		t.Fatalf("concurrent refresh results = %+v and %+v, want one update to %v", first, second, cap)
+	}
+	if _, err := conn.Exec(ctx, `UPDATE session SET created_at=now()-interval '168 hours' WHERE session_id=$1`, issued.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := db.RefreshSession(ctx, principal, digest); !errors.Is(err, session.ErrExpired) {
+		t.Fatalf("refresh at absolute deadline = %v", err)
+	}
+	var expiry time.Time
+	if err := conn.QueryRow(ctx, `UPDATE session SET created_at=now()-interval '1 hour', expires_at=now()+interval '2 seconds'
+		WHERE session_id=$1 RETURNING expires_at`, issued.ID).Scan(&expiry); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM session WHERE session_id=$1 FOR UPDATE`, issued.ID); err != nil {
+		t.Fatal(err)
+	}
+	go refresh()
+	watcher, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = watcher.Close(context.Background()) }()
+	awaitDatabaseLockWaiters(t, ctx, watcher, 1)
+	if _, err := tx.Exec(ctx, `SELECT pg_sleep_until($1)`, expiry); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if stale := <-results; stale.changed || !errors.Is(stale.err, session.ErrExpired) {
+		t.Fatalf("refresh after waiting past expiry = %+v", stale)
+	}
+	if err := db.DeleteCurrentSession(ctx, principal); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := db.RefreshSession(ctx, principal, digest); !errors.Is(err, session.ErrUnknown) {
+		t.Fatalf("refresh after revocation = %v", err)
+	}
+}
+
 func TestSessionLookupRejectsExpiredAndDisabledUsers(t *testing.T) {
 	ctx := context.Background()
 	dsn := postgresDSN(t)
@@ -603,9 +689,8 @@ func TestSessionLookupRejectsExpiredAndDisabledUsers(t *testing.T) {
 		t.Fatal(err)
 	}
 	digest := make([]byte, 32)
-	issued := session.Session{ExpiresAt: time.Now().UTC().Add(time.Hour)}
 	user, issued, err := database.BootstrapLocalUser(ctx, "Operations", "admin@example.test", "Admin",
-		"encoded password with sufficient length", issued, digest, "")
+		"encoded password with sufficient length", digest, "")
 	if err != nil {
 		t.Fatal(err)
 	}

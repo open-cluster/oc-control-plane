@@ -87,6 +87,7 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 		"0003_cleanup_conversation_schema",
 		"0004_tool_run_observation",
 		"0006_disconnect_integrations",
+		"0007_browser_session_creation",
 	}) {
 		t.Fatalf("applied migrations = %v", applied)
 	}
@@ -327,6 +328,7 @@ func TestCleanupMigrationValidatesAndConvertsPostmortemReviewers(t *testing.T) {
 		"0003_cleanup_conversation_schema",
 		"0004_tool_run_observation",
 		"0006_disconnect_integrations",
+		"0007_browser_session_creation",
 	}) {
 		t.Fatalf("repaired reviewer migration applied %v: %v", applied, err)
 	}
@@ -398,6 +400,44 @@ VALUES ($1,'Organization A')`, org); err != nil {
 	}
 }
 
+func TestSessionCreationMigrationInvalidatesOnlyLegacySessions(t *testing.T) {
+	ctx := t.Context()
+	dsn := postgresDSN(t)
+	conn := baselineDatabase(t, ctx, dsn)
+	defer func() { _ = conn.Close(context.Background()) }()
+	if _, err := conn.Exec(ctx, `
+		WITH person AS (
+			INSERT INTO app_user (issuer, subject, email, display_name)
+			VALUES ('local', 'owner', 'owner@example.test', 'Owner') RETURNING user_id
+		), tenant AS (
+			INSERT INTO organization (display_name) VALUES ('Operations') RETURNING org_id
+		), member AS (
+			INSERT INTO organization_membership (org_id, user_id, role)
+			SELECT org_id, user_id, 'admin' FROM tenant CROSS JOIN person
+		), verifier AS (
+			INSERT INTO local_password (user_id, password_hash)
+			SELECT user_id, 'existing encoded password verifier' FROM person
+		)
+		INSERT INTO session (credential_digest, user_id, expires_at)
+		SELECT decode(repeat('00', 32), 'hex'), user_id, now()+interval '30 days' FROM person`); err != nil {
+		t.Fatal(err)
+	}
+	db := openDatabaseForTest(t, dsn)
+	if _, err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var preserved bool
+	if err := conn.QueryRow(ctx, `SELECT NOT EXISTS (SELECT 1 FROM session)
+		AND EXISTS (SELECT 1 FROM app_user)
+		AND EXISTS (SELECT 1 FROM organization_membership)
+		AND EXISTS (SELECT 1 FROM local_password)`).Scan(&preserved); err != nil || !preserved {
+		t.Fatalf("legacy session invalidation or identity preservation failed: %v", err)
+	}
+	if versions, err := db.Migrate(ctx); err != nil || len(versions) != 0 {
+		t.Fatalf("repeated migration applied %v: %v", versions, err)
+	}
+}
+
 func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 	ctx := context.Background()
 	dsn := postgresDSN(t)
@@ -412,6 +452,7 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 		"0003_cleanup_conversation_schema",
 		"0004_tool_run_observation",
 		"0006_disconnect_integrations",
+		"0007_browser_session_creation",
 	}) {
 		t.Fatalf("fresh migration applied %v, want every schema migration", applied)
 	}
@@ -514,7 +555,7 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 			ARRAY['user_id','password_hash','changed_at']
 			FROM information_schema.columns WHERE table_schema='public' AND table_name='local_password'`,
 		`SELECT array_agg(column_name::text ORDER BY ordinal_position) =
-			ARRAY['session_id','credential_digest','user_id','expires_at']
+			ARRAY['session_id','credential_digest','user_id','expires_at','created_at']
 			FROM information_schema.columns WHERE table_schema='public' AND table_name='session'`,
 		`SELECT column_default = 'gen_random_uuid()' FROM information_schema.columns
 			WHERE table_schema='public' AND table_name='app_user' AND column_name='user_id'`,

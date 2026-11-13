@@ -40,6 +40,10 @@ func sessionViewOf(principal authz.Principal) sessionView {
 	}
 }
 
+type refreshView struct {
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
 type signOutView struct {
 	SignedOut bool `json:"signedOut"`
 }
@@ -70,9 +74,7 @@ func memberViewOf(member storage.Member) memberView {
 }
 
 type policyView struct {
-	SessionLifetimeSeconds int  `json:"sessionLifetimeSeconds"`
-	AuditRetentionDays     int  `json:"auditRetentionDays"`
-	AuditRetentionEnforced bool `json:"auditRetentionEnforced"`
+	AuditRetentionDays int `json:"auditRetentionDays"`
 }
 
 type auditEventView struct {

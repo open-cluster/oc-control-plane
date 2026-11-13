@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
@@ -18,9 +16,8 @@ func TestLocalSignupCannotReopenAfterAccountRemoval(t *testing.T) {
 	if _, err := database.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	issued := session.Session{ExpiresAt: time.Now().Add(time.Hour)}
 	user, _, err := database.BootstrapLocalUser(ctx, "Platform Team", "admin@example.test", "Admin",
-		"encoded password with sufficient length", issued, make([]byte, 32), "")
+		"encoded password with sufficient length", make([]byte, 32), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +37,7 @@ func TestLocalSignupCannotReopenAfterAccountRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _, err = database.BootstrapLocalUser(ctx, "Another Team", "another@example.test", "Another",
-		"encoded password with sufficient length", issued, make([]byte, 32), "")
+		"encoded password with sufficient length", make([]byte, 32), "")
 	if !errors.Is(err, storage.ErrLocalBootstrapComplete) {
 		t.Fatalf("signup reopened after account removal and restart: %v", err)
 	}

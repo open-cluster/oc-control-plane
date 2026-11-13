@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,7 +23,7 @@ type SignedIn struct {
 
 func (p *Database) IssueSession(
 	ctx context.Context, organization uuid.UUID,
-	issued session.Session, digest []byte, actor audit.Actor, sourceAddress string, detail audit.Detail,
+	userID uuid.UUID, digest []byte, actor audit.Actor, sourceAddress string, detail audit.Detail,
 ) (session.Session, error) {
 	pool, err := p.poolForOrganization(organization)
 	if err != nil {
@@ -40,8 +41,9 @@ func (p *Database) IssueSession(
 		}
 	}()
 
-	if issued, err = issueSessionIn(
-		ctx, transaction, organization, issued, digest, actor, sourceAddress, detail); err != nil {
+	issued, err := issueSessionIn(
+		ctx, transaction, organization, userID, digest, actor, sourceAddress, detail)
+	if err != nil {
 		return session.Session{}, err
 	}
 	if err := transaction.Commit(ctx); err != nil {
@@ -54,7 +56,7 @@ func (p *Database) IssueSession(
 func (p *Database) IssueLocalSession(
 	ctx context.Context,
 	organization uuid.UUID,
-	issued session.Session,
+	userID uuid.UUID,
 	digest []byte,
 	actor audit.Actor,
 	sourceAddress string,
@@ -72,14 +74,15 @@ func (p *Database) IssueLocalSession(
 	defer func() { _ = transaction.Rollback(ctx) }()
 	var current string
 	err = transaction.QueryRow(ctx, `SELECT c.password_hash FROM local_password c JOIN app_user u USING (user_id)
-		WHERE c.user_id = $1 AND u.issuer = $2 AND u.disabled_at IS NULL FOR SHARE OF c`, issued.UserID, LocalIssuer).Scan(&current)
+		WHERE c.user_id = $1 AND u.issuer = $2 AND u.disabled_at IS NULL FOR SHARE OF c`, userID, LocalIssuer).Scan(&current)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && current != previous) {
 		return session.Session{}, ErrLocalCredentialUnknown
 	}
 	if err != nil {
 		return session.Session{}, fmt.Errorf("checking local sign-in: %w", err)
 	}
-	if issued, err = issueSessionIn(ctx, transaction, organization, issued, digest, actor, sourceAddress, detail); err != nil {
+	issued, err := issueSessionIn(ctx, transaction, organization, userID, digest, actor, sourceAddress, detail)
+	if err != nil {
 		return session.Session{}, err
 	}
 	if err = transaction.Commit(ctx); err != nil {
@@ -90,15 +93,17 @@ func (p *Database) IssueLocalSession(
 
 func issueSessionIn(
 	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
-	issued session.Session, digest []byte, actor audit.Actor, sourceAddress string, detail audit.Detail,
+	userID uuid.UUID, digest []byte, actor audit.Actor, sourceAddress string, detail audit.Detail,
 ) (session.Session, error) {
-	if err := transaction.QueryRow(ctx, `
-		INSERT INTO session (credential_digest, user_id, expires_at)
-		VALUES ($1, $2, $3)
-		RETURNING session_id`,
-		digest, issued.UserID, issued.ExpiresAt).Scan(&issued.ID); err != nil {
-		return session.Session{}, fmt.Errorf("issuing a session: %w", err)
+	issued, err := insertSession(ctx, transaction, userID, digest)
+	if err != nil {
+		return session.Session{}, err
 	}
+	detail = maps.Clone(detail)
+	if detail == nil {
+		detail = audit.Detail{}
+	}
+	detail["expiresAt"] = issued.ExpiresAt.UTC().Format(time.RFC3339)
 	if err := writeEvent(ctx, transaction, audit.Event{
 		Organization:  organization.String(),
 		Actor:         actor,
@@ -113,17 +118,35 @@ func issueSessionIn(
 	return issued, nil
 }
 
+func insertSession(ctx context.Context, tx pgx.Tx, userID uuid.UUID, digest []byte) (session.Session, error) {
+	idle, _ := session.Lifetimes()
+	issued := session.Session{UserID: userID}
+	err := tx.QueryRow(ctx, `
+		INSERT INTO session (credential_digest, user_id, created_at, expires_at)
+		SELECT $1, $2, started, started + $3::interval
+		FROM (SELECT date_trunc('second', clock_timestamp()) AS started) AS ts
+		RETURNING session_id, created_at, expires_at`, digest, userID, idle).
+		Scan(&issued.ID, &issued.CreatedAt, &issued.ExpiresAt)
+	if err != nil {
+		return session.Session{}, fmt.Errorf("issuing a session: %w", err)
+	}
+	return issued, nil
+}
+
 func (p *Database) SessionByToken(ctx context.Context, digest []byte) (SignedIn, error) {
 	var (
 		found    SignedIn
 		disabled *time.Time
+		expired  bool
 	)
+	_, maximum := session.Lifetimes()
 	err := p.pool.QueryRow(ctx, `
-		SELECT s.session_id, s.user_id, s.expires_at,
+		SELECT s.session_id, s.user_id, s.created_at, s.expires_at,
+		       LEAST(s.expires_at, s.created_at + $2::interval) <= clock_timestamp(),
 		       u.email, u.display_name, u.disabled_at
 		FROM session s JOIN app_user u ON u.user_id = s.user_id
 		WHERE s.credential_digest = $1`,
-		digest).Scan(&found.Session.ID, &found.Session.UserID, &found.Session.ExpiresAt,
+		digest, maximum).Scan(&found.Session.ID, &found.Session.UserID, &found.Session.CreatedAt, &found.Session.ExpiresAt, &expired,
 		&found.User.Email, &found.User.DisplayName, &disabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SignedIn{}, session.ErrUnknown
@@ -136,7 +159,7 @@ func (p *Database) SessionByToken(ctx context.Context, digest []byte) (SignedIn,
 		found.User.DisabledAt = *disabled
 	}
 
-	if !time.Now().Before(found.Session.ExpiresAt) {
+	if expired {
 		return found, session.ErrExpired
 	}
 	if found.User.Disabled() {
@@ -152,6 +175,55 @@ func (p *Database) SessionByToken(ctx context.Context, digest []byte) (SignedIn,
 	}
 	found.Membership = membership
 	return found, nil
+}
+
+func (p *Database) RefreshSession(ctx context.Context, principal authz.Principal, digest []byte) (time.Time, bool, error) {
+	const renewalThreshold = 30 * time.Minute
+	idle, maximum := session.Lifetimes()
+	var expires time.Time
+	// Sample the clock again after acquiring the lock. A session can expire
+	// while a competing writer holds the row.
+	err := p.pool.QueryRow(ctx, `
+		WITH candidate AS MATERIALIZED (
+			SELECT s.session_id
+			FROM session s
+			JOIN app_user u USING (user_id)
+			JOIN organization_membership m USING (user_id)
+			WHERE s.session_id = $1 AND s.user_id = $2 AND s.credential_digest = $3
+			  AND m.org_id = $4 AND u.disabled_at IS NULL
+			  AND s.expires_at <= clock_timestamp() + $5::interval
+			  AND s.expires_at < s.created_at + $6::interval
+			  AND s.expires_at > clock_timestamp()
+			FOR NO KEY UPDATE OF s FOR SHARE OF u, m
+		), renewal AS MATERIALIZED (
+			SELECT session_id, clock_timestamp() AS checked_at FROM candidate
+		)
+		UPDATE session s
+		SET expires_at = LEAST(date_trunc('second', r.checked_at) + $7::interval, s.created_at + $6::interval)
+		FROM renewal r
+		WHERE s.session_id = r.session_id
+		  AND s.expires_at > r.checked_at
+		  AND s.expires_at < LEAST(date_trunc('second', r.checked_at) + $7::interval, s.created_at + $6::interval)
+		RETURNING s.expires_at`,
+		principal.SessionID(), principal.UserID(), digest, principal.Organization(),
+		idle-renewalThreshold, maximum, idle).Scan(&expires)
+	if err == nil {
+		return expires, true, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, false, fmt.Errorf("refreshing a session: %w", err)
+	}
+	// A concurrent renewal or revocation may have committed since the update
+	// started. Resolve against a new snapshot.
+	current, err := p.SessionByToken(ctx, digest)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	if current.Session.ID != principal.SessionID() || current.User.ID != principal.UserID() ||
+		current.Membership.Organization != principal.Organization() {
+		return time.Time{}, false, session.ErrUnknown
+	}
+	return current.Session.ExpiresAt, false, nil
 }
 
 func (p *Database) DeleteCurrentSession(ctx context.Context, principal authz.Principal) error {

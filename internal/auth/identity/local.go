@@ -86,15 +86,15 @@ func (h Handlers) bootstrapLocalAdmin(writer http.ResponseWriter, request *http.
 		return
 	}
 
-	token, digest, issued, _, err := h.prepareSession(request, uuid.Nil)
+	token, digest, err := session.NewToken()
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
 	ctx, cancel := contextWithTimeout(request, signInTimeout)
 	defer cancel()
-	_, _, err = h.Database.BootstrapLocalUser(
-		ctx, organizationName, email, displayName, encoded, issued, digest, request.RemoteAddr)
+	_, issued, err := h.Database.BootstrapLocalUser(
+		ctx, organizationName, email, displayName, encoded, digest, request.RemoteAddr)
 	if errors.Is(err, storage.ErrLocalBootstrapComplete) {
 		writeJSON(writer, http.StatusConflict,
 			errorView{Error: "a local administrator already exists"})

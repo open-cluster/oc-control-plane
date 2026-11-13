@@ -133,8 +133,6 @@ telemetry:
   otlpEndpoint: "otel-collector:4317"
 database:
   dsnFile: /run/secrets/postgres_dsn
-session:
-  lifetime: 12h
 relay:
   address: ":8443"
   spkiPins:
@@ -166,7 +164,6 @@ security:
 Omit optional sections that the deployment does not use. Other values are strings except
 `relay.spkiPins` (an array), `ai.maxOutputTokens`,
 `investigations.workers`, and `investigations.maxPendingPerOrganization` (integers).
-`session.lifetime` is a Go duration such as `12h`.
 
 Relative secret paths in YAML are resolved from the configuration file's directory.
 `_FILE` environment paths remain process-relative. An environment list setting such as
@@ -200,9 +197,8 @@ Local authentication is always available. OIDC is enabled when its issuer, clien
 client secret are all configured. A partial OIDC configuration stops startup. Relay is
 optional and listens separately from HTTP.
 Customer Relays initiate outbound connections and pin the configured control-plane key.
-`OC_SESSION_LIFETIME_SECONDS` is deployment-owned and defaults to 43,200 seconds.
 Organizations start with 90 days of audit retention and can configure it independently.
-Browser credential lifetime remains deployment-owned.
+Browser sessions have fixed idle and maximum lifetimes. If you are upgrading from a version with a session lifetime setting, remove it from your deployment configuration. The environment setting has no effect and the old YAML setting prevents startup.
 
 ## Model provider
 
@@ -267,7 +263,6 @@ and training terms before production use.
 | `OC_SERVER_ADDRESS` | HTTP listen address. Default `:8081`. |
 | `OC_PUBLIC_URL` | Browser and webhook origin. Default `http://localhost:8081`. |
 | `OC_DATABASE_DSN` / `OC_DATABASE_DSN_FILE` | PostgreSQL DSN file. Direct value or file. Do not set both. |
-| `OC_SESSION_LIFETIME_SECONDS` | Browser session lifetime in seconds. Default `43200`, range `300`–`2592000`. |
 | `OC_OIDC_ISSUER` | HTTPS OIDC issuer. |
 | `OC_OIDC_CLIENT_ID` | OIDC client ID. |
 | `OC_OIDC_CLIENT_SECRET` / `OC_OIDC_CLIENT_SECRET_FILE` | OIDC client-secret file. Direct value or file. Do not set both. |

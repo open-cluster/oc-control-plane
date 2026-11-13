@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -25,9 +24,6 @@ type fileConfiguration struct {
 	Database struct {
 		DSNFile *string `yaml:"dsnFile"`
 	} `yaml:"database"`
-	Session struct {
-		Lifetime *durationValue `yaml:"lifetime"`
-	} `yaml:"session"`
 	Relay struct {
 		Address  *string   `yaml:"address"`
 		SPKIPins *[]string `yaml:"spkiPins"`
@@ -61,21 +57,6 @@ type fileConfiguration struct {
 	Security struct {
 		EncryptionKeyFile *string `yaml:"encryptionKeyFile"`
 	} `yaml:"security"`
-}
-
-type durationValue time.Duration
-
-func (value *durationValue) UnmarshalYAML(node *yaml.Node) error {
-	var raw string
-	if err := node.Decode(&raw); err != nil {
-		return errors.New("must be a duration such as 12h")
-	}
-	parsed, err := time.ParseDuration(raw)
-	if err != nil {
-		return errors.New("must be a duration such as 12h")
-	}
-	*value = durationValue(parsed)
-	return nil
 }
 
 func effectiveLookup(lookup func(string) (string, bool)) (func(string) (string, bool), error) {
@@ -144,10 +125,6 @@ func (document fileConfiguration) environment(directory string) map[string]strin
 	set(EnvPublicURL, document.Server.PublicURL)
 	set(EnvLogLevel, document.Telemetry.LogLevel)
 	set(EnvOTLPEndpoint, document.Telemetry.OTLPEndpoint)
-	if document.Session.Lifetime != nil {
-		values[EnvSessionLifetimeSeconds] = strconv.FormatInt(
-			int64(time.Duration(*document.Session.Lifetime)/time.Second), 10)
-	}
 	set(EnvRelayAddress, document.Relay.Address)
 	if document.Relay.SPKIPins != nil {
 		values[EnvRelaySPKIPins] = strings.Join(*document.Relay.SPKIPins, ",")

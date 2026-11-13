@@ -82,13 +82,10 @@ umask 077
 curl --fail-with-body --request POST http://localhost:8081/api/v1/auth/local/bootstrap \
   --header 'Origin: http://localhost:8081' \
   --header 'Content-Type: application/json' \
-  --cookie-jar .secrets/session-cookie \
   --data '{"organizationName":"Platform Team","email":"admin@example.com","password":"<STRONG_PASSWORD>"}'
-curl --fail --cookie .secrets/session-cookie http://localhost:8081/api/v1/session
 ```
 
-Keep passwords and the cookie jar private. Browser signup issues the same secure session
-cookie and does not need a second sign-in. The first successful request initializes the
+Keep passwords private. Browser signup signs you in automatically. The first successful request initializes the
 Organization and Admin atomically. Further signup requests return `409`.
 
 ## 4. Public deployment
@@ -158,3 +155,5 @@ Update clients before bringing the new replicas online.
 Choose a source with [Connect your tools](/integrations/overview), then [ask a question or investigate an Incident](/getting-started/run-your-first-investigation). Use
 [Configuration](/self-hosting/configuration) for supported settings and
 [Troubleshooting](/self-hosting/troubleshooting) when a verification step fails.
+
+After upgrading to fixed browser session limits, Users must sign in again. Remove any old session lifetime setting.
