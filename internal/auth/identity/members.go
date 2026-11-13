@@ -121,9 +121,7 @@ func (h Handlers) writePolicy(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, policyView{
-		AuditRetentionDays: body.AuditRetentionDays,
-	})
+	writeJSON(w, http.StatusOK, policyView(body))
 }
 
 func (h Handlers) auditEvents(writer http.ResponseWriter, request *http.Request) {

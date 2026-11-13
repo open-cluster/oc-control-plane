@@ -673,11 +673,58 @@ func TestSessionRefreshSerializesWithExpiryAndRevocation(t *testing.T) {
 	if stale := <-results; stale.changed || !errors.Is(stale.err, session.ErrExpired) {
 		t.Fatalf("refresh after waiting past expiry = %+v", stale)
 	}
-	if err := db.DeleteCurrentSession(ctx, principal); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := db.RefreshSession(ctx, principal, principal.Organization(), digest); !errors.Is(err, session.ErrUnknown) {
-		t.Fatalf("refresh after revocation = %v", err)
+	for _, refreshFirst := range []bool{true, false} {
+		digest[0]++
+		issued, err := db.IssueSession(ctx, principal.Organization(), principal.UserID(), digest, principal.Actor(), "", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		principal, err = authz.NewPrincipal(current.User.ID, issued.ID, "Admin", current.User.Email, current.Membership)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := conn.Exec(ctx, `UPDATE session SET expires_at=now()+interval '1 hour' WHERE session_id=$1`, issued.ID); err != nil {
+			t.Fatal(err)
+		}
+		tx, err := conn.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		statement := `DELETE FROM session WHERE session_id=$1`
+		if refreshFirst {
+			statement = `SELECT 1 FROM session WHERE session_id=$1 FOR UPDATE`
+		}
+		if _, err := tx.Exec(ctx, statement, issued.ID); err != nil {
+			t.Fatal(err)
+		}
+		revoked := make(chan error, 1)
+		if refreshFirst {
+			go refresh()
+			awaitDatabaseLockWaiters(t, ctx, watcher, 1)
+			go func() { revoked <- db.DeleteCurrentSession(ctx, principal) }()
+			awaitDatabaseLockWaiters(t, ctx, watcher, 2)
+		} else {
+			go refresh()
+			awaitDatabaseLockWaiters(t, ctx, watcher, 1)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		got := <-results
+		if refreshFirst {
+			if !got.changed || got.err != nil {
+				t.Fatalf("refresh before revocation = %+v", got)
+			}
+			if err := <-revoked; err != nil {
+				t.Fatal(err)
+			}
+		} else if got.changed || !errors.Is(got.err, session.ErrUnknown) {
+			t.Fatalf("refresh after revocation = %+v", got)
+		}
+		if _, err := db.SessionByToken(ctx, digest); !errors.Is(err, session.ErrUnknown) {
+			t.Fatalf("credential survived revocation: %v", err)
+		}
 	}
 }
 
