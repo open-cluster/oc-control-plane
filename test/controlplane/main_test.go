@@ -259,7 +259,6 @@ func startControlPlaneRunning(
 		LogLevel:          slog.LevelDebug,
 		HTTPListenAddress: freeAddress(t),
 		DatabaseDSN:       gatedDSN,
-		SessionLifetime:   12 * time.Hour,
 		SealingKey:        bytes.Repeat([]byte{7}, 32),
 	}
 	if adjust != nil {

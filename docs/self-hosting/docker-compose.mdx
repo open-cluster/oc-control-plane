@@ -82,13 +82,10 @@ umask 077
 curl --fail-with-body --request POST http://localhost:8081/api/v1/auth/local/bootstrap \
   --header 'Origin: http://localhost:8081' \
   --header 'Content-Type: application/json' \
-  --cookie-jar .secrets/session-cookie \
   --data '{"organizationName":"Platform Team","email":"admin@example.com","password":"<STRONG_PASSWORD>"}'
-curl --fail --cookie .secrets/session-cookie http://localhost:8081/api/v1/session
 ```
 
-Keep passwords and the cookie jar private. Browser signup issues the same secure session
-cookie and does not need a second sign-in. The first successful request initializes the
+Keep passwords private. Browser signup signs you in automatically. The first successful request initializes the
 Organization and Admin atomically. Further signup requests return `409`.
 
 ## 4. Public deployment
@@ -119,8 +116,7 @@ same key, sealed integration credentials cannot be opened.
 
 Stop every old control-plane replica and back up PostgreSQL before replacing the image.
 Remove the obsolete administrator token inputs and any `security.bootstrapTokenFile` YAML
-setting. Retain the database and encryption key. Existing accounts and sessions remain
-valid, and no signup migration or database reset is required. Relay enrollment credentials are unchanged.
+setting. Retain the database and encryption key. Existing accounts and Relay enrollment credentials remain valid. Remove the old session lifetime setting. Users must sign in again after this upgrade.
 
 Do not run mixed versions against one database. The current ledgered baseline migrates in
 place only when retained user Message attribution agrees with each Conversation source and

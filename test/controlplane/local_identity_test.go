@@ -108,9 +108,9 @@ func TestLocalBootstrapCreatesOrganizationAndAdmin(t *testing.T) {
 	}
 }
 
-func TestSessionLifetimeIsReadOnlyDeploymentPolicy(t *testing.T) {
-	const lifetime = 37 * time.Minute
-	plane := startIdentityPlane(t, func(cfg *config.Config) { cfg.SessionLifetime = lifetime })
+func TestPolicyManagesOnlyAuditRetention(t *testing.T) {
+	const lifetime = 12 * time.Hour
+	plane := startIdentityPlane(t)
 	before := time.Now().UTC()
 	created := plane.call(t, http.MethodPost,
 		"http://"+plane.api+"/api/v1/auth/local/bootstrap", map[string]any{
@@ -142,12 +142,9 @@ func TestSessionLifetimeIsReadOnlyDeploymentPolicy(t *testing.T) {
 	if updated.status != http.StatusOK {
 		t.Fatalf("audit retention update = %d: %s", updated.status, updated.body)
 	}
-	var policy struct {
-		SessionLifetimeSeconds int `json:"sessionLifetimeSeconds"`
-		AuditRetentionDays     int `json:"auditRetentionDays"`
-	}
+	var policy map[string]int
 	decodeAnswer(t, updated, &policy)
-	if policy.SessionLifetimeSeconds != int(lifetime.Seconds()) || policy.AuditRetentionDays != 45 {
+	if len(policy) != 1 || policy["auditRetentionDays"] != 45 {
 		t.Fatalf("effective policy = %+v", policy)
 	}
 }

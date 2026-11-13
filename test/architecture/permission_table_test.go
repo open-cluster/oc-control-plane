@@ -57,6 +57,7 @@ func TestTheAuthenticatedOnlyRoutesAreTheNamedSelfServiceOperations(t *testing.T
 	permitted := map[string]string{
 		"PUT /api/v1/auth/local/password": "reauthenticates the User to change only their own local credential",
 		"GET /api/v1/session":             "its subject is the caller themselves",
+		"POST /api/v1/session/refresh":    "refreshes only the current session",
 		"GET /api/v1/integrations/connect/callback": "a provider registration holds one " +
 			"redirect URI, so the path can name no organization and there is no tenant in " +
 			"it to check a membership against. The tenant comes from the single-use flow " +
@@ -135,6 +136,7 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 		"GET /api/v1/relays/{registration}/failures",
 		"GET /api/v1/relays/{registration}/integrations",
 		"GET /api/v1/session",
+		"POST /api/v1/session/refresh",
 		"PATCH /api/v1/incidents/{incident}/postmortem",
 		"PATCH /api/v1/integrations/{integration}",
 		"PATCH /api/v1/members/{user}",

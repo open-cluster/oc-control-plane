@@ -154,7 +154,6 @@ func apiRouter(process assembled) (http.Handler, error) {
 		OIDCClientID:     cfg.OIDCClientID,
 		OIDCClientSecret: cfg.OIDCClientSecret,
 		PublicURL:        cfg.PublicURL,
-		SessionLifetime:  cfg.SessionLifetime,
 	}
 	protected, err := api.Handlers{
 		Database:                process.database,

@@ -73,6 +73,55 @@ func assertSessionCookieCleared(t *testing.T, response answer) {
 	t.Fatalf("no session deletion cookie: %+v", response.cookies)
 }
 
+func TestRefreshExtendsOnlyDueBrowserSessions(t *testing.T) {
+	plane := startIdentityPlane(t)
+	base := "http://" + plane.api + "/api/v1/session"
+	token := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin", "initial administrator password")
+	refresh := func() answer {
+		return plane.call(t, http.MethodPost, base+"/refresh", nil, asSession(token))
+	}
+	fresh := refresh()
+	if fresh.status != http.StatusOK || len(fresh.cookies) != 0 {
+		t.Fatalf("early refresh = %d: %s, cookie count %d", fresh.status, fresh.body, len(fresh.cookies))
+	}
+	conn, err := pgx.Connect(t.Context(), plane.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	if _, err := conn.Exec(t.Context(), `UPDATE session SET created_at = now()-interval '1 hour', expires_at = now()+interval '11 hours'`); err != nil {
+		t.Fatal(err)
+	}
+	renewed := refresh()
+	if renewed.status != http.StatusOK || len(renewed.cookies) != 1 {
+		t.Fatalf("due refresh = %d: %s, cookie count %d", renewed.status, renewed.body, len(renewed.cookies))
+	}
+	var body struct {
+		ExpiresAt time.Time `json:"expiresAt"`
+	}
+	decodeAnswer(t, renewed, &body)
+	var stored time.Time
+	if err := conn.QueryRow(t.Context(), `SELECT expires_at FROM session`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	cookie := renewed.cookies[0]
+	if cookie.Name != session.CookieName || cookie.Value != token || !cookie.Secure || !cookie.HttpOnly ||
+		cookie.SameSite != http.SameSiteLaxMode || cookie.Path != "/" || cookie.Domain != "" ||
+		!cookie.Expires.Equal(stored) || !body.ExpiresAt.Equal(stored) {
+		t.Fatal("renewal did not preserve the secure cookie and committed expiry")
+	}
+	refused := plane.call(t, http.MethodPost, base+"/refresh", nil, asSession(token), func(r *http.Request) {
+		r.Header.Del("Origin")
+	})
+	if refused.status != http.StatusForbidden || len(refused.cookies) != 0 {
+		t.Fatalf("refresh without Origin = %d: %s", refused.status, refused.body)
+	}
+	plane.call(t, http.MethodDelete, base, nil, asSession(token))
+	if stale := refresh(); stale.status != http.StatusUnauthorized || len(stale.cookies) != 0 {
+		t.Fatalf("refresh after sign-out = %d: %s", stale.status, stale.body)
+	}
+}
+
 func TestLogoutPreservesSessionForRetryOnDatabaseFailure(t *testing.T) {
 	plane := startIdentityPlane(t)
 	cookie := bootstrapIdentityAdmin(t, plane, "admin@example.test", "Admin", "initial administrator password")
