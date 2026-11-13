@@ -184,10 +184,11 @@ paths:
       operationId: refreshSession
       summary: Refresh the current session
       description: >
-        Renew during recent foreground activity, at most once every 30 minutes per tab.
+        Renew during recent foreground activity, at most once every 30 minutes per tab, with one request in flight.
+        Let the browser manage the session cookie. JavaScript does not need access to the credential.
         Background polling and event streams do not renew sessions. A session expires after
         12 hours without renewal or seven days after sign-in. On 401, preserve the current
-        location and prompt for sign-in.
+        location and prompt for sign-in. A 503 indicates temporary unavailability.
       tags: [Sessions]
       responses:
         "200":
@@ -1248,13 +1249,13 @@ components:
       additionalProperties: false
       required: [auditRetentionDays]
       properties:
-        auditRetentionDays: { type: integer, minimum: 1, maximum: 3650 }
+        auditRetentionDays: { type: integer, minimum: 0, maximum: 2147483647 }
     PolicyUpdateRequest:
       type: object
       additionalProperties: false
       required: [auditRetentionDays]
       properties:
-        auditRetentionDays: { type: integer, minimum: 1, maximum: 3650 }
+        auditRetentionDays: { type: integer, minimum: 0, maximum: 2147483647 }
     IntegrationType:
       type: object
       additionalProperties: false

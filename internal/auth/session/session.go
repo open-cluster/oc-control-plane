@@ -32,9 +32,8 @@ var (
 type Token string
 
 type Session struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	CreatedAt time.Time
+	ID uuid.UUID
+
 	ExpiresAt time.Time
 }
 

@@ -120,13 +120,13 @@ func issueSessionIn(
 
 func insertSession(ctx context.Context, tx pgx.Tx, userID uuid.UUID, digest []byte) (session.Session, error) {
 	idle, _ := session.Lifetimes()
-	issued := session.Session{UserID: userID}
+	var issued session.Session
 	err := tx.QueryRow(ctx, `
 		INSERT INTO session (credential_digest, user_id, created_at, expires_at)
 		SELECT $1, $2, started, started + $3::interval
 		FROM (SELECT date_trunc('second', clock_timestamp()) AS started) AS ts
-		RETURNING session_id, created_at, expires_at`, digest, userID, idle).
-		Scan(&issued.ID, &issued.CreatedAt, &issued.ExpiresAt)
+		RETURNING session_id, expires_at`, digest, userID, idle).
+		Scan(&issued.ID, &issued.ExpiresAt)
 	if err != nil {
 		return session.Session{}, fmt.Errorf("issuing a session: %w", err)
 	}
@@ -141,12 +141,12 @@ func (p *Database) SessionByToken(ctx context.Context, digest []byte) (SignedIn,
 	)
 	_, maximum := session.Lifetimes()
 	err := p.pool.QueryRow(ctx, `
-		SELECT s.session_id, s.user_id, s.created_at, s.expires_at,
+		SELECT s.session_id, s.user_id, s.expires_at,
 		       LEAST(s.expires_at, s.created_at + $2::interval) <= clock_timestamp(),
 		       u.email, u.display_name, u.disabled_at
 		FROM session s JOIN app_user u ON u.user_id = s.user_id
 		WHERE s.credential_digest = $1`,
-		digest, maximum).Scan(&found.Session.ID, &found.Session.UserID, &found.Session.CreatedAt, &found.Session.ExpiresAt, &expired,
+		digest, maximum).Scan(&found.Session.ID, &found.User.ID, &found.Session.ExpiresAt, &expired,
 		&found.User.Email, &found.User.DisplayName, &disabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SignedIn{}, session.ErrUnknown
@@ -154,7 +154,6 @@ func (p *Database) SessionByToken(ctx context.Context, digest []byte) (SignedIn,
 	if err != nil {
 		return SignedIn{}, fmt.Errorf("reading a session: %w", err)
 	}
-	found.User.ID = found.Session.UserID
 	if disabled != nil {
 		found.User.DisabledAt = *disabled
 	}
@@ -166,7 +165,7 @@ func (p *Database) SessionByToken(ctx context.Context, digest []byte) (SignedIn,
 		return found, session.ErrUnknown
 	}
 
-	membership, err := membershipOf(ctx, p.pool, found.Session.UserID)
+	membership, err := membershipOf(ctx, p.pool, found.User.ID)
 	if errors.Is(err, ErrMembershipUnknown) {
 		return SignedIn{}, session.ErrUnknown
 	}
@@ -177,7 +176,10 @@ func (p *Database) SessionByToken(ctx context.Context, digest []byte) (SignedIn,
 	return found, nil
 }
 
-func (p *Database) RefreshSession(ctx context.Context, principal authz.Principal, digest []byte) (time.Time, bool, error) {
+func (p *Database) RefreshSession(ctx context.Context, principal authz.Principal, organization uuid.UUID, digest []byte) (time.Time, bool, error) {
+	if principal.Organization() != organization || organization == uuid.Nil {
+		return time.Time{}, false, session.ErrUnknown
+	}
 	const renewalThreshold = 30 * time.Minute
 	idle, maximum := session.Lifetimes()
 	var expires time.Time
@@ -205,7 +207,7 @@ func (p *Database) RefreshSession(ctx context.Context, principal authz.Principal
 		  AND s.expires_at > r.checked_at
 		  AND s.expires_at < LEAST(date_trunc('second', r.checked_at) + $7::interval, s.created_at + $6::interval)
 		RETURNING s.expires_at`,
-		principal.SessionID(), principal.UserID(), digest, principal.Organization(),
+		principal.SessionID(), principal.UserID(), digest, organization,
 		idle-renewalThreshold, maximum, idle).Scan(&expires)
 	if err == nil {
 		return expires, true, nil
@@ -220,7 +222,7 @@ func (p *Database) RefreshSession(ctx context.Context, principal authz.Principal
 		return time.Time{}, false, err
 	}
 	if current.Session.ID != principal.SessionID() || current.User.ID != principal.UserID() ||
-		current.Membership.Organization != principal.Organization() {
+		current.Membership.Organization != organization {
 		return time.Time{}, false, session.ErrUnknown
 	}
 	return current.Session.ExpiresAt, false, nil

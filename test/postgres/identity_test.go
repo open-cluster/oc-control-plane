@@ -611,7 +611,7 @@ func TestSessionRefreshSerializesWithExpiryAndRevocation(t *testing.T) {
 		return value
 	}
 	before := version()
-	if expiry, changed, err := db.RefreshSession(ctx, principal, digest); err != nil || changed ||
+	if expiry, changed, err := db.RefreshSession(ctx, principal, principal.Organization(), digest); err != nil || changed ||
 		!expiry.Equal(issued.ExpiresAt) || version() != before {
 		t.Fatalf("fresh session refresh changed=%t, expires=%v, err=%v", changed, expiry, err)
 	}
@@ -628,7 +628,7 @@ func TestSessionRefreshSerializesWithExpiryAndRevocation(t *testing.T) {
 	}
 	results := make(chan result, 2)
 	refresh := func() {
-		expiry, changed, err := db.RefreshSession(ctx, principal, digest)
+		expiry, changed, err := db.RefreshSession(ctx, principal, principal.Organization(), digest)
 		results <- result{expiry, changed, err}
 	}
 	go refresh()
@@ -641,7 +641,7 @@ func TestSessionRefreshSerializesWithExpiryAndRevocation(t *testing.T) {
 	if _, err := conn.Exec(ctx, `UPDATE session SET created_at=now()-interval '168 hours' WHERE session_id=$1`, issued.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := db.RefreshSession(ctx, principal, digest); !errors.Is(err, session.ErrExpired) {
+	if _, _, err := db.RefreshSession(ctx, principal, principal.Organization(), digest); !errors.Is(err, session.ErrExpired) {
 		t.Fatalf("refresh at absolute deadline = %v", err)
 	}
 	var expiry time.Time
@@ -676,7 +676,7 @@ func TestSessionRefreshSerializesWithExpiryAndRevocation(t *testing.T) {
 	if err := db.DeleteCurrentSession(ctx, principal); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := db.RefreshSession(ctx, principal, digest); !errors.Is(err, session.ErrUnknown) {
+	if _, _, err := db.RefreshSession(ctx, principal, principal.Organization(), digest); !errors.Is(err, session.ErrUnknown) {
 		t.Fatalf("refresh after revocation = %v", err)
 	}
 }

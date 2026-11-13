@@ -87,7 +87,7 @@ func (h Handlers) refreshSession(writer http.ResponseWriter, request *http.Reque
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 
-	expires, changed, err := h.Database.RefreshSession(ctx, principal, session.Digest(token))
+	expires, changed, err := h.Database.RefreshSession(ctx, principal, principal.Organization(), session.Digest(token))
 	if err != nil {
 		switch {
 		case errors.Is(err, session.ErrExpired):

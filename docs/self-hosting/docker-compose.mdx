@@ -116,8 +116,7 @@ same key, sealed integration credentials cannot be opened.
 
 Stop every old control-plane replica and back up PostgreSQL before replacing the image.
 Remove the obsolete administrator token inputs and any `security.bootstrapTokenFile` YAML
-setting. Retain the database and encryption key. Existing accounts and sessions remain
-valid, and no signup migration or database reset is required. Relay enrollment credentials are unchanged.
+setting. Retain the database and encryption key. Existing accounts and Relay enrollment credentials remain valid. Remove the old session lifetime setting. Users must sign in again after this upgrade.
 
 Do not run mixed versions against one database. The current ledgered baseline migrates in
 place only when retained user Message attribution agrees with each Conversation source and
@@ -155,5 +154,3 @@ Update clients before bringing the new replicas online.
 Choose a source with [Connect your tools](/integrations/overview), then [ask a question or investigate an Incident](/getting-started/run-your-first-investigation). Use
 [Configuration](/self-hosting/configuration) for supported settings and
 [Troubleshooting](/self-hosting/troubleshooting) when a verification step fails.
-
-After upgrading to fixed browser session limits, Users must sign in again. Remove any old session lifetime setting.

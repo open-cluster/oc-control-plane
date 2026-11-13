@@ -410,13 +410,16 @@ func TestSessionCreationMigrationInvalidatesOnlyLegacySessions(t *testing.T) {
 			INSERT INTO app_user (issuer, subject, email, display_name)
 			VALUES ('local', 'owner', 'owner@example.test', 'Owner') RETURNING user_id
 		), tenant AS (
-			INSERT INTO organization (display_name) VALUES ('Operations') RETURNING org_id
+			INSERT INTO organization (display_name, created_by) VALUES ('Operations', 'test') RETURNING org_id
 		), member AS (
 			INSERT INTO organization_membership (org_id, user_id, role)
 			SELECT org_id, user_id, 'admin' FROM tenant CROSS JOIN person
 		), verifier AS (
 			INSERT INTO local_password (user_id, password_hash)
 			SELECT user_id, 'existing encoded password verifier' FROM person
+		), recorded AS (
+			INSERT INTO audit_event (event_id, org_id, actor_kind, action, outcome)
+			SELECT gen_random_uuid(), org_id, 1, 'session.sign-in-completed', 1 FROM tenant
 		)
 		INSERT INTO session (credential_digest, user_id, expires_at)
 		SELECT decode(repeat('00', 32), 'hex'), user_id, now()+interval '30 days' FROM person`); err != nil {
@@ -430,7 +433,8 @@ func TestSessionCreationMigrationInvalidatesOnlyLegacySessions(t *testing.T) {
 	if err := conn.QueryRow(ctx, `SELECT NOT EXISTS (SELECT 1 FROM session)
 		AND EXISTS (SELECT 1 FROM app_user)
 		AND EXISTS (SELECT 1 FROM organization_membership)
-		AND EXISTS (SELECT 1 FROM local_password)`).Scan(&preserved); err != nil || !preserved {
+		AND EXISTS (SELECT 1 FROM local_password)
+		AND EXISTS (SELECT 1 FROM audit_event WHERE action='session.sign-in-completed')`).Scan(&preserved); err != nil || !preserved {
 		t.Fatalf("legacy session invalidation or identity preservation failed: %v", err)
 	}
 	if versions, err := db.Migrate(ctx); err != nil || len(versions) != 0 {
