@@ -146,9 +146,15 @@ func apiRouter(process assembled) (http.Handler, error) {
 			config.EnvSealingKeyFile, strings.Join(bearing, ", "))
 	}
 
-	identities, err := authHandlers(process)
-	if err != nil {
-		return nil, err
+	identities := identity.Handlers{
+		Database:         process.database,
+		Logger:           process.logger,
+		OIDC:             identity.NewOIDC(),
+		OIDCIssuer:       cfg.OIDCIssuer,
+		OIDCClientID:     cfg.OIDCClientID,
+		OIDCClientSecret: cfg.OIDCClientSecret,
+		PublicURL:        cfg.PublicURL,
+		SessionLifetime:  cfg.SessionLifetime,
 	}
 	protected, err := api.Handlers{
 		Database:                process.database,
@@ -168,7 +174,7 @@ func apiRouter(process assembled) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("assembling the API surface: %w", err)
 	}
-	authentication := identities.Authentication(cfg.PublicURL)
+	authentication := identities.Authentication()
 	mux := http.NewServeMux()
 	mux.Handle("POST "+identity.Base+"/auth/local/bootstrap", authentication.LocalBootstrap)
 	mux.Handle("POST "+identity.Base+"/auth/local/sign-in", authentication.LocalSignIn)
@@ -177,22 +183,6 @@ func apiRouter(process assembled) (http.Handler, error) {
 	mux.Handle("DELETE "+identity.Base+"/session", authentication.SignOut)
 	mux.Handle("/api/", protected)
 	return correlation.Middleware(mux), nil
-}
-
-func authHandlers(process assembled) (identity.Handlers, error) {
-	cfg := process.config
-	handlers := identity.Handlers{
-		Database:         process.database,
-		Logger:           process.logger,
-		OIDC:             identity.NewOIDC(),
-		OIDCIssuer:       cfg.OIDCIssuer,
-		OIDCClientID:     cfg.OIDCClientID,
-		OIDCClientSecret: cfg.OIDCClientSecret,
-		PublicURL:        cfg.PublicURL,
-		SessionLifetime:  cfg.SessionLifetime,
-	}
-
-	return handlers, nil
 }
 
 func webhookRouter(process assembled) http.Handler {

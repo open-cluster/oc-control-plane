@@ -99,7 +99,7 @@ var estateReads = []Permission{
 var granted = map[Role]map[Permission]bool{
 	Admin: setOf(allPermissions...),
 
-	Editor: setOf(append(append([]Permission(nil), estateReads...),
+	Editor: setOf(slices.Concat(estateReads, []Permission{
 		IntegrationVerify,
 		IntegrationUpdate,
 		IncidentMerge,
@@ -108,7 +108,7 @@ var granted = map[Role]map[Permission]bool{
 		InvestigationCancel,
 		ConversationWrite,
 		PostmortemWrite,
-	)...),
+	})...),
 
 	Viewer: setOf(estateReads...),
 }
