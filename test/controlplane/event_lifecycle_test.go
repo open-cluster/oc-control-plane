@@ -9,8 +9,58 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
+
+func TestLiveEventStreamClosesWhenSessionAccessEnds(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		sql  string
+	}{
+		{"expiry", `UPDATE session SET expires_at=now() WHERE credential_digest=$1`},
+		{"membership removal", `DELETE FROM organization_membership
+			WHERE user_id=(SELECT user_id FROM session WHERE credential_digest=$1)`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			plane, _ := agentPlane(t, &blockingAgentMain{})
+			_, turn := plane.openConversation(t, "access change", "investigate checkout")
+			response := openEventStream(t, plane, turn, "")
+			defer func() { _ = response.Body.Close() }()
+			conn, err := pgx.Connect(t.Context(), plane.dsn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = conn.Close(context.Background()) }()
+			digest := session.Digest(session.Token(plane.sessionCookie))
+			if tag, err := conn.Exec(t.Context(), test.sql, digest); err != nil || tag.RowsAffected() != 1 {
+				t.Fatalf("ending access: %v, %v", tag, err)
+			}
+			done := make(chan error, 1)
+			go func() {
+				_, err := io.Copy(io.Discard, response.Body)
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(51 * time.Second):
+				t.Fatal("stream stayed open after access ended")
+			}
+			var status int16
+			if err := conn.QueryRow(t.Context(), `SELECT status FROM investigation WHERE investigation_id=$1`, turn).Scan(&status); err != nil {
+				t.Fatal(err)
+			}
+			if status != int16(investigation.StatusRunning) {
+				t.Fatalf("Investigation status = %d after stream closure", status)
+			}
+		})
+	}
+}
 
 func TestEventStreamClosesAfterTerminalCursor(t *testing.T) {
 	plane, _ := agentPlane(t, &blockingAgentMain{})
