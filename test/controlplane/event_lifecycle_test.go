@@ -29,6 +29,19 @@ func TestLiveEventStreamClosesWhenSessionAccessEnds(t *testing.T) {
 			_, turn := plane.openConversation(t, "access change", "investigate checkout")
 			response := openEventStream(t, plane, turn, "")
 			defer func() { _ = response.Body.Close() }()
+			scanner := bufio.NewScanner(response.Body)
+			var cursor string
+			for scanner.Scan() {
+				if strings.HasPrefix(scanner.Text(), "id: ") {
+					cursor = strings.TrimPrefix(scanner.Text(), "id: ")
+				}
+				if scanner.Text() == "" && cursor != "" {
+					break
+				}
+			}
+			if cursor == "" {
+				t.Fatalf("stream did not deliver an event before access ended: %v", scanner.Err())
+			}
 			conn, err := pgx.Connect(t.Context(), plane.dsn)
 			if err != nil {
 				t.Fatal(err)
@@ -57,6 +70,25 @@ func TestLiveEventStreamClosesWhenSessionAccessEnds(t *testing.T) {
 			}
 			if status != int16(investigation.StatusRunning) {
 				t.Fatalf("Investigation status = %d after stream closure", status)
+			}
+			if test.name == "expiry" {
+				identity := &identityPlane{api: plane.api}
+				signedIn := identity.call(t, http.MethodPost, plane.base(surfaceOrg)+"/auth/local/sign-in", map[string]string{
+					"email":    "admin@example.test",
+					"password": "temporary integration test administrator password",
+				})
+				plane.sessionCookie = sessionCookie(t, signedIn)
+				code, body := plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/investigations/"+turn+"/cancel", nil)
+				if code != http.StatusOK {
+					t.Fatalf("cancel after signing in = %d: %s", code, body)
+				}
+				replay := openEventStream(t, plane, turn, "", http.Header{"Last-Event-Id": {cursor}})
+				defer func() { _ = replay.Body.Close() }()
+				events, err := io.ReadAll(replay.Body)
+				if err != nil || !strings.Contains(string(events), "event: cancelled") ||
+					strings.Contains(string(events), "id: "+cursor+"\n") {
+					t.Fatalf("replay after signing in = %q: %v", events, err)
+				}
 			}
 		})
 	}
