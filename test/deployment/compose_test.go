@@ -66,21 +66,33 @@ func TestHelmRequiresAnExplicitPublicOrigin(t *testing.T) {
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skip("Helm CLI is unavailable")
 	}
-	command := exec.Command("helm", "template", "opencluster", "deploy/helm/opencluster")
+	command := exec.Command("helm", "template", "opencluster", "deploy/helm/opencluster",
+		"--set", "image.repository=registry.example.com/opencluster",
+		"--set", "image.tag=v0.1.0")
 	command.Dir = "../.."
 	output, err := command.CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "server.publicURL") {
 		t.Fatalf("chart must require the public origin: %v: %s", err, output)
 	}
 	command = exec.Command("helm", "template", "opencluster", "deploy/helm/opencluster",
+		"--set", "server.publicURL=https://console.example.com")
+	command.Dir = "../.."
+	output, err = command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "image.repository") {
+		t.Fatalf("chart must require a release image: %v: %s", err, output)
+	}
+	command = exec.Command("helm", "template", "opencluster", "deploy/helm/opencluster",
 		"--set", "server.publicURL=https://console.example.com",
+		"--set", "image.repository=registry.example.com/opencluster",
+		"--set", "image.tag=v0.1.0",
 		"--set", "github.appID=12345")
 	command.Dir = "../.."
 	output, err = command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("rendering with public origin: %v: %s", err, output)
 	}
-	for _, expected := range []string{"value: \"https://console.example.com\"", "containerPort: 8081", "port: 8081"} {
+	for _, expected := range []string{"value: \"https://console.example.com\"", "containerPort: 8081", "port: 8081",
+		"registry.example.com/opencluster:v0.1.0", "imagePullPolicy: IfNotPresent"} {
 		if !strings.Contains(string(output), expected) {
 			t.Errorf("rendered deployment is missing %q", expected)
 		}

@@ -137,15 +137,34 @@ func TestPolicyManagesOnlyAuditRetention(t *testing.T) {
 	if refused.status != http.StatusBadRequest {
 		t.Fatalf("writable session lifetime = %d: %s", refused.status, refused.body)
 	}
-	updated := plane.call(t, http.MethodPut, url,
-		map[string]any{"auditRetentionDays": 45}, asSession(token))
-	if updated.status != http.StatusOK {
-		t.Fatalf("audit retention update = %d: %s", updated.status, updated.body)
+	for _, test := range []struct {
+		body any
+		want int
+	}{
+		{map[string]any{"auditRetentionDays": 365}, http.StatusOK},
+		{map[string]any{"auditRetentionDays": 366}, http.StatusBadRequest},
+		{map[string]any{"auditRetentionDays": -1}, http.StatusBadRequest},
+		{map[string]any{}, http.StatusBadRequest},
+		{map[string]any{"auditRetentionDays": nil}, http.StatusBadRequest},
+	} {
+		response := plane.call(t, http.MethodPut, url, test.body, asSession(token))
+		if response.status != test.want {
+			t.Fatalf("policy %v = %d, want %d: %s", test.body, response.status, test.want, response.body)
+		}
 	}
-	var policy map[string]int
-	decodeAnswer(t, updated, &policy)
-	if len(policy) != 1 || policy["auditRetentionDays"] != 45 {
-		t.Fatalf("effective policy = %+v", policy)
+	for _, days := range []int{365, 0} {
+		if days == 0 {
+			disabled := plane.call(t, http.MethodPut, url, map[string]int{"auditRetentionDays": 0}, asSession(token))
+			if disabled.status != http.StatusOK {
+				t.Fatalf("disabling pruning = %d: %s", disabled.status, disabled.body)
+			}
+		}
+		response := plane.call(t, http.MethodGet, url, nil, asSession(token))
+		var policy map[string]int
+		decodeAnswer(t, response, &policy)
+		if response.status != http.StatusOK || len(policy) != 1 || policy["auditRetentionDays"] != days {
+			t.Fatalf("effective policy = %d, %+v, want %d days", response.status, policy, days)
+		}
 	}
 }
 

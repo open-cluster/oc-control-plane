@@ -27,7 +27,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: control-plane
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: {{ printf "%s:%s" (required "Set image.repository to the control-plane release repository" .Values.image.repository) (required "Set image.tag to the control-plane release tag" .Values.image.tag) | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             - name: OC_SERVER_ADDRESS

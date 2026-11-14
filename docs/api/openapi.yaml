@@ -361,6 +361,7 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
       operationId: replaceOrganizationPolicy
       summary: Replace organization policy
+      description: Choose 1 to 365 days of automatic Audit Event retention or 0 to disable automatic pruning. New Organizations default to 90 days.
       tags:
         - Policy
       requestBody:
@@ -2261,7 +2262,8 @@ components:
         auditRetentionDays:
           type: integer
           minimum: 0
-          maximum: 2147483647
+          maximum: 365
+          description: Days to retain Audit Events. Use 0 to disable automatic pruning.
     PolicyUpdateRequest:
       type: object
       additionalProperties: false
@@ -2271,7 +2273,8 @@ components:
         auditRetentionDays:
           type: integer
           minimum: 0
-          maximum: 2147483647
+          maximum: 365
+          description: Days to retain Audit Events. Use 0 to disable automatic pruning.
     IntegrationType:
       type: object
       additionalProperties: false

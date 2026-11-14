@@ -289,7 +289,7 @@ func (p *Database) OrganizationAuditRetention(
 		  FROM organization WHERE org_id = $1`,
 		organization).Scan(&retention)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, nil
+		return 0, ErrUnknownOrganization
 	}
 	if err != nil {
 		return 0, fmt.Errorf("reading audit retention: %w", err)
@@ -308,7 +308,10 @@ func (p *Database) SetOrganizationAuditRetention(
 				SELECT audit_retention_days
 				  FROM organization WHERE org_id = $1 FOR UPDATE`,
 				organization).Scan(&beforeRetention)
-			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return struct{}{}, audit.Target{}, nil, ErrUnknownOrganization
+			}
+			if err != nil {
 				return struct{}{}, audit.Target{}, nil, fmt.Errorf("reading the policy: %w", err)
 			}
 

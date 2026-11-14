@@ -56,8 +56,8 @@ vuln:
 	cd $(HARNESS_MODULE) && govulncheck ./...
 
 licenses:
-	go-licenses check ./... $(LICENSE_FLAGS)
-	cd $(HARNESS_MODULE) && go-licenses check ./... $(LICENSE_FLAGS)
+	GOROOT="$$(go env GOROOT)" go-licenses check ./... $(LICENSE_FLAGS)
+	cd $(HARNESS_MODULE) && GOROOT="$$(go env GOROOT)" go-licenses check ./... $(LICENSE_FLAGS)
 
 secrets-current:
 	gitleaks dir . --config .gitleaks.toml --redact --exit-code 1
@@ -67,9 +67,11 @@ secrets-history:
 
 deploy-verify:
 	docker compose -f deploy/compose/compose.yaml config --no-interpolate > /dev/null
-	helm lint ./deploy/helm/opencluster --set server.publicURL=https://opencluster.example.com
+	helm lint ./deploy/helm/opencluster --set server.publicURL=https://opencluster.example.com \
+		--set image.repository=registry.example.com/opencluster --set image.tag=v0.1.0
 	helm template opencluster ./deploy/helm/opencluster \
 		--set server.publicURL=https://opencluster.example.com \
+		--set image.repository=registry.example.com/opencluster --set image.tag=v0.1.0 \
 		--set relay.enabled=true \
 		--set relay.tls.existingSecret=opencluster-relay-tls \
 		--set-json 'relay.spkiPins=["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="]' \
