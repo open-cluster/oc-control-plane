@@ -56,8 +56,8 @@ vuln:
 	cd $(HARNESS_MODULE) && govulncheck ./...
 
 licenses:
-	go-licenses check ./... $(LICENSE_FLAGS)
-	cd $(HARNESS_MODULE) && go-licenses check ./... $(LICENSE_FLAGS)
+	GOROOT="$$(go env GOROOT)" go-licenses check ./... $(LICENSE_FLAGS)
+	cd $(HARNESS_MODULE) && GOROOT="$$(go env GOROOT)" go-licenses check ./... $(LICENSE_FLAGS)
 
 secrets-current:
 	gitleaks dir . --config .gitleaks.toml --redact --exit-code 1
