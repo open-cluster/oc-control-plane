@@ -661,6 +661,10 @@ paths:
       <<: *privileged-read
       operationId: streamInvestigationEvents
       summary: Stream investigation events
+      description: >
+        OpenCluster periodically checks session validity and access to the Investigation.
+        The stream closes when access ends. After signing in again, reconnect with the last
+        event identifier to resume. The Investigation continues if the connection closes.
       tags: [Investigations]
       responses:
         "200":

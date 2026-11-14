@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 )
 
 type EventType int16
@@ -225,6 +226,8 @@ const (
 	eventHeartbeat      = 15 * time.Second
 	eventWriteTimeout   = 10 * time.Second
 	eventStreamLifetime = investigationTimeout + time.Minute
+	eventAuthInterval   = 30 * time.Second
+	eventAuthTimeout    = 5 * time.Second
 )
 
 func (h Handlers) streamEvents(writer http.ResponseWriter, request *http.Request) {
@@ -235,12 +238,11 @@ func (h Handlers) streamEvents(writer http.ResponseWriter, request *http.Request
 		defer stop()
 		request = request.WithContext(ctx)
 	}
-	_ = h.caller(request)
 	organization, id, ok := h.addressed(writer, request)
 	if !ok {
 		return
 	}
-	if h.Store == nil {
+	if h.Store == nil || h.Resolve == nil {
 		writeJSON(writer, http.StatusServiceUnavailable, errorView{
 			Error: "this deployment does not serve the investigation event stream"})
 		return
@@ -253,6 +255,7 @@ func (h Handlers) streamEvents(writer http.ResponseWriter, request *http.Request
 		return
 	}
 
+	nextAuth := time.Now().Add(eventAuthInterval)
 	readCtx, cancelRead := context.WithTimeout(request.Context(), readTimeout)
 	found, err := h.Store.Investigation(readCtx, organization, id)
 	cancelRead()
@@ -279,19 +282,36 @@ func (h Handlers) streamEvents(writer http.ResponseWriter, request *http.Request
 	}
 	defer func() { _ = controller.SetWriteDeadline(time.Now().Add(eventWriteTimeout)) }()
 
-	h.follow(request, writer, controller, organization, found, after)
+	h.follow(request, writer, controller, organization, found, after, nextAuth)
 }
 
 func (h Handlers) follow(
 	request *http.Request, writer http.ResponseWriter, controller *http.ResponseController,
-	organization uuid.UUID, found Investigation, after int64,
+	organization uuid.UUID, found Investigation, after int64, nextAuth time.Time,
 ) {
 	ctx := request.Context()
 	deadline := time.Now().Add(eventStreamLifetime)
 	lastHeartbeat := time.Now()
+	original := h.caller(request)
+	stillAuthorized := func() bool {
+		now := time.Now()
+		if ctx.Err() != nil || !now.Before(deadline) {
+			return false
+		}
+		if now.Before(nextAuth) {
+			return true
+		}
+		nextAuth = now.Add(eventAuthInterval)
+		check, cancel := context.WithTimeout(ctx, eventAuthTimeout)
+		defer cancel()
+		current, err := h.Resolve(request.WithContext(check))
+		return err == nil && check.Err() == nil && time.Now().Before(deadline) &&
+			current.UserID() == original.UserID() && current.SessionID() == original.SessionID() &&
+			current.Organization() == organization && current.HavePermission(authz.InvestigationRead)
+	}
 
 	for {
-		if ctx.Err() != nil || time.Now().After(deadline) {
+		if !stillAuthorized() {
 			return
 		}
 		readCtx, cancel := context.WithTimeout(request.Context(), readTimeout)
@@ -303,6 +323,9 @@ func (h Handlers) follow(
 				slog.String("error", err.Error()))
 			return
 		}
+		if !stillAuthorized() {
+			return
+		}
 		if len(events) == 0 {
 			if found.Status != StatusRunning {
 				return
@@ -310,7 +333,7 @@ func (h Handlers) follow(
 			readCtx, cancel = context.WithTimeout(ctx, readTimeout)
 			found, err = h.Store.Investigation(readCtx, organization, found.ID)
 			cancel()
-			if err != nil {
+			if err != nil || !stillAuthorized() {
 				return
 			}
 			if found.Status != StatusRunning {

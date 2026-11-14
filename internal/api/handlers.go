@@ -116,6 +116,7 @@ func (h Handlers) Routes() []authz.Route {
 		Logger:  h.Logger,
 	}.Routes()...)
 	routes = append(routes, investigation.Handlers{
+		Resolve:       h.Identity.Resolve,
 		Store:         h.Database,
 		Runner:        h.Investigations,
 		StreamContext: h.StreamContext,

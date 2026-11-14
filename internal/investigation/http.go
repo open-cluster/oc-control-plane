@@ -25,6 +25,7 @@ const (
 )
 
 type Handlers struct {
+	Resolve       func(*http.Request) (authz.Principal, error)
 	Store         HTTPStore
 	Runner        *Runner
 	Logger        *slog.Logger
