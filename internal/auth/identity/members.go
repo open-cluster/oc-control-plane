@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/open-cluster/oc-control-plane/internal/api/listing"
@@ -86,11 +87,10 @@ func (h Handlers) removeMember(w http.ResponseWriter, r *http.Request) {
 }
 
 type policyRequest struct {
-	AuditRetentionDays int `json:"auditRetentionDays"`
+	AuditRetentionDays *int `json:"auditRetentionDays"`
 }
 
 func (h Handlers) readPolicy(w http.ResponseWriter, r *http.Request) {
-	_ = h.caller(r)
 	organization := h.organization(r)
 	ctx, cancel := contextWithTimeout(r, readTimeout)
 	defer cancel()
@@ -111,17 +111,21 @@ func (h Handlers) writePolicy(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	if body.AuditRetentionDays < 0 {
-		writeJSON(w, http.StatusBadRequest, errorView{Error: "auditRetentionDays must not be negative"})
+	if body.AuditRetentionDays == nil || *body.AuditRetentionDays < 0 ||
+		*body.AuditRetentionDays > audit.MaxRetentionDays {
+		writeJSON(w, http.StatusBadRequest, errorView{
+			Error: fmt.Sprintf("auditRetentionDays must be a whole number from 0 to %d", audit.MaxRetentionDays),
+		})
 		return
 	}
 	ctx, cancel := contextWithTimeout(r, readTimeout)
 	defer cancel()
-	if err := h.Database.SetOrganizationAuditRetention(ctx, principal, organization, body.AuditRetentionDays); err != nil {
+	days := *body.AuditRetentionDays
+	if err := h.Database.SetOrganizationAuditRetention(ctx, principal, organization, days); err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, policyView(body))
+	writeJSON(w, http.StatusOK, policyView{AuditRetentionDays: days})
 }
 
 func (h Handlers) auditEvents(writer http.ResponseWriter, request *http.Request) {

@@ -197,7 +197,13 @@ Local authentication is always available. OIDC is enabled when its issuer, clien
 client secret are all configured. A partial OIDC configuration stops startup. Relay is
 optional and listens separately from HTTP.
 Customer Relays initiate outbound connections and pin the configured control-plane key.
-Organizations start with 90 days of audit retention and can configure it independently.
+New Organizations retain Audit Events for 90 days. Admins can set automatic retention
+to 1–365 days or use 0 to disable automatic pruning. [Manage your Organization policy](/api-reference/policy/replace-organization-policy).
+
+Before upgrading, review any policy longer than 365 days. Use the previous version to
+set it to 0 to keep existing records without automatic pruning, or choose a shorter
+retention period after reviewing which events would be removed. OpenCluster pauses the
+upgrade until all policies are within range.
 Browser sessions have fixed idle and maximum lifetimes. If you are upgrading from a version with a session lifetime setting, remove it from your deployment configuration. The environment setting has no effect and the old YAML setting prevents startup.
 
 ## Model provider

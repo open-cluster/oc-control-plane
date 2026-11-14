@@ -88,6 +88,7 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 		"0004_tool_run_observation",
 		"0006_disconnect_integrations",
 		"0007_browser_session_creation",
+		"0008_bound_audit_retention",
 	}) {
 		t.Fatalf("applied migrations = %v", applied)
 	}
@@ -329,6 +330,7 @@ func TestCleanupMigrationValidatesAndConvertsPostmortemReviewers(t *testing.T) {
 		"0004_tool_run_observation",
 		"0006_disconnect_integrations",
 		"0007_browser_session_creation",
+		"0008_bound_audit_retention",
 	}) {
 		t.Fatalf("repaired reviewer migration applied %v: %v", applied, err)
 	}
@@ -400,6 +402,37 @@ VALUES ($1,'Organization A')`, org); err != nil {
 	}
 }
 
+func TestAuditRetentionMigrationRequiresAnExplicitDecisionForLongPolicies(t *testing.T) {
+	ctx := t.Context()
+	dsn := postgresDSN(t)
+	conn := baselineDatabase(t, ctx, dsn)
+	defer func() { _ = conn.Close(context.Background()) }()
+	var org uuid.UUID
+	if err := conn.QueryRow(ctx, `INSERT INTO organization (display_name, created_by, audit_retention_days)
+		VALUES ('Operations', 'test', 366) RETURNING org_id`).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	db := openDatabaseForTest(t, dsn)
+	if _, err := db.Migrate(ctx); err == nil || !strings.Contains(err.Error(), "audit retention exceeds 365 days") {
+		t.Fatalf("migration with long policy = %v", err)
+	}
+	if days, err := db.OrganizationAuditRetention(ctx, org); err != nil || days != 366 {
+		t.Fatalf("refused migration changed existing policy: %d, %v", days, err)
+	}
+	if _, err := conn.Exec(ctx, `UPDATE organization SET audit_retention_days=0 WHERE org_id=$1`, org); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if days, err := db.OrganizationAuditRetention(ctx, org); err != nil || days != 0 {
+		t.Fatalf("migration changed disabled pruning: %d, %v", days, err)
+	}
+	if _, err := conn.Exec(ctx, `UPDATE organization SET audit_retention_days=366 WHERE org_id=$1`, org); err == nil {
+		t.Fatal("database accepted retention above 365 days")
+	}
+}
+
 func TestSessionCreationMigrationInvalidatesOnlyLegacySessions(t *testing.T) {
 	ctx := t.Context()
 	dsn := postgresDSN(t)
@@ -457,6 +490,7 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 		"0004_tool_run_observation",
 		"0006_disconnect_integrations",
 		"0007_browser_session_creation",
+		"0008_bound_audit_retention",
 	}) {
 		t.Fatalf("fresh migration applied %v, want every schema migration", applied)
 	}

@@ -5,7 +5,7 @@ module github.com/open-cluster/oc-control-plane
 
 go 1.26.0
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 require (
 	github.com/OpenRouterTeam/go-sdk v0.9.63

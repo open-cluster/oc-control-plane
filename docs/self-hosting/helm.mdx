@@ -23,8 +23,10 @@ token. The first caller to reach an empty installation can claim its Admin accou
 
 ## Install
 
-For a new installation, create a values file with the released image, model provider,
-and model. Keep the deployment inaccessible to untrusted workloads until signup:
+Set `image.repository` to the registry repository you use for OpenCluster and
+`image.tag` to the release you want to deploy. The chart requires both values and
+defaults to `IfNotPresent`. Keep the deployment inaccessible to untrusted workloads
+until signup.
 
 `server.publicURL` must match the browser-facing origin. This API-only example uses a
 private port-forward at `http://localhost:8081`. If using a separate local frontend,
@@ -34,7 +36,6 @@ configure its same-origin API proxy and set this URL to the frontend origin inst
 image:
   repository: IMAGE_REPOSITORY
   tag: VERSION
-  pullPolicy: IfNotPresent
 server:
   publicURL: http://localhost:8081
 model:

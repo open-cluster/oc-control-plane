@@ -1,9 +1,10 @@
 replicaCount: 1
 
 image:
-  repository: opencluster-control-plane
-  tag: dev
-  pullPolicy: Never
+  # Set both values to the registry repository and tag of your release.
+  repository: ""
+  tag: ""
+  pullPolicy: IfNotPresent
 
 database:
   existingSecret: opencluster-database
