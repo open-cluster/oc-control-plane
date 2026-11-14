@@ -16,8 +16,7 @@ or [Helm](/self-hosting/helm). Signup requires
 the configured same Origin even before a cookie exists. The Origin check protects browser
 requests, but does not establish deployment ownership.
 
-Normal product routes use the opaque `__Host-OC-SESSIONID` cookie. General bearer API
-tokens are not shipped in OSS v0.1. Unsafe cookie requests require the configured
+API requests use the browser session cookie. Unsafe requests require the configured
 same-origin `Origin`. Cross-origin and `Origin: null` requests are rejected.
 
 Browser sessions expire after 12 hours without renewal or seven days after sign-in, whichever comes first.
@@ -71,7 +70,7 @@ removal prevents authentication without deleting identity history.
 
 Logout deletes the current authorized session and clears the browser cookie. If a
 membership has been removed, the now-unusable cookie can still be cleared and the
-orphaned session expires through normal cleanup. Audit records follow the retention policy.
+orphaned session expires through normal cleanup.
 An absent or expired cookie can be cleared again. Logout still requires the configured
 Origin. When session revocation fails, logout returns an error and leaves the valid cookie
 intact so the user can retry.

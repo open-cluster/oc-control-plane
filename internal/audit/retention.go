@@ -9,6 +9,7 @@ import (
 )
 
 const (
+	MaxRetentionDays   = 365
 	pruneBatch         = 1000
 	maxBatchesPerSweep = 50
 )
