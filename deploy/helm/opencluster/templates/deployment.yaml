@@ -52,8 +52,6 @@ spec:
               value: {{ .Values.investigation.workers | quote }}
             - name: OC_MAX_PENDING_INVESTIGATIONS_PER_ORGANIZATION
               value: {{ .Values.investigation.maxPendingPerOrganization | quote }}
-            - name: OC_SESSION_LIFETIME_SECONDS
-              value: {{ .Values.sessionLifetimeSeconds | quote }}
             - name: OC_LOG_LEVEL
               value: {{ .Values.logLevel | default "info" | quote }}
             {{- if or .Values.github.appID .Values.github.clientID }}

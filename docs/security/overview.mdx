@@ -16,9 +16,12 @@ or [Helm](/self-hosting/helm). Signup requires
 the configured same Origin even before a cookie exists. The Origin check protects browser
 requests, but does not establish deployment ownership.
 
-Normal product routes use the opaque `__Host-oc_session` cookie. General bearer API
+Normal product routes use the opaque `__Host-OC-SESSIONID` cookie. General bearer API
 tokens are not shipped in OSS v0.1. Unsafe cookie requests require the configured
 same-origin `Origin`. Cross-origin and `Origin: null` requests are rejected.
+
+Browser sessions expire after 12 hours without renewal or seven days after sign-in, whichever comes first.
+Foreground activity can renew a session when your frontend supports [session refresh](/api-reference/sessions/refresh-the-current-session). Idle tabs and background requests do not renew it.
 
 Roles grant fixed Permissions inside an Organization. Missing authentication returns
 `401`, insufficient Permission returns `403`, and inaccessible Organizations and unknown
@@ -157,6 +160,6 @@ Store one-time webhook secrets securely. When an Admin rotates a secret, update 
 
 ## Using the API securely
 
-Sign in through local authentication or OIDC and use the issued session cookie for subsequent API requests. Keep cookie files private and treat them as credentials. Include an Origin header matching the deployment public URL on write requests, including when using generated request examples. The session determines your Organization and role.
+Sign in through local authentication or OIDC and use the issued session cookie for subsequent API requests. Treat the cookie as a credential. Include an Origin header matching the deployment public URL on write requests, including when using generated request examples. The session determines your Organization and role.
 
-For provider authorization, sign in and start Connect from the same browser session on the public HTTPS origin. Follow the returned authorization URL and keep that session open for the callback. A command-line cookie jar cannot authenticate a browser callback.
+For provider authorization, sign in and start Connect from the same browser session on the public HTTPS origin. Follow the returned authorization URL and keep that session open for the callback.

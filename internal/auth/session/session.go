@@ -12,8 +12,17 @@ import (
 	"github.com/google/uuid"
 )
 
-const CookieName = "__Host-oc_session"
-const tokenBytes = 32
+const CookieName = "__Host-OC-SESSIONID"
+const (
+	tokenBytes         = 32
+	sessionIdleTimeout = 12 * time.Hour
+	sessionMaxLifetime = 7 * 24 * time.Hour
+)
+
+// Lifetimes provides the idle and absolute windows for database expiry checks.
+func Lifetimes() (idle, maximum time.Duration) {
+	return sessionIdleTimeout, sessionMaxLifetime
+}
 
 var (
 	ErrUnknown = errors.New("session unknown")
@@ -23,8 +32,8 @@ var (
 type Token string
 
 type Session struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
+	ID uuid.UUID
+
 	ExpiresAt time.Time
 }
 
@@ -35,17 +44,6 @@ func NewToken() (Token, []byte, error) {
 	}
 	token := Token(base64.RawURLEncoding.EncodeToString(raw))
 	return token, Digest(token), nil
-}
-
-func Issue(userID uuid.UUID, lifetime time.Duration) (Token, []byte, Session, error) {
-	token, digest, err := NewToken()
-	if err != nil {
-		return "", nil, Session{}, err
-	}
-	now := time.Now().UTC()
-	return token, digest, Session{
-		UserID: userID, ExpiresAt: now.Add(lifetime),
-	}, nil
 }
 
 func Digest(token Token) []byte {

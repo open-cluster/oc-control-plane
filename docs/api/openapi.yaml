@@ -207,6 +207,47 @@ paths:
       description: Delete the current User's session and clear its cookie. Absent or expired cookies are cleared idempotently. Origin protection remains required; storage failure returns 503 without claiming sign-out succeeded.
       tags:
         - Sessions
+  /api/v1/session/refresh:
+    post:
+      security:
+        - SessionCookie: []
+      x-opencluster-access: authenticated
+      x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
+      x-opencluster-idempotency: not-supported
+      responses:
+        '200':
+          description: The effective expiration. A cookie is set only when the expiration changes.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - expiresAt
+                additionalProperties: false
+                properties:
+                  expiresAt:
+                    type: string
+                    format: date-time
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+      operationId: refreshSession
+      summary: Refresh the current session
+      description: |
+        Renew during recent foreground activity, at most once every 30 minutes per tab, with one request in flight. Let the browser manage the session cookie. JavaScript does not need access to the credential. Background polling and event streams do not renew sessions. A session expires after 12 hours without renewal or seven days after sign-in. On 401, preserve the current location and prompt for sign-in. A 503 indicates temporary unavailability.
+      tags:
+        - Sessions
   /api/v1/members:
     get:
       security:
@@ -1285,7 +1326,7 @@ components:
     SessionCookie:
       type: apiKey
       in: cookie
-      name: __Host-oc_session
+      name: __Host-OC-SESSIONID
     WebhookToken:
       type: apiKey
       in: header
@@ -2213,21 +2254,12 @@ components:
       type: object
       additionalProperties: false
       required:
-        - sessionLifetimeSeconds
         - auditRetentionDays
       properties:
-        sessionLifetimeSeconds:
-          type: integer
-          minimum: 300
-          maximum: 2592000
-          readOnly: true
         auditRetentionDays:
           type: integer
-          minimum: 1
-          maximum: 3650
-        auditRetentionEnforced:
-          type: boolean
-          readOnly: true
+          minimum: 0
+          maximum: 2147483647
     PolicyUpdateRequest:
       type: object
       additionalProperties: false
@@ -2236,8 +2268,8 @@ components:
       properties:
         auditRetentionDays:
           type: integer
-          minimum: 1
-          maximum: 3650
+          minimum: 0
+          maximum: 2147483647
     IntegrationType:
       type: object
       additionalProperties: false

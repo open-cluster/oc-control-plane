@@ -100,9 +100,8 @@ func (h Handlers) readPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, policyView{
-		SessionLifetimeSeconds: int(h.SessionLifetime.Seconds()),
-		AuditRetentionDays:     retention,
-		AuditRetentionEnforced: true})
+		AuditRetentionDays: retention,
+	})
 }
 
 func (h Handlers) writePolicy(w http.ResponseWriter, r *http.Request) {
@@ -122,10 +121,7 @@ func (h Handlers) writePolicy(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, policyView{
-		SessionLifetimeSeconds: int(h.SessionLifetime.Seconds()),
-		AuditRetentionDays:     body.AuditRetentionDays,
-		AuditRetentionEnforced: true})
+	writeJSON(w, http.StatusOK, policyView(body))
 }
 
 func (h Handlers) auditEvents(writer http.ResponseWriter, request *http.Request) {

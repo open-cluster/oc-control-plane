@@ -9,15 +9,11 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 )
 
 const (
 	defaultInvestigationWorkers                   = 8
 	defaultInvestigationMaxPendingPerOrganization = 100
-	defaultSessionLifetime                        = 12 * time.Hour
-	minimumSessionLifetime                        = 5 * time.Minute
-	maximumSessionLifetime                        = 30 * 24 * time.Hour
 )
 
 var SupportedEnvironmentKeys = []string{
@@ -30,7 +26,6 @@ var SupportedEnvironmentKeys = []string{
 	EnvLogLevel,
 	EnvOTLPEndpoint,
 
-	EnvSessionLifetimeSeconds,
 	EnvSealingKey,
 	EnvSealingKeyFile,
 	EnvOIDCIssuer,
@@ -74,7 +69,6 @@ const (
 	EnvPublicURL                              = "OC_PUBLIC_URL"
 	EnvLogLevel                               = "OC_LOG_LEVEL"
 	EnvOTLPEndpoint                           = "OC_OTLP_ENDPOINT"
-	EnvSessionLifetimeSeconds                 = "OC_SESSION_LIFETIME_SECONDS"
 	EnvSealingKey                             = "OC_ENCRYPTION_KEY"
 	EnvSealingKeyFile                         = "OC_ENCRYPTION_KEY_FILE"
 	EnvOIDCIssuer                             = "OC_OIDC_ISSUER"
@@ -134,7 +128,6 @@ type Config struct {
 
 	InvestigationWorkers     int
 	MaxPendingInvestigations int
-	SessionLifetime          time.Duration
 }
 
 func Load(lookup func(string) (string, bool)) (Config, error) {
@@ -147,7 +140,6 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		HTTPListenAddress:        ":8081",
 		InvestigationWorkers:     defaultInvestigationWorkers,
 		MaxPendingInvestigations: defaultInvestigationMaxPendingPerOrganization,
-		SessionLifetime:          defaultSessionLifetime,
 	}
 
 	if raw, _ := lookup(EnvLogLevel); strings.TrimSpace(raw) != "" {
@@ -224,28 +216,8 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		defaultInvestigationMaxPendingPerOrganization); err != nil {
 		return Config{}, err
 	}
-	var sessionLifetimeSeconds int
-	if sessionLifetimeSeconds, err = boundedInteger(lookup, EnvSessionLifetimeSeconds,
-		int(cfg.SessionLifetime.Seconds()), int(minimumSessionLifetime.Seconds()),
-		int(maximumSessionLifetime.Seconds())); err != nil {
-		return Config{}, err
-	}
-	cfg.SessionLifetime = time.Duration(sessionLifetimeSeconds) * time.Second
 
 	return cfg, nil
-}
-
-func boundedInteger(
-	lookup func(string) (string, bool), key string, fallback, minimum, maximum int,
-) (int, error) {
-	value, err := positiveInteger(lookup, key, fallback)
-	if err != nil {
-		return 0, err
-	}
-	if value < minimum || value > maximum {
-		return 0, fmt.Errorf("%s must be between %d and %d", key, minimum, maximum)
-	}
-	return value, nil
 }
 
 func positiveInteger(

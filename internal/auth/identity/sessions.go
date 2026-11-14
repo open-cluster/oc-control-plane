@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -23,18 +22,20 @@ func (h Handlers) issueSession(
 	user storage.User,
 	localPasswordHash string,
 ) error {
-	token, digest, issued, detail, err := h.prepareSession(request, user.ID)
+	token, digest, err := session.NewToken()
 	if err != nil {
 		return err
 	}
 	ctx, cancel := contextWithTimeout(request, readTimeout)
 	defer cancel()
 	actor := audit.Actor{Kind: audit.ActorUser, ID: user.ID.String(), DisplayName: displayNameOf(user)}
+	var issued session.Session
+	detail := audit.Detail{"requestId": correlation.From(request.Context())}
 	if localPasswordHash != "" {
-		_, err = h.Database.IssueLocalSession(ctx, organization, issued, digest, actor,
+		issued, err = h.Database.IssueLocalSession(ctx, organization, user.ID, digest, actor,
 			request.RemoteAddr, detail, localPasswordHash)
 	} else {
-		_, err = h.Database.IssueSession(ctx, organization, issued, digest, actor,
+		issued, err = h.Database.IssueSession(ctx, organization, user.ID, digest, actor,
 			request.RemoteAddr, detail)
 	}
 	if err != nil {
@@ -42,19 +43,6 @@ func (h Handlers) issueSession(
 	}
 	session.Set(writer, token, issued.ExpiresAt)
 	return nil
-}
-
-func (h Handlers) prepareSession(
-	request *http.Request,
-	userID uuid.UUID,
-) (session.Token, []byte, session.Session, audit.Detail, error) {
-	token, digest, issued, err := session.Issue(userID, h.SessionLifetime)
-	if err != nil {
-		return "", nil, session.Session{}, nil, err
-	}
-	detail := audit.Detail{"expiresAt": issued.ExpiresAt.Format(time.RFC3339),
-		"requestId": correlation.From(request.Context())}
-	return token, digest, issued, detail, nil
 }
 
 func (h Handlers) redirectURI() string {
@@ -90,6 +78,31 @@ func (h Handlers) session(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
 
 	writeJSON(writer, http.StatusOK, sessionViewOf(principal))
+}
+
+func (h Handlers) refreshSession(writer http.ResponseWriter, request *http.Request) {
+	writer.Header().Set("Cache-Control", "no-store")
+	principal := h.caller(request)
+	token, _ := session.FromRequest(request)
+	ctx, cancel := contextWithTimeout(request, readTimeout)
+	defer cancel()
+
+	expires, changed, err := h.Database.RefreshSession(ctx, principal, principal.Organization(), session.Digest(token))
+	if err != nil {
+		switch {
+		case errors.Is(err, session.ErrExpired):
+			writeJSON(writer, http.StatusUnauthorized, map[string]string{"error": "unauthorized", "reason": string(authz.ReasonSessionExpired)})
+		case errors.Is(err, session.ErrUnknown):
+			writeJSON(writer, http.StatusUnauthorized, map[string]string{"error": "unauthorized", "reason": string(authz.ReasonRejected)})
+		default:
+			writeJSON(writer, http.StatusServiceUnavailable, errorView{Error: "authentication unavailable"})
+		}
+		return
+	}
+	if changed {
+		session.Set(writer, token, expires)
+	}
+	writeJSON(writer, http.StatusOK, refreshView{ExpiresAt: expires.UTC()})
 }
 
 func (h Handlers) signOut(writer http.ResponseWriter, request *http.Request, principal authz.Principal) {

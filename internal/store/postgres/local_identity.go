@@ -30,7 +30,7 @@ type LocalIdentity struct {
 }
 
 func (p *Database) BootstrapLocalUser(
-	ctx context.Context, organizationName, email, displayName, passwordHash string, issued session.Session,
+	ctx context.Context, organizationName, email, displayName, passwordHash string,
 	digest []byte, sourceAddress string,
 ) (User, session.Session, error) {
 	transaction, err := p.pool.Begin(ctx)
@@ -78,12 +78,9 @@ func (p *Database) BootstrapLocalUser(
 		user.ID, passwordHash); err != nil {
 		return User{}, session.Session{}, fmt.Errorf("storing the first local password: %w", err)
 	}
-	issued.UserID = user.ID
-	if err = transaction.QueryRow(ctx, `
-		INSERT INTO session (credential_digest, user_id, expires_at)
-		VALUES ($1, $2, $3) RETURNING session_id`,
-		digest, issued.UserID, issued.ExpiresAt).Scan(&issued.ID); err != nil {
-		return User{}, session.Session{}, fmt.Errorf("issuing the bootstrap session: %w", err)
+	issued, err := insertSession(ctx, transaction, user.ID, digest)
+	if err != nil {
+		return User{}, session.Session{}, err
 	}
 	if err = writeEvent(ctx, transaction, audit.Event{
 		Actor: audit.System("deployment bootstrap"), Action: audit.ActionLocalBootstrapCompleted,

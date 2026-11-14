@@ -138,6 +138,11 @@ func (h Handlers) Routes() []authz.Route {
 			Handler: http.HandlerFunc(h.session),
 		},
 		{
+			Method:  http.MethodPost,
+			Pattern: Base + "/session/refresh",
+			Handler: http.HandlerFunc(h.refreshSession),
+		},
+		{
 			Method:     http.MethodGet,
 			Pattern:    Base + "/members",
 			Permission: authz.MemberRead,

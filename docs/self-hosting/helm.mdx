@@ -117,9 +117,7 @@ Back up PostgreSQL, disable any autoscaler that could restart old replicas, scal
 Deployment to zero, and wait for every old Pod to terminate. Do not use a rolling upgrade
 or run mixed versions against one database. Remove obsolete administrator token inputs,
 `credentials.bootstrapTokenKey`, and any `security.bootstrapTokenFile` YAML setting.
-Retain the existing database, encryption key, and other credentials. Existing accounts
-and sessions need no signup-specific schema migration or reset. Relay
-credentials are unchanged. The current ledgered baseline migrates only
+Retain the existing database, encryption key, and other credentials. Existing accounts and Relay credentials remain valid. Remove the old session lifetime setting. Users must sign in again after this upgrade. The current ledgered baseline migrates only
 when retained user Message attribution agrees with each Conversation source, every
 retained nonempty Investigation question has assigned user Messages, and any nonempty
 Postmortem reviewer is the UUID of an existing User. A failed check rolls back the migration

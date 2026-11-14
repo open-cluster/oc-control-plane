@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func secretFile(t *testing.T, value string) string {
@@ -75,9 +74,6 @@ func TestLoadUsesSafeDefaultsAndTheEssentialOSSSurface(t *testing.T) {
 		t.Fatalf("investigation defaults = workers %d pending %d",
 			cfg.InvestigationWorkers, cfg.MaxPendingInvestigations)
 	}
-	if cfg.SessionLifetime != 12*time.Hour {
-		t.Fatalf("session lifetime default = %v", cfg.SessionLifetime)
-	}
 	if cfg.ModelMaxOutputTokens != 0 {
 		t.Fatalf("model output limit override = %d", cfg.ModelMaxOutputTokens)
 	}
@@ -137,30 +133,6 @@ func TestLoadEnvironmentOverridesYAMLAndKeepsPublicOriginIndependent(t *testing.
 	cfg, err = Load(lookup(values))
 	if err != nil || cfg.HTTPListenAddress != "127.0.0.1:9092" || cfg.PublicURL != "https://console.example.com" {
 		t.Fatalf("listener override changed the public origin: %v", err)
-	}
-}
-
-func TestLoadSessionLifetimeFromEnvironment(t *testing.T) {
-	values := essentialEnvironment(t)
-	values[EnvSessionLifetimeSeconds] = "900"
-	cfg, err := Load(lookup(values))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.SessionLifetime != 15*time.Minute {
-		t.Fatalf("session lifetime = %v", cfg.SessionLifetime)
-	}
-}
-
-func TestLoadRejectsInvalidSessionLifetime(t *testing.T) {
-	for _, value := range []string{"0", "-1", "299", "2592001"} {
-		t.Run(value, func(t *testing.T) {
-			values := essentialEnvironment(t)
-			values[EnvSessionLifetimeSeconds] = value
-			if _, err := Load(lookup(values)); err == nil || !strings.Contains(err.Error(), EnvSessionLifetimeSeconds) {
-				t.Fatalf("loading lifetime %q returned %v", value, err)
-			}
-		})
 	}
 }
 
