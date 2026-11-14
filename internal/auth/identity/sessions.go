@@ -16,12 +16,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
-const noWayIn = "no way in is configured here"
-
-func nowPlus(d time.Duration) time.Time {
-	return time.Now().Add(d)
-}
-
 func (h Handlers) issueSession(
 	writer http.ResponseWriter,
 	request *http.Request,
@@ -29,7 +23,7 @@ func (h Handlers) issueSession(
 	user storage.User,
 	localPasswordHash string,
 ) error {
-	token, digest, issued, detail, err := h.prepareSession(request, organization, user.ID)
+	token, digest, issued, detail, err := h.prepareSession(request, user.ID)
 	if err != nil {
 		return err
 	}
@@ -52,17 +46,8 @@ func (h Handlers) issueSession(
 
 func (h Handlers) prepareSession(
 	request *http.Request,
-	organization uuid.UUID,
 	userID uuid.UUID,
 ) (session.Token, []byte, session.Session, audit.Detail, error) {
-	ctx, cancel := contextWithTimeout(request, readTimeout)
-	defer cancel()
-	if organization != uuid.Nil {
-		_, err := h.Database.OrganizationAuditRetention(ctx, organization)
-		if err != nil {
-			return "", nil, session.Session{}, nil, err
-		}
-	}
 	token, digest, issued, err := session.Issue(userID, h.SessionLifetime)
 	if err != nil {
 		return "", nil, session.Session{}, nil, err

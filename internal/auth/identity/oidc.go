@@ -198,7 +198,7 @@ func (c claims) displayName() string {
 }
 func (h Handlers) startDeploymentOIDCSignIn(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(h.OIDCIssuer) == "" {
-		writeJSON(w, http.StatusNotFound, errorView{Error: noWayIn})
+		writeJSON(w, http.StatusNotFound, errorView{Error: "OIDC sign-in is not configured"})
 		return
 	}
 	returnTo, ok := h.returnTarget(w, r.URL.Query().Get("returnTo"))
@@ -216,7 +216,7 @@ func (h Handlers) startDeploymentOIDCSignIn(w http.ResponseWriter, r *http.Reque
 		CodeVerifier: authorization.CodeVerifier,
 		Nonce:        authorization.Nonce,
 		ReturnTo:     returnTo,
-		ExpiresAt:    nowPlus(flowLifetime)}, authorization.State)
+		ExpiresAt:    time.Now().Add(flowLifetime)}, authorization.State)
 	if err != nil {
 		h.fail(w, r, err)
 		return

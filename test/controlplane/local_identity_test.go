@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -14,6 +15,36 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 )
+
+func TestIdentityRequestsRequireOneBoundedJSONValue(t *testing.T) {
+	plane := startIdentityPlane(t)
+	base := "http://" + plane.api + "/api/v1/auth/local/"
+	const bootstrap = `{"organizationName":"Operations","email":"admin@example.test","password":"initial administrator password"}`
+	const signIn = `{"email":"admin@example.test","password":"initial administrator password"}`
+	for _, test := range []struct {
+		name string
+		path string
+		body string
+		want int
+	}{
+		{"trailing bootstrap value", "bootstrap", bootstrap + " {}", http.StatusBadRequest},
+		{"valid bootstrap", "bootstrap", bootstrap + " \n", http.StatusCreated},
+		{"unknown field", "sign-in", `{"email":"admin@example.test","password":"initial administrator password","extra":true}`, http.StatusBadRequest},
+		{"second value", "sign-in", signIn + " {}", http.StatusBadRequest},
+		{"trailing garbage", "sign-in", signIn + " garbage", http.StatusBadRequest},
+		{"oversized whitespace", "sign-in", signIn + strings.Repeat(" ", 64<<10), http.StatusBadRequest},
+		{"valid sign-in", "sign-in", signIn + " \n", http.StatusOK},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := plane.call(t, http.MethodPost, base+test.path, nil, func(r *http.Request) {
+				r.Body = io.NopCloser(strings.NewReader(test.body))
+			})
+			if response.status != test.want {
+				t.Fatalf("%s = %d, want %d: %s", test.path, response.status, test.want, response.body)
+			}
+		})
+	}
+}
 
 type sessionBody struct {
 	User struct {

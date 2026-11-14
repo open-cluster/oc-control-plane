@@ -39,10 +39,14 @@ func listQuery(writer http.ResponseWriter, request *http.Request, spec listing.S
 }
 
 func decode(writer http.ResponseWriter, request *http.Request, into any) bool {
-	decoder := json.NewDecoder(io.LimitReader(request.Body, maxRequestBody))
+	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, maxRequestBody))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(into); err != nil {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: "the body is not valid JSON"})
+		return false
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: "the body must contain one bounded JSON object"})
 		return false
 	}
 	return true
@@ -185,19 +189,19 @@ type Authentication struct {
 	SignOut        http.Handler
 }
 
-func (h Handlers) Authentication(origin string) Authentication {
+func (h Handlers) Authentication() Authentication {
 	return Authentication{
 		LocalBootstrap: http.HandlerFunc(h.bootstrapLocalAdmin),
 		LocalSignIn:    http.HandlerFunc(h.localSignIn),
 		OIDCStart:      http.HandlerFunc(h.startDeploymentOIDCSignIn),
 		OIDCCallback:   http.HandlerFunc(h.completeDeploymentOIDCSignIn),
-		SignOut:        h.protectSignOut(origin),
+		SignOut:        h.protectSignOut(),
 	}
 }
 
-func (h Handlers) protectSignOut(origin string) http.Handler {
+func (h Handlers) protectSignOut() http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if !authz.CookieOriginAllowed(request, origin) {
+		if !authz.CookieOriginAllowed(request, h.PublicURL) {
 			writeJSON(writer, http.StatusForbidden, errorView{Error: "request origin is not allowed"})
 			return
 		}

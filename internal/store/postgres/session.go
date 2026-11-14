@@ -114,21 +114,17 @@ func issueSessionIn(
 }
 
 func (p *Database) SessionByToken(ctx context.Context, digest []byte) (SignedIn, error) {
-	return signedInFrom(ctx, p.pool, digest)
-}
-
-func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, error) {
 	var (
 		found    SignedIn
 		disabled *time.Time
 	)
-	err := on.QueryRow(ctx, `
+	err := p.pool.QueryRow(ctx, `
 		SELECT s.session_id, s.user_id, s.expires_at,
-		       u.email, u.issuer, u.display_name, u.disabled_at
+		       u.email, u.display_name, u.disabled_at
 		FROM session s JOIN app_user u ON u.user_id = s.user_id
 		WHERE s.credential_digest = $1`,
 		digest).Scan(&found.Session.ID, &found.Session.UserID, &found.Session.ExpiresAt,
-		&found.User.Email, &found.User.Issuer, &found.User.DisplayName, &disabled)
+		&found.User.Email, &found.User.DisplayName, &disabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SignedIn{}, session.ErrUnknown
 	}
@@ -147,7 +143,7 @@ func signedInFrom(ctx context.Context, on querier, digest []byte) (SignedIn, err
 		return found, session.ErrUnknown
 	}
 
-	membership, err := membershipOf(ctx, on, found.Session.UserID)
+	membership, err := membershipOf(ctx, p.pool, found.Session.UserID)
 	if errors.Is(err, ErrMembershipUnknown) {
 		return SignedIn{}, session.ErrUnknown
 	}

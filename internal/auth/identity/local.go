@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -52,14 +51,7 @@ func (h Handlers) bootstrapLocalAdmin(writer http.ResponseWriter, request *http.
 		return
 	}
 	var body localBootstrapRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, maxRequestBody))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil {
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: "the body is not valid JSON"})
-		return
-	}
-	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: "the body must contain one bounded JSON object"})
+	if !decode(writer, request, &body) {
 		return
 	}
 	email, ok := localEmail(writer, body.Email)
@@ -94,8 +86,7 @@ func (h Handlers) bootstrapLocalAdmin(writer http.ResponseWriter, request *http.
 		return
 	}
 
-	token, digest, issued, _, err := h.prepareSession(
-		request, uuid.UUID{}, uuid.Nil)
+	token, digest, issued, _, err := h.prepareSession(request, uuid.Nil)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
