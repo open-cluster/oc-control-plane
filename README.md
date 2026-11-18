@@ -187,6 +187,9 @@ make verify
 The full container-backed root-module suite runs packages sequentially to preserve
 shared test-container lifetimes. Race detection remains enabled.
 
+Run `go test -race ./internal/ai` to verify the AgentScope foundation against
+local provider fixtures. The tests require no model credentials.
+
 See [CONTRIBUTING.md](./CONTRIBUTING.md) before submitting changes.
 
 ## Documentation
