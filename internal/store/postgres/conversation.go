@@ -291,17 +291,24 @@ func appendMessage(
 	if err != nil {
 		return conversation.Message{}, err
 	}
+	return insertConversationMessage(ctx, transaction, organization, id, said, window, nil)
+}
+
+func insertConversationMessage(
+	ctx context.Context, transaction pgx.Tx, organization, id uuid.UUID,
+	said conversation.NewMessage, window conversation.Window, clientMessageID *uuid.UUID,
+) (conversation.Message, error) {
 	row := transaction.QueryRow(ctx, `
 		INSERT INTO conversation_message (conversation_id, org_id, sequence, role,
-		                                  author_id, author_name, text, window_from, window_until)
+		                                  author_id, author_name, text, window_from, window_until, client_message_id)
 		SELECT $1, $2,
 		       coalesce((SELECT max(sequence) FROM conversation_message
 		                  WHERE org_id = $2 AND conversation_id = $1), 0) + 1,
-		       $3, $4, $5, $6, $7, $8
+		       $3, $4, $5, $6, $7, $8, $9
 		RETURNING sequence, role, author_id, author_name, text, source_reference,
 		          investigation_id, created_at, window_from, window_until`,
 		id, organization, int16(said.Role),
-		said.AuthorID, said.AuthorName, said.Text, window.From, window.Until)
+		said.AuthorID, said.AuthorName, said.Text, window.From, window.Until, clientMessageID)
 	written, err := scanMessage(row)
 	if err != nil {
 		return conversation.Message{}, fmt.Errorf("appending a message: %w", err)
@@ -360,7 +367,7 @@ func (p *Database) OpenQueuedConversationTurn(
 		  JOIN conversation_message message
 		    ON message.org_id = conversation.org_id
 		   AND message.conversation_id = conversation.conversation_id
-		   AND message.investigation_id IS NULL AND message.role = 1
+		   AND message.investigation_id IS NULL AND message.client_message_id IS NULL AND message.role = 1
 		 WHERE NOT EXISTS (
 		       SELECT 1 FROM investigation
 		        WHERE investigation.org_id = conversation.org_id
@@ -433,7 +440,7 @@ func openTurn(
 
 	var from, until time.Time
 	if err = transaction.QueryRow(ctx, `SELECT window_from, window_until FROM conversation_message
-		WHERE org_id = $1 AND conversation_id = $2 AND investigation_id IS NULL AND role = 1
+		WHERE org_id = $1 AND conversation_id = $2 AND investigation_id IS NULL AND client_message_id IS NULL AND role = 1
 		ORDER BY sequence LIMIT 1`, organization, id).Scan(&from, &until); err != nil {
 		return conversation.Turn{}, false, err
 	}
@@ -462,7 +469,7 @@ func openTurn(
 	if _, err := transaction.Exec(ctx, `
 		UPDATE conversation_message
 		   SET investigation_id = $1
-		 WHERE org_id = $2 AND conversation_id = $3 AND investigation_id IS NULL
+		 WHERE org_id = $2 AND conversation_id = $3 AND investigation_id IS NULL AND client_message_id IS NULL
 		   AND role = 1 AND sequence <= $4`,
 		investigationID, organization, id, lastSequence); err != nil {
 		return conversation.Turn{}, false, fmt.Errorf("attaching queued messages: %w", err)
@@ -483,7 +490,7 @@ func queuedBatch(
 	rows, err := transaction.Query(ctx, `
 		SELECT sequence
 		  FROM conversation_message
-		 WHERE org_id = $1 AND conversation_id = $2 AND investigation_id IS NULL
+		 WHERE org_id = $1 AND conversation_id = $2 AND investigation_id IS NULL AND client_message_id IS NULL
 		   AND role = 1
 		 ORDER BY sequence LIMIT $3`, organization, id, maxQueuedMessages)
 	if err != nil {
@@ -607,7 +614,7 @@ func reserveQueuedMessage(ctx context.Context, tx pgx.Tx, organization uuid.UUID
 	}
 	var queued int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM conversation_message
-		WHERE org_id = $1 AND investigation_id IS NULL AND role = 1`, organization).Scan(&queued); err != nil {
+		WHERE org_id = $1 AND investigation_id IS NULL AND client_message_id IS NULL AND role = 1`, organization).Scan(&queued); err != nil {
 		return fmt.Errorf("counting queued Messages: %w", err)
 	}
 	if queued >= maxQueuedMessages {
@@ -633,7 +640,7 @@ func acceptedWindow(
 	}
 	var from, until *time.Time
 	err := tx.QueryRow(ctx, `SELECT window_from, window_until FROM conversation_message
-		WHERE org_id = $1 AND conversation_id = $2 AND investigation_id IS NULL AND role = 1
+		WHERE org_id = $1 AND conversation_id = $2 AND investigation_id IS NULL AND client_message_id IS NULL AND role = 1
 		ORDER BY sequence LIMIT 1`, org, id).Scan(&from, &until)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return conversation.Window{}, err

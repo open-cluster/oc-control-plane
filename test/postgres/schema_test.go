@@ -89,6 +89,7 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 		"0006_disconnect_integrations",
 		"0007_browser_session_creation",
 		"0008_bound_audit_retention",
+		"0009_agent_execution",
 	}) {
 		t.Fatalf("applied migrations = %v", applied)
 	}
@@ -331,6 +332,7 @@ func TestCleanupMigrationValidatesAndConvertsPostmortemReviewers(t *testing.T) {
 		"0006_disconnect_integrations",
 		"0007_browser_session_creation",
 		"0008_bound_audit_retention",
+		"0009_agent_execution",
 	}) {
 		t.Fatalf("repaired reviewer migration applied %v: %v", applied, err)
 	}
@@ -491,6 +493,7 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 		"0006_disconnect_integrations",
 		"0007_browser_session_creation",
 		"0008_bound_audit_retention",
+		"0009_agent_execution",
 	}) {
 		t.Fatalf("fresh migration applied %v, want every schema migration", applied)
 	}
@@ -503,6 +506,7 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 	}
 	defer func() { _ = connection.Close(ctx) }()
 	wantTables := []string{
+		"agent_checkpoint", "agent_execution",
 		"alert_event", "app_user", "audit_event", "change_event", "change_scope",
 		"conversation", "conversation_message", "incident", "integration",
 		"integration_connect_flow", "integration_installation", "investigation", "investigation_event",
@@ -536,7 +540,8 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 			FROM information_schema.columns WHERE table_schema='public' AND table_name='conversation' AND column_name='source'`,
 		`SELECT array_agg(column_name::text ORDER BY ordinal_position) =
 			ARRAY['conversation_id','org_id','sequence','role','author_id','author_name','text',
-			      'investigation_id','created_at','provider_message_id','source_reference','window_from','window_until']
+			      'investigation_id','created_at','provider_message_id','source_reference','window_from','window_until',
+			      'client_message_id']
 			FROM information_schema.columns WHERE table_schema='public' AND table_name='conversation_message'`,
 		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns
 			WHERE table_schema='public' AND table_name='conversation_message' AND column_name='actor_kind')`,
