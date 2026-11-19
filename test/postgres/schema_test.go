@@ -90,6 +90,7 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 		"0007_browser_session_creation",
 		"0008_bound_audit_retention",
 		"0009_agent_execution",
+		"0010_agent_recovery",
 	}) {
 		t.Fatalf("applied migrations = %v", applied)
 	}
@@ -333,6 +334,7 @@ func TestCleanupMigrationValidatesAndConvertsPostmortemReviewers(t *testing.T) {
 		"0007_browser_session_creation",
 		"0008_bound_audit_retention",
 		"0009_agent_execution",
+		"0010_agent_recovery",
 	}) {
 		t.Fatalf("repaired reviewer migration applied %v: %v", applied, err)
 	}
@@ -494,6 +496,7 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 		"0007_browser_session_creation",
 		"0008_bound_audit_retention",
 		"0009_agent_execution",
+		"0010_agent_recovery",
 	}) {
 		t.Fatalf("fresh migration applied %v, want every schema migration", applied)
 	}

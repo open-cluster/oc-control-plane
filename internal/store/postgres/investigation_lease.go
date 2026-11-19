@@ -13,33 +13,38 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
+const investigationWithoutNativeExecution = `NOT EXISTS (
+	SELECT 1 FROM agent_execution e WHERE e.org_id = i.org_id AND e.investigation_id = i.investigation_id)`
+
 func (p *Database) ClaimInvestigation(
 	ctx context.Context, claim investigation.Claim,
 ) (uuid.UUID, investigation.Investigation, bool, error) {
-	row := p.pool.QueryRow(ctx, `
-			UPDATE investigation
-			   SET lease_worker       = $1,
-			       lease_token        = gen_random_uuid(),
-			       lease_expires_at   = now() + $2::interval
-			 WHERE investigation_id = (
-			       SELECT waiting.investigation_id
-			         FROM investigation waiting
-			        WHERE waiting.status       = 1
-			          AND waiting.lease_worker = ''
-			        ORDER BY waiting.created_at, waiting.investigation_id
-			        LIMIT 1
-			        FOR UPDATE SKIP LOCKED)
+	var organization, id uuid.UUID
+	var claimed investigation.Investigation
+	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `
+			SELECT i.org_id, i.investigation_id FROM investigation i
+			 WHERE i.status = 1 AND i.lease_worker = '' AND `+investigationWithoutNativeExecution+`
+			 ORDER BY i.created_at, i.investigation_id LIMIT 1 FOR UPDATE SKIP LOCKED`).
+			Scan(&organization, &id); err != nil {
+			return err
+		}
+		// Native admission locks the same owner. Recheck with a fresh statement snapshot.
+		row := tx.QueryRow(ctx, `
+			UPDATE investigation i SET lease_worker = $3, lease_token = gen_random_uuid(),
+			       lease_expires_at = clock_timestamp() + $4::interval
+			 WHERE i.org_id = $1 AND i.investigation_id = $2 AND `+investigationWithoutNativeExecution+`
 			RETURNING org_id, lease_token, `+investigationColumns,
-		claim.Worker, claim.LeaseFor.String())
-
-	var organization uuid.UUID
-	claimed, err := scanClaimedInvestigation(row, &organization)
+			organization, id, claim.Worker, claim.LeaseFor.String())
+		var err error
+		claimed, err = scanClaimedInvestigation(row, &organization)
+		return err
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.UUID{}, investigation.Investigation{}, false, nil
+		return uuid.Nil, investigation.Investigation{}, false, nil
 	}
 	if err != nil {
-		return uuid.UUID{}, investigation.Investigation{}, false,
-			fmt.Errorf("claiming an investigation: %w", err)
+		return uuid.Nil, investigation.Investigation{}, false, fmt.Errorf("claiming an investigation: %w", err)
 	}
 	return organization, claimed, true, nil
 }

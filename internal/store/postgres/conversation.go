@@ -609,12 +609,26 @@ func scanMessage(row scanned) (conversation.Message, error) {
 const maxQueuedMessages = 100
 
 func reserveQueuedMessage(ctx context.Context, tx pgx.Tx, organization uuid.UUID) error {
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, organization.String()); err != nil {
+	if err := lockConversationQueue(ctx, tx, organization); err != nil {
+		return err
+	}
+	return checkConversationQueueCapacity(ctx, tx, organization)
+}
+
+func lockConversationQueue(ctx context.Context, tx pgx.Tx, org uuid.UUID) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, org.String()); err != nil {
 		return fmt.Errorf("locking organization Message capacity: %w", err)
 	}
+	return nil
+}
+
+func checkConversationQueueCapacity(ctx context.Context, tx pgx.Tx, organization uuid.UUID) error {
 	var queued int
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM conversation_message
-		WHERE org_id = $1 AND investigation_id IS NULL AND client_message_id IS NULL AND role = 1`, organization).Scan(&queued); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT
+	    (SELECT count(*) FROM conversation_message
+	        WHERE org_id = $1 AND investigation_id IS NULL AND client_message_id IS NULL AND role = 1) +
+	    (SELECT count(*) FROM agent_execution WHERE org_id = $1 AND status = 'queued' AND conversation_id IS NOT NULL)`,
+		organization).Scan(&queued); err != nil {
 		return fmt.Errorf("counting queued Messages: %w", err)
 	}
 	if queued >= maxQueuedMessages {

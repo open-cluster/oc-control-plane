@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/open-cluster/oc-control-plane/internal/ai"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
@@ -49,6 +50,8 @@ type Options struct {
 	Version           string
 	OnListen          func(net.Addr)
 	Agent             investigation.Agent
+	PrepareExecution  ai.PrepareExecution
+	ExecutionWake     <-chan struct{}
 	Completer         agent.Completer
 	ModelEffort       string
 	ModelBaseURL      string
@@ -144,7 +147,9 @@ func Run(
 
 	investigationAgent := options.Agent
 	var configuredAgent *agent.Agent
-	if investigationAgent == nil && cfg.ModelProvider != "" {
+	if options.PrepareExecution != nil {
+		investigationAgent = nil
+	} else if investigationAgent == nil && cfg.ModelProvider != "" {
 		if configuredAgent, err = modelBoundary(cfg, logger, options); err != nil {
 			return err
 		}
@@ -177,6 +182,8 @@ func Run(
 		catalog:           catalog,
 		sealer:            sealer,
 		investigations:    investigations,
+		prepareExecution:  options.PrepareExecution,
+		executionWake:     options.ExecutionWake,
 		onListen:          options.OnListen,
 		inventoryInterval: inventoryInterval(options.InventoryInterval),
 		slackAPIURL:       options.SlackAPIURL,
@@ -246,6 +253,8 @@ type assembled struct {
 	catalog           integrations.Catalog
 	sealer            seal.Sealer
 	investigations    *investigation.Runner
+	prepareExecution  ai.PrepareExecution
+	executionWake     <-chan struct{}
 	onListen          func(net.Addr)
 	inventoryInterval time.Duration
 	slackAPIURL       string

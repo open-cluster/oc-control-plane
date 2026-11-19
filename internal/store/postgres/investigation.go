@@ -364,6 +364,9 @@ func (p *Database) CancelInvestigation(
 				return investigation.Investigation{}, audit.Target{}, nil,
 					fmt.Errorf("recording an investigation cancellation event: %w", err)
 			}
+			if _, err := revokeAgentExecution(ctx, transaction, organization, uuid.Nil, uuid.Nil, id); err != nil {
+				return investigation.Investigation{}, audit.Target{}, nil, fmt.Errorf("revoking the Investigation agent lease: %w", err)
+			}
 			return ended, audit.Target{Kind: audit.TargetInvestigation, ID: id.String()},
 				audit.Detail{"subject": ended.Subject}, nil
 		})

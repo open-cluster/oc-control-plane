@@ -37,8 +37,8 @@ func (s *AgentStateSaver) SaveState(ctx context.Context, session string, state *
 		_, err := tx.Exec(ctx, `
 			INSERT INTO agent_checkpoint (org_id, session_id, writer_execution_id, state)
 			VALUES ($1, $2, $3, $4::jsonb)
-			ON CONFLICT (org_id, session_id) DO UPDATE
-			  SET writer_execution_id = excluded.writer_execution_id, state = excluded.state`,
+			ON CONFLICT (org_id, session_id, writer_execution_id) DO UPDATE
+			  SET state = excluded.state`,
 			s.organization, session, s.execution.ID, checkpoint)
 		return err
 	})
@@ -59,8 +59,14 @@ func (s *AgentStateSaver) Restore(ctx context.Context) (*agent.AgentState, uuid.
 	var writer uuid.UUID
 	err := s.database.withAgentLease(ctx, s.organization, s.execution, func(tx pgx.Tx) error {
 		var checkpoint []byte
-		err := tx.QueryRow(ctx, `SELECT state, writer_execution_id FROM agent_checkpoint
-		    WHERE org_id = $1 AND session_id = $2`, s.organization, session).Scan(&checkpoint, &writer)
+		err := tx.QueryRow(ctx, `
+			SELECT c.state, c.writer_execution_id
+			  FROM agent_checkpoint c
+			  JOIN agent_execution e ON (e.org_id, e.execution_id) = (c.org_id, c.writer_execution_id)
+			 WHERE c.org_id = $1 AND c.session_id = $2
+			   AND (e.execution_id = $3 OR e.status = 'completed')
+			 ORDER BY (e.execution_id = $3) DESC, e.message_sequence DESC NULLS LAST
+			 LIMIT 1`, s.organization, session, s.execution.ID).Scan(&checkpoint, &writer)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -98,6 +104,14 @@ func (s *AgentStateSaver) DeleteSession(ctx context.Context, session string) err
 }
 
 func validAgentCheckpoint(session string, state *agent.AgentState) bool {
-	return state != nil && state.SessionID == session &&
-		state.SchemaVersion > 0 && state.SchemaVersion <= agent.StateSchemaVersion
+	if state == nil || state.SessionID != session ||
+		state.SchemaVersion < 1 || state.SchemaVersion > agent.StateSchemaVersion {
+		return false
+	}
+	for _, msg := range state.Context {
+		if msg == nil {
+			return false
+		}
+	}
+	return true
 }
