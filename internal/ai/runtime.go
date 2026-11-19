@@ -50,7 +50,9 @@ func NewAgent(config Config, checkpoint *agent.AgentState) (*agent.UnifiedAgent,
 			return nil, errors.New("unsupported checkpoint schema")
 		}
 		// AgentScope otherwise merges saved working directories into host permissions.
-		checkpoint.PermissionCtx = nil
+		restored := *checkpoint
+		restored.PermissionCtx = nil
+		checkpoint = &restored
 	}
 
 	options := []agent.AgentOption{

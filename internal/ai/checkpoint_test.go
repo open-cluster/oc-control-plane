@@ -197,6 +197,9 @@ func TestCheckpointRecovery(t *testing.T) {
 			}},
 		}
 		restored := newAgent(t, config, checkpoint)
+		if checkpoint.PermissionCtx == nil {
+			t.Fatal("agent construction discarded the caller's checkpoint permissions")
+		}
 		if err := restored.SaveCheckpoint(t.Context()); err != nil {
 			t.Fatal(err)
 		}
