@@ -8,6 +8,7 @@ import (
 
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
 	"github.com/google/uuid"
+	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
@@ -39,6 +40,14 @@ func TestAgentExecution(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		pool, err := poolForTest(database, organization)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, "DELETE FROM agent_execution WHERE org_id = $1 AND execution_id = $2", organization, first.ID); err != nil {
+			t.Fatal(err)
+		}
+
 		next, err := database.AdmitAgentChat(ctx, principal, organization, chat.ID, uuid.New(),
 			conversation.NewMessage{Text: "Which port?"})
 		if err != nil {
@@ -51,6 +60,19 @@ func TestAgentExecution(t *testing.T) {
 		restored, err := agent.LoadCheckpoint(ctx, database.AgentStateSaver(organization, next), next.SessionID())
 		if err != nil || restored.Summary != snapshot.Summary || restored.SessionID != session {
 			t.Fatalf("restored checkpoint = %+v, error = %v", restored, err)
+		}
+		nextSaver := database.AgentStateSaver(organization, next)
+		active := *snapshot
+		active.Summary = "unfinished turn"
+		if err := nextSaver.SaveState(ctx, session, &active); err != nil {
+			t.Fatal(err)
+		}
+		if err := nextSaver.DeleteSession(ctx, session); err != nil {
+			t.Fatal(err)
+		}
+		restored, err = nextSaver.LoadState(ctx, session)
+		if err != nil || restored == nil || restored.Summary != snapshot.Summary {
+			t.Fatalf("deleting active state lost committed context: %v", err)
 		}
 		if err := saver.DeleteSession(ctx, session); !errors.Is(err, storage.ErrAgentLeaseLost) {
 			t.Fatalf("prior Chat turn deleted the checkpoint: %v", err)
@@ -208,6 +230,17 @@ func TestAgentExecution(t *testing.T) {
 		if first.err != nil || second.err != nil || first.execution.ID != second.execution.ID {
 			t.Fatalf("identical retries did not return the same execution: %v, %v", first.err, second.err)
 		}
+		pool, err := poolForTest(database, organization)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var mutations int
+		err = pool.QueryRow(ctx, "SELECT count(*) FROM audit_event WHERE org_id = $1 AND target_id = $2 AND action = $3",
+			organization, chat.ID.String(), audit.ActionConversationMessage).Scan(&mutations)
+		if err != nil || mutations != 1 {
+			t.Fatalf("identical retry produced %d message mutation audit events: %v", mutations, err)
+		}
+
 		detail, err := database.ConversationDetail(ctx, organization, chat.ID, 10)
 		if err != nil || len(detail.Messages) != 1 || detail.Messages[0].Sequence != first.execution.MessageSequence {
 			t.Fatalf("identical retries did not produce exactly one Message: %v", err)
