@@ -62,7 +62,7 @@ func NewChatModel(settings config.Config, baseURL string, contextSize int) (mode
 	var err error
 	switch provider {
 	case "openrouter":
-		return newOpenRouter(name, key, baseURL, maxTokens, client), nil
+		return newOpenRouterChatModel(name, key, baseURL, maxTokens, client), nil
 	case "anthropic":
 		native, err = model.NewAnthropicChatModel(&model.AnthropicConfig{
 			SecretAPIKey:    credential,

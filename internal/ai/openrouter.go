@@ -25,13 +25,17 @@ const openRouterReasoning = "openrouter.reasoning_details"
 
 var errOpenRouter = errors.New("OpenRouter request failed or returned an incomplete response")
 
-type openRouterModel struct {
+type openRouterChatModel struct {
 	client    *sdk.OpenRouter
 	name      string
 	maxTokens int
 }
 
-func newOpenRouter(name, key, baseURL string, maxTokens int, client *http.Client) *openRouterModel {
+func newOpenRouterChatModel(
+	name, key, baseURL string,
+	maxTokens int,
+	client *http.Client,
+) *openRouterChatModel {
 	options := []sdk.SDKOption{
 		sdk.WithClient(client),
 		sdk.WithSecurity(key),
@@ -40,16 +44,20 @@ func newOpenRouter(name, key, baseURL string, maxTokens int, client *http.Client
 	if baseURL != "" {
 		options = append(options, sdk.WithServerURL(baseURL))
 	}
-	return &openRouterModel{client: sdk.New(options...), name: name, maxTokens: maxTokens}
+	return &openRouterChatModel{
+		client:    sdk.New(options...),
+		name:      name,
+		maxTokens: maxTokens,
+	}
 }
 
-func (m *openRouterModel) ModelName() string { return m.name }
+func (m *openRouterChatModel) ModelName() string { return m.name }
 
-func (m *openRouterModel) CountTokens(msgs []*message.Msg, tools []model.ToolSchema) int {
+func (m *openRouterChatModel) CountTokens(msgs []*message.Msg, tools []model.ToolSchema) int {
 	return (&model.OpenAIChatModel{}).CountTokens(msgs, tools)
 }
 
-func (m *openRouterModel) Chat(ctx context.Context, msgs []*message.Msg, opts ...model.CallOption) (*model.ChatResponse, error) {
+func (m *openRouterChatModel) Chat(ctx context.Context, msgs []*message.Msg, opts ...model.CallOption) (*model.ChatResponse, error) {
 	request, err := m.request(msgs, false, opts)
 	if err != nil {
 		return nil, err
@@ -83,7 +91,7 @@ func (m *openRouterModel) Chat(ctx context.Context, msgs []*message.Msg, opts ..
 	return openRouterReply(result.ID, result.Model, string(*choice.FinishReason), text, calls, choice.Message.ReasoningDetails, result.Usage)
 }
 
-func (m *openRouterModel) ChatStream(ctx context.Context, msgs []*message.Msg, opts ...model.CallOption) (<-chan model.ChatResponse, error) {
+func (m *openRouterChatModel) ChatStream(ctx context.Context, msgs []*message.Msg, opts ...model.CallOption) (<-chan model.ChatResponse, error) {
 	request, err := m.request(msgs, true, opts)
 	if err != nil {
 		return nil, err
@@ -305,7 +313,7 @@ func (s *openRouterStreamEnd) finishLine() {
 
 func (s *openRouterStreamEnd) complete() bool { return s.done && !s.failed }
 
-func (m *openRouterModel) request(msgs []*message.Msg, streaming bool, opts []model.CallOption) (components.ChatRequest, error) {
+func (m *openRouterChatModel) request(msgs []*message.Msg, streaming bool, opts []model.CallOption) (components.ChatRequest, error) {
 	var parameters model.CallOptions
 	for _, opt := range opts {
 		opt(&parameters)
