@@ -67,7 +67,7 @@ func TestAgentRecoveryKeepsLastCompletedConversation(t *testing.T) {
 	}
 	next := admitAndClaim("What was the checkout port?")
 	restored, writer, err := database.AgentStateSaver(org, next).Restore(ctx)
-	if err != nil || writer != first.ID || restored == nil || restored.Summary != "Port 8443" {
+	if err != nil || writer != uuid.Nil || restored == nil || restored.Summary != "Port 8443" {
 		t.Fatalf("completed context was replaced by the canceled turn, writer %s: %v", writer, err)
 	}
 }
@@ -575,12 +575,16 @@ func TestAgentCoordinatorRejectsIncompleteReplies(t *testing.T) {
 						return "fixture result", nil
 					})
 				probe.ReadOnly = fault != "confirmation"
+				var permissions *permission.Context
+				if fault == "confirmation" {
+					permissions = permission.NewContext(permission.ModeDefault)
+				}
 				return app.ExecutionProfile{
 					Config: ai.Config{
 						Name:            "fixture",
 						Model:           m,
 						Toolkit:         tool.NewToolkit(probe),
-						Permissions:     permission.NewContext(permission.ModeDefault),
+						Permissions:     permissions,
 						ToolConcurrency: 1,
 					},
 				}, nil
@@ -830,27 +834,34 @@ func TestAgentClaimSkipsLockedConversation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-	defer cancel()
+	ctx := t.Context()
 	principal := ownerOf(t, org)
-	first := openConversation(t, database, org, "busy Conversation")
-	second := openConversation(t, database, org, "ready Conversation")
-	for _, chat := range []conversation.Conversation{first, second} {
+	var busy []uuid.UUID
+	for range 16 {
+		chat := openConversation(t, database, org, "busy Conversation")
+		busy = append(busy, chat.ID)
 		if _, err := database.AdmitAgentChat(ctx, principal, org, chat.ID, uuid.New(),
 			conversation.NewMessage{Text: "check status"}); err != nil {
 			t.Fatal(err)
 		}
+	}
+	ready := openConversation(t, database, org, "ready Conversation")
+	if _, err := database.AdmitAgentChat(ctx, principal, org, ready.ID, uuid.New(),
+		conversation.NewMessage{Text: "check status"}); err != nil {
+		t.Fatal(err)
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(t.Context()) }()
-	if _, err := tx.Exec(ctx, `SELECT 1 FROM conversation WHERE org_id = $1 AND conversation_id = $2 FOR UPDATE`, org, first.ID); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM conversation WHERE org_id = $1 AND conversation_id = ANY($2::uuid[]) FOR UPDATE`, org, busy); err != nil {
 		t.Fatal(err)
 	}
-	owner, execution, err := database.ClaimNextAgentExecution(ctx, time.Minute)
-	if err != nil || owner != org || execution.ConversationID != second.ID {
+	claimCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	owner, execution, err := database.ClaimNextAgentExecution(claimCtx, time.Minute)
+	if err != nil || owner != org || execution.ConversationID != ready.ID {
 		t.Fatalf("locked Conversation stalled unrelated execution: %s, %v", execution.ConversationID, err)
 	}
 }

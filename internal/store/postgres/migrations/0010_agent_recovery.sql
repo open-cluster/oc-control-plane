@@ -1,7 +1,3 @@
-ALTER TABLE public.agent_checkpoint
-    DROP CONSTRAINT agent_checkpoint_pkey,
-    ADD PRIMARY KEY (org_id, session_id, writer_execution_id);
-
 ALTER TABLE public.agent_execution ADD COLUMN started_at timestamptz;
 
 ALTER TABLE public.agent_execution

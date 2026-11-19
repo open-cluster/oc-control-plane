@@ -68,19 +68,27 @@ func (p *Database) AdmitAgentChat(
 	ctx context.Context, principal authz.Principal, organization, conversationID, clientMessageID uuid.UUID,
 	input conversation.NewMessage,
 ) (AgentExecution, error) {
-	if principal.IsEmpty() || !principal.HavePermission(authz.ConversationWrite) {
+	if principal.IsEmpty() || principal.Organization() != organization || !principal.HavePermission(authz.ConversationWrite) {
 		return AgentExecution{}, ErrNotAMember
 	}
 	if clientMessageID == uuid.Nil || strings.TrimSpace(input.Text) == "" {
 		return AgentExecution{}, errors.New("client message ID and text are required")
 	}
 
-	return audited(ctx, p, principal, organization, audit.ActionConversationMessage,
-		func(ctx context.Context, tx pgx.Tx) (AgentExecution, audit.Target, audit.Detail, error) {
-			execution, err := admitAgentChat(ctx, tx, principal, organization, conversationID, clientMessageID, input)
-			return execution, audit.Target{Kind: audit.TargetConversation, ID: conversationID.String()},
-				audit.Detail{"sequence": execution.MessageSequence}, err
-		})
+	pool, err := p.poolForOrganization(organization)
+	if err != nil {
+		return AgentExecution{}, err
+	}
+	var execution AgentExecution
+	err = pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		var err error
+		execution, err = admitAgentChat(ctx, tx, principal, organization, conversationID, clientMessageID, input)
+		return err
+	})
+	if err != nil {
+		return AgentExecution{}, err
+	}
+	return execution, nil
 }
 
 func admitAgentChat(
@@ -149,6 +157,18 @@ func admitAgentChat(
 		organization, uuid.New(), conversationID, message.Sequence))
 	if err != nil {
 		return AgentExecution{}, fmt.Errorf("creating Chat execution: %w", err)
+	}
+	if err := writeEvent(ctx, tx, audit.Event{
+		Organization:  organization.String(),
+		Actor:         principal.Actor(),
+		Action:        audit.ActionConversationMessage,
+		Target:        audit.Target{Kind: audit.TargetConversation, ID: conversationID.String()},
+		Outcome:       audit.OutcomeAllowed,
+		SourceAddress: principal.SourceAddress(),
+		RequestID:     principal.RequestID(),
+		Detail:        audit.Detail{"sequence": execution.MessageSequence},
+	}); err != nil {
+		return AgentExecution{}, err
 	}
 	return execution, nil
 }
@@ -280,12 +300,6 @@ func (p *Database) claimAgentExecution(
 	return execution, nil
 }
 
-func (p *Database) ParkAgentExecution(ctx context.Context, org uuid.UUID, execution AgentExecution) error {
-	return p.withAgentLease(ctx, org, execution, func(tx pgx.Tx) error {
-		return endAgentLease(ctx, tx, org, execution, AgentExecutionNeedsInput, 0)
-	})
-}
-
 func endAgentLease(ctx context.Context, tx pgx.Tx, organization uuid.UUID, execution AgentExecution, status AgentExecutionStatus, replySequence int64) error {
 	if _, err := tx.Exec(ctx, `
 		UPDATE agent_execution SET status = $3, lease_token = NULL, lease_expires_at = NULL, reply_message_sequence = nullif($4::bigint, 0)
@@ -293,22 +307,7 @@ func endAgentLease(ctx context.Context, tx pgx.Tx, organization uuid.UUID, execu
 		return err
 	}
 
-	switch status {
-	case AgentExecutionCompleted:
-		_, err := tx.Exec(ctx, `
-			DELETE FROM agent_checkpoint c WHERE c.org_id = $1 AND c.session_id = $2
-			  AND c.writer_execution_id <> $3 AND EXISTS (
-			      SELECT 1 FROM agent_checkpoint current
-			       WHERE current.org_id = $1 AND current.session_id = $2 AND current.writer_execution_id = $3)`,
-			organization, execution.SessionID(), execution.ID)
-		return err
-	case AgentExecutionFailed:
-		_, err := tx.Exec(ctx, `DELETE FROM agent_checkpoint WHERE org_id = $1 AND writer_execution_id = $2`,
-			organization, execution.ID)
-		return err
-	default:
-		return nil
-	}
+	return finishAgentCheckpoint(ctx, tx, organization, execution, status)
 }
 
 func (p *Database) withAgentLease(ctx context.Context, organization uuid.UUID, execution AgentExecution, action func(pgx.Tx) error) error {
