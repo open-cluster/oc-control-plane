@@ -381,10 +381,6 @@ func (p *Database) endInvestigation(
 	if err != nil {
 		return err
 	}
-	encodedPayload, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("encoding terminal event: %w", err)
-	}
 	transaction, err := pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("beginning terminal transition: %w", err)
@@ -433,13 +429,8 @@ func (p *Database) endInvestigation(
 	if tag.RowsAffected() == 0 {
 		return investigation.ErrUnknown
 	}
-	if _, err = transaction.Exec(ctx, `
-		INSERT INTO investigation_event (investigation_id, org_id, sequence, type, payload)
-		SELECT $1, $2, coalesce(max(sequence), 0) + 1, $3, $4
-		  FROM investigation_event
-		 WHERE investigation_id = $1 AND org_id = $2`,
-		id, organization, int16(payload.EventType()), encodedPayload); err != nil {
-		return fmt.Errorf("recording terminal event: %w", err)
+	if err := appendInvestigationTerminalEvent(ctx, transaction, organization, id, payload); err != nil {
+		return err
 	}
 	if conversationID != nil && assistantReply != "" {
 		if _, err = transaction.Exec(ctx, `
@@ -465,6 +456,22 @@ func (p *Database) endInvestigation(
 		}
 	}
 	return transaction.Commit(ctx)
+}
+
+func appendInvestigationTerminalEvent(ctx context.Context, tx pgx.Tx, organization, id uuid.UUID, payload investigation.EventPayload) error {
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("encoding terminal event: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO investigation_event (investigation_id, org_id, sequence, type, payload)
+		SELECT $1, $2, coalesce(max(sequence), 0) + 1, $3, $4
+		  FROM investigation_event
+		 WHERE investigation_id = $1 AND org_id = $2`,
+		id, organization, int16(payload.EventType()), encoded); err != nil {
+		return fmt.Errorf("recording terminal event: %w", err)
+	}
+	return nil
 }
 
 const triggerColumns = `e.incident_id, e.integration_id, e.title, e.status,

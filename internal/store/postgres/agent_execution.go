@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -187,22 +188,37 @@ const agentExecutionEligible = `
 // ClaimNextAgentExecution discovers one runnable execution across the host's Organizations.
 // All changes use the same Organization-scoped claim and owner lock as explicit claims.
 func (p *Database) ClaimNextAgentExecution(ctx context.Context, leaseFor time.Duration) (uuid.UUID, AgentExecution, error) {
-	var org, id uuid.UUID
-	err := p.pool.QueryRow(ctx, `
-		SELECT e.org_id, e.execution_id FROM agent_execution e WHERE true `+agentExecutionEligible+`
-		ORDER BY e.created_at, e.execution_id LIMIT 1`).Scan(&org, &id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, AgentExecution{}, ErrAgentExecutionUnavailable
-	}
+	rows, err := p.pool.Query(ctx, `
+		SELECT e.org_id, e.execution_id FROM agent_execution e
+		WHERE e.status IN ('queued', 'running') `+agentExecutionEligible+`
+		ORDER BY e.created_at, e.execution_id LIMIT 16`)
 	if err != nil {
 		return uuid.Nil, AgentExecution{}, err
 	}
-	execution, err := p.ClaimAgentExecution(ctx, org, id, leaseFor)
-	return org, execution, err
+	type candidate struct{ organization, id uuid.UUID }
+	candidates, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (candidate, error) {
+		var item candidate
+		err := row.Scan(&item.organization, &item.id)
+		return item, err
+	})
+	if err != nil {
+		return uuid.Nil, AgentExecution{}, err
+	}
+	for _, item := range candidates {
+		execution, err := p.claimAgentExecution(ctx, item.organization, item.id, leaseFor, true)
+		if !errors.Is(err, ErrAgentExecutionUnavailable) {
+			return item.organization, execution, err
+		}
+	}
+	return uuid.Nil, AgentExecution{}, ErrAgentExecutionUnavailable
 }
 
-func (p *Database) ClaimAgentExecution(
-	ctx context.Context, organization, id uuid.UUID, leaseFor time.Duration,
+func (p *Database) ClaimAgentExecution(ctx context.Context, organization, id uuid.UUID, leaseFor time.Duration) (AgentExecution, error) {
+	return p.claimAgentExecution(ctx, organization, id, leaseFor, false)
+}
+
+func (p *Database) claimAgentExecution(
+	ctx context.Context, organization, id uuid.UUID, leaseFor time.Duration, skipBusy bool,
 ) (AgentExecution, error) {
 	if leaseFor <= 0 {
 		return AgentExecution{}, errors.New("agent execution lease must be positive")
@@ -222,14 +238,28 @@ func (p *Database) ClaimAgentExecution(
 		if err != nil {
 			return err
 		}
-		if conversationID != nil {
+		if skipBusy {
+			// Discovery skips busy owners and keeps the same owner-before-execution lock order.
+			var owner int
+			if conversationID != nil {
+				err = tx.QueryRow(ctx, `SELECT 1 FROM conversation WHERE org_id = $1 AND conversation_id = $2
+					FOR UPDATE SKIP LOCKED`, organization, *conversationID).Scan(&owner)
+			} else {
+				err = tx.QueryRow(ctx, `SELECT 1 FROM investigation WHERE org_id = $1 AND investigation_id = $2
+					FOR NO KEY UPDATE SKIP LOCKED`, organization, *investigationID).Scan(&owner)
+			}
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrAgentExecutionUnavailable
+			}
+			if err != nil {
+				return err
+			}
+		} else if conversationID != nil {
 			if err := lockConversation(ctx, tx, organization, *conversationID); err != nil {
 				return err
 			}
-		} else if investigationID != nil {
-			if err := lockInvestigation(ctx, tx, organization, *investigationID); err != nil {
-				return err
-			}
+		} else if err := lockInvestigation(ctx, tx, organization, *investigationID); err != nil {
+			return err
 		}
 
 		execution, err = scanAgentExecution(tx.QueryRow(ctx, `
@@ -395,6 +425,9 @@ func insertAgentReply(ctx context.Context, tx pgx.Tx, org uuid.UUID, execution A
 	if strings.TrimSpace(text) == "" {
 		return 0, errors.New("completed Chat execution has no reply")
 	}
+	if utf8.RuneCountInString(text) > conversation.MaxMessageTextLength {
+		return 0, errors.New("completed Chat reply exceeds the Message limit")
+	}
 	var window conversation.Window
 	err := tx.QueryRow(ctx, `SELECT window_from, window_until FROM conversation_message
 		WHERE org_id = $1 AND conversation_id = $2 AND sequence = $3`,
@@ -403,7 +436,7 @@ func insertAgentReply(ctx context.Context, tx pgx.Tx, org uuid.UUID, execution A
 		return 0, err
 	}
 	written, err := insertConversationMessage(ctx, tx, org, execution.ConversationID,
-		conversation.NewMessage{Role: conversation.RoleAssistant, Text: boundedRunes(text, conversation.MaxMessageTextLength)}, window, nil)
+		conversation.NewMessage{Role: conversation.RoleAssistant, Text: text}, window, nil)
 	return written.Sequence, err
 }
 
@@ -412,6 +445,7 @@ func finishAgentInvestigation(ctx context.Context, tx pgx.Tx, org uuid.UUID, exe
 ) error {
 	ended := investigation.StatusFailed
 	reason := "agent reply failed"
+	var payload investigation.EventPayload = investigation.FailedPayload(reason)
 	result := []byte("{}")
 	if status == AgentExecutionCompleted {
 		if conclusion == nil {
@@ -422,6 +456,7 @@ func finishAgentInvestigation(ctx context.Context, tx pgx.Tx, org uuid.UUID, exe
 			return err
 		}
 		ended, reason, result = investigation.StatusConcluded, "", encoded
+		payload = investigation.ConcludedPayload(*conclusion, "")
 	}
 	tag, err := tx.Exec(ctx, `
 		UPDATE investigation SET status = $3, conclusion = $4::jsonb, error = $5, concluded_at = now(),
@@ -429,10 +464,13 @@ func finishAgentInvestigation(ctx context.Context, tx pgx.Tx, org uuid.UUID, exe
 		 WHERE org_id = $1 AND investigation_id = $2 AND status = $8 AND lease_worker = ''`,
 		org, execution.InvestigationID, int16(ended), result, reason, usage.InputTokens, usage.OutputTokens,
 		int16(investigation.StatusRunning))
-	if err == nil && tag.RowsAffected() != 1 {
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
 		return ErrAgentLeaseLost
 	}
-	return err
+	return appendInvestigationTerminalEvent(ctx, tx, org, execution.InvestigationID, payload)
 }
 
 func (p *Database) CancelAgentChatExecution(ctx context.Context, org, conversationID, id uuid.UUID) error {

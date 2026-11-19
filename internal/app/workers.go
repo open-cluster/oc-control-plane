@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/open-cluster/oc-control-plane/internal/ai"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/changes"
 	"github.com/open-cluster/oc-control-plane/internal/config"
@@ -22,7 +21,7 @@ const auditPruneInterval = time.Hour
 func startWorkers(ctx context.Context, group *errgroup.Group, process assembled) {
 	if process.prepareExecution != nil {
 		group.Go(func() error {
-			ai.RunExecutions(ctx, process.database, process.config.InvestigationWorkers,
+			RunExecutions(ctx, process.database, process.config.InvestigationWorkers,
 				process.executionWake, process.prepareExecution, process.logger)
 			return nil
 		})

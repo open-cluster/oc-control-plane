@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -148,11 +149,11 @@ func TestAgentCoordinatorCommitsReply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	startFixtureAgentWorker(t, ctx, database, nil, func(_ context.Context, organization uuid.UUID, claimed storage.AgentExecution) (ai.ExecutionProfile, error) {
+	startFixtureAgentWorker(t, ctx, database, nil, func(_ context.Context, organization uuid.UUID, claimed storage.AgentExecution) (app.ExecutionProfile, error) {
 		if organization != org || claimed.ConversationID != chat.ID {
 			t.Error("execution went to the wrong Organization or caller")
 		}
-		return ai.ExecutionProfile{Config: ai.Config{Name: "fixture", Model: modelClient, ToolConcurrency: 1}}, nil
+		return app.ExecutionProfile{Config: ai.Config{Name: "fixture", Model: modelClient, ToolConcurrency: 1}}, nil
 	})
 	select {
 	case <-started:
@@ -187,7 +188,7 @@ func awaitAgentResult(t *testing.T, ctx context.Context, pool *pgxpool.Pool, org
 			t.Fatal(err)
 		}
 		if status == storage.AgentExecutionCompleted {
-			if count != 1 || text != answer || requests.Load() != wantCalls {
+			if count != 1 || text != answer || (wantCalls > 0 && requests.Load() != wantCalls) {
 				t.Fatalf("terminal row and one Message were not committed together: count %d, text %q, requests %d", count, text, requests.Load())
 			}
 			break
@@ -284,7 +285,7 @@ func TestAgentRecoveryProcessFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepare := func(_ context.Context, _ uuid.UUID, _ storage.AgentExecution) (ai.ExecutionProfile, error) {
+	prepare := func(_ context.Context, _ uuid.UUID, _ storage.AgentExecution) (app.ExecutionProfile, error) {
 		probe := tool.NewFunctionTool("probe", "Read the fixture port", json.RawMessage(`{"type":"object"}`),
 			func(ctx context.Context, _ map[string]any) (any, error) {
 				req, err := http.NewRequestWithContext(ctx, http.MethodGet, fixture.Provider+"/probe", nil)
@@ -300,7 +301,7 @@ func TestAgentRecoveryProcessFixture(t *testing.T) {
 				return string(result), err
 			})
 		probe.ReadOnly, probe.ConcurrencySafe = true, true
-		return ai.ExecutionProfile{Config: ai.Config{Name: "fixture", Model: m, Toolkit: tool.NewToolkit(probe), ToolConcurrency: 2}}, nil
+		return app.ExecutionProfile{Config: ai.Config{Name: "fixture", Model: m, Toolkit: tool.NewToolkit(probe), ToolConcurrency: 2}}, nil
 	}
 	cfg := config.Config{
 		DatabaseDSN: fixture.DSN, HTTPListenAddress: "127.0.0.1:0", PublicURL: "http://127.0.0.1:8081",
@@ -502,79 +503,101 @@ func TestAgentChatUsesExistingQueueCapacity(t *testing.T) {
 	}
 }
 
-func TestAgentCoordinatorParksWithoutBlockingOtherConversations(t *testing.T) {
+func TestAgentCoordinatorRejectsIncompleteReplies(t *testing.T) {
 	database, org, _ := twoOrganizationsInOneDatabase(t)
 	pool, err := poolForTest(database, org)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
-	defer cancel()
-	chat := openConversation(t, database, org, "Protected read")
-	other := openConversation(t, database, org, "Independent read")
-	const (
-		firstInput = "request protected fixture"
-		nextInput  = "next queued question"
-		otherInput = "other conversation question"
-	)
-	admit := func(id uuid.UUID, text string) storage.AgentExecution {
-		t.Helper()
-		execution, err := database.AdmitAgentChat(ctx, ownerOf(t, org), org, id, uuid.New(), conversation.NewMessage{Text: text})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return execution
-	}
-	first, next, independent := admit(chat.ID, firstInput), admit(chat.ID, nextInput), admit(other.ID, otherInput)
-	var requests atomic.Int32
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		switch {
-		case bytes.Contains(body, []byte(firstInput)):
-			writeAgentCall(w, "protected-1", "protected")
-
-		case bytes.Contains(body, []byte(otherInput)):
-			writeAgentAnswer(w, "independent answer")
-		case bytes.Contains(body, []byte(nextInput)):
-			writeAgentAnswer(w, "next answer")
-		default:
-			t.Error("unexpected model request")
-		}
-	}))
-	defer provider.Close()
-	m, err := model.NewOpenAIChatModel(model.OpenAIConfig{APIKey: "fixture", BaseURL: provider.URL, Model: "fixture"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	wake := make(chan struct{}, 1)
-	startFixtureAgentWorker(t, ctx, database, wake, func(_ context.Context, _ uuid.UUID, _ storage.AgentExecution) (ai.ExecutionProfile, error) {
-		protected := tool.NewFunctionTool("protected", "Requires operator confirmation", json.RawMessage(`{"type":"object"}`),
-			func(context.Context, map[string]any) (any, error) {
-				t.Error("permission was bypassed")
-				return nil, nil
+	principal := ownerOf(t, org)
+	for _, fault := range []string{"confirmation", "provider error", "truncated", "iteration limit", "oversize"} {
+		t.Run(fault, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+			chat := openConversation(t, database, org, fault)
+			const firstInput = "attempt failing diagnostic"
+			admit := func(text string) storage.AgentExecution {
+				t.Helper()
+				execution, err := database.AdmitAgentChat(ctx, principal, org, chat.ID, uuid.New(), conversation.NewMessage{Text: text})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return execution
+			}
+			first, next := admit(firstInput), admit("next queued question")
+			var requests atomic.Int32
+			var forced atomic.Bool
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				call := requests.Add(1)
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				if !bytes.Contains(body, []byte(firstInput)) {
+					writeAgentAnswer(w, "next answer")
+					return
+				}
+				switch fault {
+				case "confirmation":
+					writeAgentCall(w, "confirm", "probe")
+				case "provider error":
+					w.WriteHeader(http.StatusUnauthorized)
+				case "truncated":
+					_, _ = fmt.Fprint(w, `data: {"choices":[{"index":0,"delta":{"content":"unfinished"},"finish_reason":"length"}]}`+"\n\ndata: [DONE]\n\n")
+				case "iteration limit":
+					if bytes.Contains(body, []byte(`"tool_choice":"none"`)) || !bytes.Contains(body, []byte(`"tools":`)) {
+						forced.Store(true)
+						writeAgentAnswer(w, "forced summary")
+					} else {
+						writeAgentCall(w, fmt.Sprintf("probe-%d", call), "probe")
+					}
+				case "oversize":
+					writeAgentAnswer(w, strings.Repeat("x", conversation.MaxMessageTextLength+1))
+				}
+			}))
+			defer provider.Close()
+			m, err := model.NewOpenAIChatModel(model.OpenAIConfig{
+				APIKey:  "fixture",
+				BaseURL: provider.URL,
+				Model:   "fixture",
 			})
-		return ai.ExecutionProfile{Config: ai.Config{Name: "fixture", Model: m, Toolkit: tool.NewToolkit(protected),
-			Permissions: permission.NewContext(permission.ModeDefault), ToolConcurrency: 1}}, nil
-	})
-	awaitAgentResult(t, ctx, pool, org, independent.ID, "independent answer", &requests, 2)
-	var parked, queued storage.AgentExecutionStatus
-	err = pool.QueryRow(ctx, `SELECT head.status, next.status FROM agent_execution head, agent_execution next
-		WHERE head.org_id = $1 AND next.org_id = $1 AND head.execution_id = $2 AND next.execution_id = $3`,
-		org, first.ID, next.ID).Scan(&parked, &queued)
-	if err != nil || parked != storage.AgentExecutionNeedsInput || queued != "queued" {
-		t.Fatalf("parked head or waiting turn is incorrect: %s, %s, %v", parked, queued, err)
+			if err != nil {
+				t.Fatal(err)
+			}
+			startFixtureAgentWorker(t, ctx, database, nil, func(_ context.Context, _ uuid.UUID, _ storage.AgentExecution) (app.ExecutionProfile, error) {
+				probe := tool.NewFunctionTool("probe", "Reads the fixture", json.RawMessage(`{"type":"object"}`),
+					func(context.Context, map[string]any) (any, error) {
+						if fault == "confirmation" {
+							t.Error("permission was bypassed")
+						}
+						return "fixture result", nil
+					})
+				probe.ReadOnly = fault != "confirmation"
+				return app.ExecutionProfile{
+					Config: ai.Config{
+						Name:            "fixture",
+						Model:           m,
+						Toolkit:         tool.NewToolkit(probe),
+						Permissions:     permission.NewContext(permission.ModeDefault),
+						ToolConcurrency: 1,
+					},
+				}, nil
+			})
+			awaitAgentResult(t, ctx, pool, org, next.ID, "next answer", &requests, 0)
+			var status storage.AgentExecutionStatus
+			var hasReply bool
+			err = pool.QueryRow(ctx, "SELECT status, reply_message_sequence IS NOT NULL FROM agent_execution WHERE org_id = $1 AND execution_id = $2",
+				org, first.ID).Scan(&status, &hasReply)
+			if err != nil || status != storage.AgentExecutionFailed || hasReply {
+				t.Fatalf("incomplete reply persisted as %s, hasReply %t: %v", status, hasReply, err)
+			}
+			if fault == "iteration limit" && !forced.Load() {
+				t.Fatal("the case never reached native forced finalization")
+			}
+		})
 	}
-	if err := database.CancelAgentChatExecution(ctx, org, chat.ID, first.ID); err != nil {
-		t.Fatal(err)
-	}
-	wake <- struct{}{}
-	awaitAgentResult(t, ctx, pool, org, next.ID, "next answer", &requests, 3)
 }
 
 func writeAgentAnswer(w http.ResponseWriter, answer string) {
@@ -582,13 +605,13 @@ func writeAgentAnswer(w http.ResponseWriter, answer string) {
 	_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
 }
 
-func startFixtureAgentWorker(t *testing.T, ctx context.Context, db *storage.Database, wake <-chan struct{}, prepare ai.PrepareExecution) <-chan struct{} {
+func startFixtureAgentWorker(t *testing.T, ctx context.Context, db *storage.Database, wake <-chan struct{}, prepare app.PrepareExecution) <-chan struct{} {
 	t.Helper()
 	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		ai.RunExecutions(ctx, db, 1, wake, prepare, nil)
+		app.RunExecutions(ctx, db, 1, wake, prepare, nil)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -644,18 +667,19 @@ func TestAgentCoordinatorFinishesAndCancelsInvestigationThroughProductStorage(t 
 	const answer = "No confirmed cause was found."
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		writeAgentAnswer(w, answer)
+		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":%q},\"finish_reason\":null}]}\n\n", answer)
+		_, _ = fmt.Fprint(w, `data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":17,"completion_tokens":3,"total_tokens":20}}`+"\n\ndata: [DONE]\n\n")
 	}))
 	defer provider.Close()
 	m, err := model.NewOpenAIChatModel(model.OpenAIConfig{APIKey: "fixture", BaseURL: provider.URL, Model: "fixture"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	startFixtureAgentWorker(t, t.Context(), database, nil, func(_ context.Context, owner uuid.UUID, execution storage.AgentExecution) (ai.ExecutionProfile, error) {
+	startFixtureAgentWorker(t, t.Context(), database, nil, func(_ context.Context, owner uuid.UUID, execution storage.AgentExecution) (app.ExecutionProfile, error) {
 		if owner != org || execution.InvestigationID != entity.ID {
 			t.Error("worker resolved a canceled or foreign Investigation")
 		}
-		return ai.ExecutionProfile{
+		return app.ExecutionProfile{
 			Config: ai.Config{Name: "fixture", Model: m, ToolConcurrency: 1},
 			Conclusion: func(ctx context.Context, final string) (investigation.Conclusion, error) {
 				if _, bounded := ctx.Deadline(); !bounded {
@@ -669,15 +693,18 @@ func TestAgentCoordinatorFinishesAndCancelsInvestigationThroughProductStorage(t 
 		var status storage.AgentExecutionStatus
 		var result investigation.Status
 		var summary string
-		err := pool.QueryRow(ctx, `SELECT e.status, i.status, coalesce(i.conclusion->>'summary', '')
+		var terminalEvents int
+		var usage investigation.Usage
+		err := pool.QueryRow(ctx, `SELECT e.status, i.status, coalesce(i.conclusion->>'summary', ''), i.spend_input_tokens, i.spend_output_tokens,
+		   (SELECT count(*) FROM investigation_event v WHERE v.org_id = e.org_id AND v.investigation_id = e.investigation_id AND v.type = $3)
 		    FROM agent_execution e JOIN investigation i USING (org_id, investigation_id)
-		   WHERE e.org_id = $1 AND e.execution_id = $2`, org, work.ID).Scan(&status, &result, &summary)
+		   WHERE e.org_id = $1 AND e.execution_id = $2`, org, work.ID, int16(investigation.EventConcluded)).Scan(&status, &result, &summary, &usage.InputTokens, &usage.OutputTokens, &terminalEvents)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if status == storage.AgentExecutionCompleted {
-			if result != investigation.StatusConcluded || summary != answer {
-				t.Fatalf("expected an atomic Investigation conclusion, got %s, %q", result, summary)
+			if result != investigation.StatusConcluded || summary != answer || terminalEvents != 1 || usage != (investigation.Usage{InputTokens: 17, OutputTokens: 3}) {
+				t.Fatalf("expected an atomic Investigation conclusion, got %s, %q, %d terminal events and usage %+v", result, summary, terminalEvents, usage)
 			}
 			return
 		}
@@ -701,11 +728,11 @@ func TestAgentCoordinatorCancelsDuringPreparation(t *testing.T) {
 		t.Fatal(err)
 	}
 	started, canceled := make(chan struct{}), make(chan struct{})
-	startFixtureAgentWorker(t, ctx, db, nil, func(ctx context.Context, _ uuid.UUID, _ storage.AgentExecution) (ai.ExecutionProfile, error) {
+	startFixtureAgentWorker(t, ctx, db, nil, func(ctx context.Context, _ uuid.UUID, _ storage.AgentExecution) (app.ExecutionProfile, error) {
 		close(started)
 		<-ctx.Done()
 		close(canceled)
-		return ai.ExecutionProfile{}, ctx.Err()
+		return app.ExecutionProfile{}, ctx.Err()
 	})
 	select {
 	case <-started:
@@ -750,7 +777,7 @@ func TestAgentCoordinatorKeepsLeaseDuringToolCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	done := startFixtureAgentWorker(t, ctx, db, nil, func(_ context.Context, _ uuid.UUID, _ storage.AgentExecution) (ai.ExecutionProfile, error) {
+	done := startFixtureAgentWorker(t, ctx, db, nil, func(_ context.Context, _ uuid.UUID, _ storage.AgentExecution) (app.ExecutionProfile, error) {
 		read := tool.NewFunctionTool("slow_read", "Read and close the fixture", json.RawMessage(`{"type":"object"}`),
 			func(ctx context.Context, _ map[string]any) (any, error) {
 				<-ctx.Done()
@@ -759,7 +786,7 @@ func TestAgentCoordinatorKeepsLeaseDuringToolCleanup(t *testing.T) {
 				return nil, ctx.Err()
 			})
 		read.ReadOnly, read.ConcurrencySafe = true, true
-		return ai.ExecutionProfile{Config: ai.Config{Name: "fixture", Model: m, Toolkit: tool.NewToolkit(read), ToolConcurrency: 1}}, nil
+		return app.ExecutionProfile{Config: ai.Config{Name: "fixture", Model: m, Toolkit: tool.NewToolkit(read), ToolConcurrency: 1}}, nil
 	})
 	select {
 	case <-cleaning:
@@ -795,4 +822,35 @@ func TestAgentCoordinatorKeepsLeaseDuringToolCleanup(t *testing.T) {
 func writeAgentCall(w http.ResponseWriter, id, name string) {
 	_, _ = fmt.Fprintf(w, `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":%q,"type":"function","function":{"name":%q,"arguments":"{}"}}]},"finish_reason":null}]}`+"\n\n", id, name)
 	_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
+}
+
+func TestAgentClaimSkipsLockedConversation(t *testing.T) {
+	database, org, _ := twoOrganizationsInOneDatabase(t)
+	pool, err := poolForTest(database, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	principal := ownerOf(t, org)
+	first := openConversation(t, database, org, "busy Conversation")
+	second := openConversation(t, database, org, "ready Conversation")
+	for _, chat := range []conversation.Conversation{first, second} {
+		if _, err := database.AdmitAgentChat(ctx, principal, org, chat.ID, uuid.New(),
+			conversation.NewMessage{Text: "check status"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(t.Context()) }()
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM conversation WHERE org_id = $1 AND conversation_id = $2 FOR UPDATE`, org, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	owner, execution, err := database.ClaimNextAgentExecution(ctx, time.Minute)
+	if err != nil || owner != org || execution.ConversationID != second.ID {
+		t.Fatalf("locked Conversation stalled unrelated execution: %s, %v", execution.ConversationID, err)
+	}
 }

@@ -1,4 +1,4 @@
-package ai
+package app
 
 import (
 	"context"
@@ -9,13 +9,17 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/event"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/loop"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/protocol"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/types"
 	"github.com/google/uuid"
+	"github.com/open-cluster/oc-control-plane/internal/ai"
+	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -25,13 +29,14 @@ const (
 	executionHeartbeat   = 3 * time.Second
 	executionPoll        = 500 * time.Millisecond
 	executionBudget      = 30 * time.Minute
+	executionResultLimit = 15 * time.Second
 	completedReplyMarker = "opencluster.completed_reply"
 )
 
 // ExecutionProfile supplies current authorized agent configuration for a claim.
 // Investigation result validation remains with the caller that owns the profile.
 type ExecutionProfile struct {
-	Config
+	ai.Config
 	// Conclusion validates and projects a saved reply without calling the model.
 	Conclusion func(context.Context, string) (investigation.Conclusion, error)
 }
@@ -53,7 +58,7 @@ func runExecutionWorker(ctx context.Context, db *storage.Database, wake <-chan s
 	for ctx.Err() == nil {
 		org, execution, err := db.ClaimNextAgentExecution(ctx, executionLease)
 		if err == nil {
-			err = runClaimedExecution(ctx, db, org, execution, prepare)
+			err = runClaimedExecution(ctx, db, org, execution, prepare, logger)
 			if err == nil || errors.Is(err, storage.ErrAgentLeaseLost) {
 				continue
 			}
@@ -75,7 +80,7 @@ func runExecutionWorker(ctx context.Context, db *storage.Database, wake <-chan s
 	}
 }
 
-func runClaimedExecution(processCtx context.Context, db *storage.Database, org uuid.UUID, execution storage.AgentExecution, prepare PrepareExecution) error {
+func runClaimedExecution(processCtx context.Context, db *storage.Database, org uuid.UUID, execution storage.AgentExecution, prepare PrepareExecution, logger *slog.Logger) error {
 	ctx, revoke := context.WithCancelCause(processCtx)
 	monitored := make(chan struct{})
 	go func() {
@@ -90,7 +95,7 @@ func runClaimedExecution(processCtx context.Context, db *storage.Database, org u
 	saver := db.AgentStateSaver(org, execution)
 	checkpoint, writer, err := saver.Restore(ctx)
 	if errors.Is(err, storage.ErrAgentCheckpoint) {
-		return failAgentExecution(ctx, db, org, execution)
+		return failAgentExecution(ctx, db, org, execution, investigation.Usage{})
 	}
 	if err != nil {
 		return err
@@ -99,10 +104,13 @@ func runClaimedExecution(processCtx context.Context, db *storage.Database, org u
 	if writer == execution.ID {
 		recovery := checkpoint.ReplyRecovery
 		if recovery == nil || recovery.Version != 1 || recovery.ReplyID == "" || recovery.ReplyID != checkpoint.ReplyID {
-			return failAgentExecution(ctx, db, org, execution)
+			return failAgentExecution(ctx, db, org, execution, investigation.Usage{})
 		}
 		if !recovery.Active {
-			return reconcileAgentReply(ctx, db, org, execution, checkpoint, prepare)
+			if execution.InvestigationID != uuid.Nil && logger != nil {
+				logger.InfoContext(ctx, "agent token usage incomplete after recovery", slog.String("execution_id", execution.ID.String()))
+			}
+			return finishAgentReply(ctx, db, org, execution, checkpoint, prepare, nil, investigation.Usage{})
 		}
 	}
 
@@ -112,7 +120,7 @@ func runClaimedExecution(processCtx context.Context, db *storage.Database, org u
 		if ctx.Err() != nil {
 			return context.Cause(ctx)
 		}
-		return failAgentExecution(ctx, db, org, execution)
+		return failAgentExecution(ctx, db, org, execution, investigation.Usage{})
 	}
 
 	profile, err := prepare(runCtx, org, execution)
@@ -120,19 +128,20 @@ func runClaimedExecution(processCtx context.Context, db *storage.Database, org u
 		if ctx.Err() != nil {
 			return context.Cause(ctx)
 		}
-		return failAgentExecution(ctx, db, org, execution)
+		return failAgentExecution(ctx, db, org, execution, investigation.Usage{})
 	}
 	lifecycle := &executionReply{AgentStateSaver: saver, done: make(chan struct{})}
 	profile.SessionID = execution.SessionID()
 	profile.StateSaver = lifecycle
 	profile.Hooks = append(slices.Clone(profile.Hooks), lifecycle)
 
-	runtime, err := NewAgent(profile.Config, checkpoint)
+	runtime, err := ai.NewAgent(profile.Config, checkpoint)
 	if err != nil {
-		return failAgentExecution(ctx, db, org, execution)
+		return failAgentExecution(ctx, db, org, execution, investigation.Usage{})
 	}
 	var stream <-chan event.Event
-	if writer == execution.ID {
+	recovering := writer == execution.ID
+	if recovering {
 		if err := db.RenewAgentExecution(runCtx, org, execution, executionLease); err != nil {
 			return err
 		}
@@ -145,9 +154,9 @@ func runClaimedExecution(processCtx context.Context, db *storage.Database, org u
 		stream, err = runtime.ReplyStream(runCtx, input)
 	}
 	if err != nil {
-		return failAgentExecution(ctx, db, org, execution)
+		return failAgentExecution(ctx, db, org, execution, investigation.Usage{})
 	}
-	stopStatus, runErr := drainExecution(runCtx, stream)
+	outcome, runErr := drainExecution(runCtx, stream)
 	stop()
 	// The outward stream can close while native workers still own Tool calls.
 	select {
@@ -158,11 +167,8 @@ func runClaimedExecution(processCtx context.Context, db *storage.Database, org u
 	if ctx.Err() != nil {
 		return context.Cause(ctx)
 	}
-	switch stopStatus {
-	case storage.AgentExecutionNeedsInput:
-		return db.ParkAgentExecution(ctx, org, execution)
-	case storage.AgentExecutionFailed:
-		return failAgentExecution(ctx, db, org, execution)
+	if outcome.unsupportedInput {
+		return failAgentExecution(ctx, db, org, execution, outcome.usage)
 	}
 	if runErr != nil && !errors.Is(runErr, context.DeadlineExceeded) {
 		return runErr
@@ -170,17 +176,23 @@ func runClaimedExecution(processCtx context.Context, db *storage.Database, org u
 	checkpoint, writer, err = saver.Restore(ctx)
 	if err != nil {
 		if errors.Is(err, storage.ErrAgentCheckpoint) {
-			return failAgentExecution(ctx, db, org, execution)
+			return failAgentExecution(ctx, db, org, execution, investigation.Usage{})
 		}
 		return err
 	}
 	if writer != execution.ID || checkpoint.ReplyRecovery == nil || checkpoint.ReplyRecovery.Active {
 		if runErr != nil {
-			return failAgentExecution(ctx, db, org, execution)
+			return failAgentExecution(ctx, db, org, execution, investigation.Usage{})
 		}
 		return errors.New("agent stream closed before its terminal checkpoint")
 	}
-	return finishAgentReply(ctx, db, org, execution, checkpoint, profile.Conclusion)
+	if runErr == nil && !outcome.completed {
+		return failAgentExecution(ctx, db, org, execution, outcome.usage)
+	}
+	if recovering && execution.InvestigationID != uuid.Nil && logger != nil {
+		logger.InfoContext(ctx, "agent token usage incomplete after recovery", slog.String("execution_id", execution.ID.String()))
+	}
+	return finishAgentReply(ctx, db, org, execution, checkpoint, prepare, profile.Conclusion, outcome.usage)
 }
 
 func renewExecution(ctx context.Context, db *storage.Database, org uuid.UUID, execution storage.AgentExecution, revoke context.CancelCauseFunc) {
@@ -202,83 +214,86 @@ func renewExecution(ctx context.Context, db *storage.Database, org uuid.UUID, ex
 	}
 }
 
-func drainExecution(ctx context.Context, stream <-chan event.Event) (storage.AgentExecutionStatus, error) {
+type executionOutcome struct {
+	completed        bool
+	unsupportedInput bool
+	usage            investigation.Usage
+}
+
+func drainExecution(ctx context.Context, stream <-chan event.Event) (executionOutcome, error) {
+	var outcome executionOutcome
 	for {
 		select {
 		case <-ctx.Done():
-			return "", context.Cause(ctx)
+			return outcome, context.Cause(ctx)
 		case item, open := <-stream:
 			if !open {
-				return "", nil
+				return outcome, nil
 			}
-			switch item.(type) {
-			case event.RequireUserConfirmEvent:
-				return storage.AgentExecutionNeedsInput, nil
-			case event.RequireExternalExecutionEvent:
-				return storage.AgentExecutionFailed, nil
+			switch item := item.(type) {
+			case event.RequireUserConfirmEvent, event.RequireExternalExecutionEvent:
+				outcome.unsupportedInput = true
+				return outcome, nil
+			case event.ReplyEndEvent:
+				outcome.completed = item.FinishedReason == types.ReplyCompleted && item.Error == nil
+			case event.ModelCallEndEvent:
+				outcome.usage.InputTokens += int64(item.InputTokens) + int64(item.CacheCreationTokens) + int64(item.CacheReadTokens)
+				outcome.usage.OutputTokens += int64(item.OutputTokens)
 			}
 		}
 	}
-}
-
-func reconcileAgentReply(ctx context.Context, db *storage.Database, org uuid.UUID, execution storage.AgentExecution,
-	checkpoint *agent.AgentState, prepare PrepareExecution,
-) error {
-	ctx, cancel := context.WithTimeout(ctx, executionBudget)
-	defer cancel()
-	var conclusion func(context.Context, string) (investigation.Conclusion, error)
-	if execution.InvestigationID != uuid.Nil && checkpoint.MiddlewareState[completedReplyMarker] == checkpoint.ReplyID {
-		profile, err := prepare(ctx, org, execution)
-		if err != nil {
-			if ctx.Err() != nil {
-				return context.Cause(ctx)
-			}
-			return failAgentExecution(ctx, db, org, execution)
-		}
-		conclusion = profile.Conclusion
-	}
-	return finishAgentReply(ctx, db, org, execution, checkpoint, conclusion)
 }
 
 func finishAgentReply(ctx context.Context, db *storage.Database, org uuid.UUID, execution storage.AgentExecution,
-	checkpoint *agent.AgentState, decode func(context.Context, string) (investigation.Conclusion, error),
+	checkpoint *agent.AgentState, prepare PrepareExecution,
+	validate func(context.Context, string) (investigation.Conclusion, error), usage investigation.Usage,
 ) error {
-	ctx, cancel := context.WithTimeout(ctx, executionBudget)
-	defer cancel()
 	if checkpoint.MiddlewareState[completedReplyMarker] != checkpoint.ReplyID {
-		return failAgentExecution(ctx, db, org, execution)
+		return failAgentExecution(ctx, db, org, execution, usage)
 	}
-	reply, usage := finalReplyContent(checkpoint)
-	if strings.TrimSpace(reply) == "" {
-		return failAgentExecution(ctx, db, org, execution)
+	reply := finalReplyContent(checkpoint)
+	if strings.TrimSpace(reply) == "" ||
+		execution.ConversationID != uuid.Nil && utf8.RuneCountInString(reply) > conversation.MaxMessageTextLength {
+		return failAgentExecution(ctx, db, org, execution, usage)
 	}
 	var conclusion *investigation.Conclusion
 	if execution.InvestigationID != uuid.Nil {
-		if decode == nil {
-			return failAgentExecution(ctx, db, org, execution)
+		resultCtx, cancel := context.WithTimeout(ctx, executionResultLimit)
+		defer cancel()
+		if validate == nil {
+			profile, err := prepare(resultCtx, org, execution)
+			if ctx.Err() != nil {
+				return context.Cause(ctx)
+			}
+			if err != nil || profile.Conclusion == nil || resultCtx.Err() != nil {
+				return failAgentExecution(ctx, db, org, execution, usage)
+			}
+			validate = profile.Conclusion
 		}
-		validated, err := decode(ctx, reply)
+		validated, err := validate(resultCtx, reply)
 		if ctx.Err() != nil {
 			return context.Cause(ctx)
 		}
-		if err != nil {
-			return failAgentExecution(ctx, db, org, execution)
+		if err != nil || resultCtx.Err() != nil {
+			return failAgentExecution(ctx, db, org, execution, usage)
 		}
 		conclusion = &validated
 	}
 	return db.FinishAgentExecution(ctx, org, execution, storage.AgentExecutionCompleted, reply, conclusion, usage)
 }
 
-func failAgentExecution(ctx context.Context, db *storage.Database, org uuid.UUID, execution storage.AgentExecution) error {
-	return db.FinishAgentExecution(ctx, org, execution, storage.AgentExecutionFailed, "", nil, investigation.Usage{})
+func failAgentExecution(ctx context.Context, db *storage.Database, org uuid.UUID, execution storage.AgentExecution,
+	usage investigation.Usage,
+) error {
+	return db.FinishAgentExecution(ctx, org, execution, storage.AgentExecutionFailed, "", nil, usage)
 }
 
-func finalReplyContent(state *agent.AgentState) (string, investigation.Usage) {
+func finalReplyContent(state *agent.AgentState) string {
 	for _, msg := range slices.Backward(state.Context) {
 		if msg == nil || msg.Role != message.RoleAssistant || msg.ID != state.ReplyID {
 			continue
 		}
-		// Earlier tool rounds share this Message. Only the final text is product output.
+		// Earlier Tool rounds share this Message.
 		start := 0
 		for i, block := range msg.Content {
 			switch block.(type) {
@@ -292,14 +307,9 @@ func finalReplyContent(state *agent.AgentState) (string, investigation.Usage) {
 				text.WriteString(part.Text)
 			}
 		}
-		var usage investigation.Usage
-		if msg.Usage != nil {
-			usage.InputTokens = int64(msg.Usage.InputTokens)
-			usage.OutputTokens = int64(msg.Usage.OutputTokens)
-		}
-		return text.String(), usage
+		return text.String()
 	}
-	return "", investigation.Usage{}
+	return ""
 }
 
 type executionReply struct {

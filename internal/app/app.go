@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/open-cluster/oc-control-plane/internal/ai"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
@@ -50,7 +49,7 @@ type Options struct {
 	Version           string
 	OnListen          func(net.Addr)
 	Agent             investigation.Agent
-	PrepareExecution  ai.PrepareExecution
+	PrepareExecution  PrepareExecution
 	ExecutionWake     <-chan struct{}
 	Completer         agent.Completer
 	ModelEffort       string
@@ -253,7 +252,7 @@ type assembled struct {
 	catalog           integrations.Catalog
 	sealer            seal.Sealer
 	investigations    *investigation.Runner
-	prepareExecution  ai.PrepareExecution
+	prepareExecution  PrepareExecution
 	executionWake     <-chan struct{}
 	onListen          func(net.Addr)
 	inventoryInterval time.Duration
