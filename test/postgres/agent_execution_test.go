@@ -1,6 +1,7 @@
 package storage_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -26,8 +27,27 @@ func TestAgentExecution(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		first, err = database.ClaimAgentExecution(ctx, organization, first.ID, time.Minute)
+		pool, err := poolForTest(database, organization)
 		if err != nil {
+			t.Fatal(err)
+		}
+		// A checkpoint insert takes key share on its Conversation.
+		fkCheck, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = fkCheck.Rollback(ctx) }()
+		if _, err := fkCheck.Exec(ctx, `SELECT 1 FROM conversation
+			WHERE org_id = $1 AND conversation_id = $2 FOR KEY SHARE`, organization, chat.ID); err != nil {
+			t.Fatal(err)
+		}
+		claimCtx, cancelClaim := context.WithTimeout(ctx, 3*time.Second)
+		defer cancelClaim()
+		first, err = database.ClaimAgentExecution(claimCtx, organization, first.ID, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := fkCheck.Commit(ctx); err != nil {
 			t.Fatal(err)
 		}
 		saver := database.AgentStateSaver(organization, first)
@@ -40,10 +60,6 @@ func TestAgentExecution(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		pool, err := poolForTest(database, organization)
-		if err != nil {
-			t.Fatal(err)
-		}
 		if _, err := pool.Exec(ctx, "DELETE FROM agent_execution WHERE org_id = $1 AND execution_id = $2", organization, first.ID); err != nil {
 			t.Fatal(err)
 		}
