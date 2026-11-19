@@ -550,7 +550,7 @@ func lockConversation(
 		SELECT 1
 		  FROM conversation
 		 WHERE conversation_id = $1 AND org_id = $2
-		   FOR UPDATE`, id, organization).Scan(&found); err != nil {
+		   FOR NO KEY UPDATE`, id, organization).Scan(&found); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return conversation.ErrUnknown
 		}
