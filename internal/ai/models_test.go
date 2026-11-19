@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -58,7 +59,7 @@ func TestNativeAnthropicModel(t *testing.T) {
 		ModelName:            "claude-fixture",
 		ModelAPIKey:          "fixture-key",
 		ModelMaxOutputTokens: 1400,
-	}, provider.URL)
+	}, provider.URL, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +213,7 @@ func TestOpenRouterContinuation(t *testing.T) {
 		ModelName: "fixture",
 
 		ModelAPIKey: "fixture-key",
-	}, provider.URL)
+	}, provider.URL, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +310,7 @@ func TestNativeProviderErrorsAreRedacted(t *testing.T) {
 		ModelProvider: "anthropic",
 		ModelName:     "fixture",
 		ModelAPIKey:   "fixture-key",
-	}, server.URL)
+	}, server.URL, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,14 +337,163 @@ func TestNativeProviderErrorsAreRedacted(t *testing.T) {
 	}
 }
 
-func TestProviderSelectionRejectsUnqualifiedModels(t *testing.T) {
-	_, err := ai.NewChatModel(config.Config{
+func TestDeploymentSelectsNativeModels(t *testing.T) {
+	for _, test := range []struct {
+		provider string
+		native   model.ChatModel
+	}{
+		{provider: "anthropic", native: (*model.AnthropicChatModel)(nil)},
+		{provider: "openai", native: (*model.OpenAIChatModel)(nil)},
+		{provider: "gemini", native: (*model.GeminiChatModel)(nil)},
+		{provider: "deepseek", native: (*model.DeepSeekChatModel)(nil)},
+		{provider: "dashscope", native: (*model.DashScopeChatModel)(nil)},
+		{provider: "moonshot", native: (*model.MoonshotChatModel)(nil)},
+		{provider: "kimi", native: (*model.MoonshotChatModel)(nil)},
+		{provider: "xai", native: (*model.XAIChatModel)(nil)},
+		{provider: "ollama", native: (*model.OllamaNativeChatModel)(nil)},
+	} {
+		t.Run(test.provider, func(t *testing.T) {
+			settings := map[string]string{
+				config.EnvDatabaseDSN:   "postgres://user:password@localhost/opencluster",
+				config.EnvSealingKey:    strings.Repeat("k", 32),
+				config.EnvModelProvider: test.provider,
+				config.EnvModelName:     "fixture",
+			}
+			if test.provider != "ollama" {
+				settings[config.EnvModelKey] = "fixture-key"
+			}
+			cfg, err := config.Load(func(key string) (string, bool) {
+				value, exists := settings[key]
+				return value, exists
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			chat, err := ai.NewChatModel(cfg, "", 8192)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if wrapper, ok := chat.(model.ChatModelUnwrapper); ok {
+				chat = wrapper.Unwrap()
+			}
+			if reflect.TypeOf(chat) != reflect.TypeOf(test.native) {
+				t.Fatalf("constructed %T, want %T", chat, test.native)
+			}
+		})
+	}
+}
+
+func TestLocalOllamaUsesNativeContextCapacity(t *testing.T) {
+	const capacity = 8192
+	const outputLimit = 1400
+	var calls atomic.Int32
+	const name = "qwen3:8b"
+	settings := config.Config{
 		ModelProvider: "ollama",
-		ModelName:     "fixture",
-		ModelAPIKey:   "fixture-key",
-	}, "http://127.0.0.1:1")
-	if err == nil {
-		t.Fatal("unqualified Ollama stream was accepted")
+		ModelName:     name,
+	}
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/chat" {
+			t.Errorf("Ollama request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "" {
+			t.Error("keyless Ollama request carried credentials")
+		}
+		var request struct {
+			Model   string `json:"model"`
+			Options struct {
+				NumCtx     int  `json:"num_ctx"`
+				NumPredict *int `json:"num_predict"`
+			} `json:"options"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode Ollama request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if request.Model != name || request.Options.NumCtx != capacity {
+			t.Errorf("unexpected Ollama request configuration: %+v", request)
+		}
+		switch calls.Add(1) {
+		case 1:
+			if request.Options.NumPredict != nil {
+				t.Errorf("Ollama injected an output limit: %d", *request.Options.NumPredict)
+			}
+		case 2:
+			if request.Options.NumPredict == nil || *request.Options.NumPredict != capacity-1 {
+				t.Error("Ollama per-call output limit did not leave room for input")
+			}
+		default:
+			if request.Options.NumPredict == nil || *request.Options.NumPredict != outputLimit {
+				t.Error("Ollama did not apply the configured output limit")
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"message":{"role":"assistant","content":"ready"},"done":true,"done_reason":"stop"}`)
+	}))
+	defer provider.Close()
+
+	chat, err := ai.NewChatModel(settings, provider.URL, capacity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := model.ResolveContextSize(chat, 0); got != capacity {
+		t.Fatalf("AgentScope context capacity = %d, want %d", got, capacity)
+	}
+	input := []*message.Msg{message.UserMsg("operator", "check")}
+	result, err := chat.Chat(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsLast || len(result.Content) != 1 {
+		t.Fatalf("unexpected Ollama reply: %+v", result)
+	}
+
+	if _, err := chat.Chat(t.Context(), input, model.WithMaxTokens(capacity)); err != nil {
+		t.Fatal(err)
+	}
+	limited := settings
+	limited.ModelMaxOutputTokens = outputLimit
+	chat, err = ai.NewChatModel(limited, provider.URL, capacity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, requested := range []int{4000, -1} {
+		if _, err := chat.Chat(t.Context(), input, model.WithMaxTokens(requested)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, test := range []struct {
+		name        string
+		endpoint    string
+		capacity    int
+		outputLimit int64
+	}{
+		{name: "missing context"},
+		{
+			name:        "output fills the context",
+			capacity:    capacity,
+			outputLimit: capacity,
+		},
+		{
+			name:     "insecure remote endpoint",
+			endpoint: "http://192.0.2.1:11434",
+			capacity: capacity,
+		},
+		{
+			name:     "keyless remote endpoint",
+			endpoint: "https://ollama.example.com",
+			capacity: capacity,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			invalid := settings
+			invalid.ModelMaxOutputTokens = test.outputLimit
+			if _, err := ai.NewChatModel(invalid, test.endpoint, test.capacity); err == nil {
+				t.Fatal("invalid Ollama configuration was accepted")
+			}
+		})
 	}
 }
 
@@ -376,7 +526,7 @@ func TestOpenRouterTerminalFailuresDoNotPublishTools(t *testing.T) {
 				ModelProvider: "openrouter",
 				ModelName:     "fixture",
 				ModelAPIKey:   "fixture-key",
-			}, provider.URL)
+			}, provider.URL, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -420,7 +570,7 @@ func TestOpenRouterCancellationClosesProviderStream(t *testing.T) {
 		ModelProvider: "openrouter",
 		ModelName:     "fixture",
 		ModelAPIKey:   "fixture-key",
-	}, provider.URL)
+	}, provider.URL, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -458,6 +608,7 @@ func TestProviderFailureClassification(t *testing.T) {
 		{provider: "openrouter", status: http.StatusBadRequest, attempts: 1},
 		{provider: "openrouter", status: http.StatusTooManyRequests, attempts: 1},
 		{provider: "anthropic", status: http.StatusTooManyRequests, attempts: 3},
+		{provider: "openai", status: http.StatusTooManyRequests, attempts: 3},
 	} {
 		t.Run(fmt.Sprintf("%s/%d", test.provider, test.status), func(t *testing.T) {
 			var requests atomic.Int32
@@ -472,7 +623,7 @@ func TestProviderFailureClassification(t *testing.T) {
 				ModelProvider: test.provider,
 				ModelName:     "fixture",
 				ModelAPIKey:   "fixture-key",
-			}, server.URL)
+			}, server.URL, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
