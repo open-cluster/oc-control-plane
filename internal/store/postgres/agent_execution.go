@@ -206,39 +206,45 @@ const agentExecutionEligible = `
 	       AND head.status IN ('queued', 'running', 'needs_input'))`
 
 // ClaimNextAgentExecution discovers one runnable execution across the host's Organizations.
-// All changes use the same Organization-scoped claim and owner lock as explicit claims.
+// The owner locks serialize claims with terminal writes and permit checkpoint foreign-key checks.
 func (p *Database) ClaimNextAgentExecution(ctx context.Context, leaseFor time.Duration) (uuid.UUID, AgentExecution, error) {
-	rows, err := p.pool.Query(ctx, `
-		SELECT e.org_id, e.execution_id FROM agent_execution e
-		WHERE e.status IN ('queued', 'running') `+agentExecutionEligible+`
-		ORDER BY e.created_at, e.execution_id LIMIT 16`)
-	if err != nil {
-		return uuid.Nil, AgentExecution{}, err
+	if leaseFor <= 0 {
+		return uuid.Nil, AgentExecution{}, errors.New("agent execution lease must be positive")
 	}
-	type candidate struct{ organization, id uuid.UUID }
-	candidates, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (candidate, error) {
-		var item candidate
-		err := row.Scan(&item.organization, &item.id)
-		return item, err
+	var organization, id uuid.UUID
+	var execution AgentExecution
+	err := pgx.BeginFunc(ctx, p.pool, func(tx pgx.Tx) error {
+		err := tx.QueryRow(ctx, `
+			WITH chat AS MATERIALIZED (
+			    SELECT e.org_id, e.execution_id, e.created_at FROM agent_execution e
+			      JOIN conversation c ON c.org_id = e.org_id AND c.conversation_id = e.conversation_id
+			     WHERE e.status IN ('queued', 'running') `+agentExecutionEligible+`
+			     ORDER BY e.created_at, e.execution_id LIMIT 1 FOR NO KEY UPDATE OF c SKIP LOCKED
+			), investigation_work AS MATERIALIZED (
+			    SELECT e.org_id, e.execution_id, e.created_at FROM agent_execution e
+			      JOIN investigation i ON i.org_id = e.org_id AND i.investigation_id = e.investigation_id
+			     WHERE e.status IN ('queued', 'running') `+agentExecutionEligible+`
+			     ORDER BY e.created_at, e.execution_id LIMIT 1 FOR NO KEY UPDATE OF i SKIP LOCKED
+			) SELECT org_id, execution_id FROM (
+				SELECT * FROM chat UNION ALL SELECT * FROM investigation_work
+			) AS candidates ORDER BY created_at, execution_id LIMIT 1`).Scan(&organization, &id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrAgentExecutionUnavailable
+		}
+		if err != nil {
+			return err
+		}
+		execution, err = claimEligibleAgentExecution(ctx, tx, organization, id, leaseFor)
+		return err
 	})
 	if err != nil {
-		return uuid.Nil, AgentExecution{}, err
+		return uuid.Nil, AgentExecution{}, fmt.Errorf("claiming the next agent execution: %w", err)
 	}
-	for _, item := range candidates {
-		execution, err := p.claimAgentExecution(ctx, item.organization, item.id, leaseFor, true)
-		if !errors.Is(err, ErrAgentExecutionUnavailable) {
-			return item.organization, execution, err
-		}
-	}
-	return uuid.Nil, AgentExecution{}, ErrAgentExecutionUnavailable
+	return organization, execution, nil
 }
 
-func (p *Database) ClaimAgentExecution(ctx context.Context, organization, id uuid.UUID, leaseFor time.Duration) (AgentExecution, error) {
-	return p.claimAgentExecution(ctx, organization, id, leaseFor, false)
-}
-
-func (p *Database) claimAgentExecution(
-	ctx context.Context, organization, id uuid.UUID, leaseFor time.Duration, skipBusy bool,
+func (p *Database) ClaimAgentExecution(
+	ctx context.Context, organization, id uuid.UUID, leaseFor time.Duration,
 ) (AgentExecution, error) {
 	if leaseFor <= 0 {
 		return AgentExecution{}, errors.New("agent execution lease must be positive")
@@ -258,46 +264,36 @@ func (p *Database) claimAgentExecution(
 		if err != nil {
 			return err
 		}
-		if skipBusy {
-			// Discovery skips busy owners and keeps the same owner-before-execution lock order.
-			var owner int
-			if conversationID != nil {
-				err = tx.QueryRow(ctx, `SELECT 1 FROM conversation WHERE org_id = $1 AND conversation_id = $2
-					FOR UPDATE SKIP LOCKED`, organization, *conversationID).Scan(&owner)
-			} else {
-				err = tx.QueryRow(ctx, `SELECT 1 FROM investigation WHERE org_id = $1 AND investigation_id = $2
-					FOR NO KEY UPDATE SKIP LOCKED`, organization, *investigationID).Scan(&owner)
-			}
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrAgentExecutionUnavailable
-			}
-			if err != nil {
-				return err
-			}
-		} else if conversationID != nil {
+		if conversationID != nil {
 			if err := lockConversation(ctx, tx, organization, *conversationID); err != nil {
 				return err
 			}
 		} else if err := lockInvestigation(ctx, tx, organization, *investigationID); err != nil {
 			return err
 		}
-
-		execution, err = scanAgentExecution(tx.QueryRow(ctx, `
-			UPDATE agent_execution AS e
-			   SET status = 'running', lease_token = $3, lease_expires_at = clock_timestamp() + $4::interval,
-			       started_at = coalesce(e.started_at, clock_timestamp())
-			 WHERE e.org_id = $1 AND e.execution_id = $2
-			   `+agentExecutionEligible+`
-			RETURNING `+agentExecutionColumns, organization, id, uuid.New(), leaseFor.String()))
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrAgentExecutionUnavailable
-		}
+		execution, err = claimEligibleAgentExecution(ctx, tx, organization, id, leaseFor)
 		return err
 	})
 	if err != nil {
 		return AgentExecution{}, fmt.Errorf("claiming an agent execution: %w", err)
 	}
 	return execution, nil
+}
+
+func claimEligibleAgentExecution(
+	ctx context.Context, tx pgx.Tx, organization, id uuid.UUID, leaseFor time.Duration,
+) (AgentExecution, error) {
+	execution, err := scanAgentExecution(tx.QueryRow(ctx, `
+		UPDATE agent_execution AS e
+		   SET status = 'running', lease_token = $3, lease_expires_at = clock_timestamp() + $4::interval,
+		       started_at = coalesce(e.started_at, clock_timestamp())
+		 WHERE e.org_id = $1 AND e.execution_id = $2
+		   `+agentExecutionEligible+`
+		RETURNING `+agentExecutionColumns, organization, id, uuid.New(), leaseFor.String()))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AgentExecution{}, ErrAgentExecutionUnavailable
+	}
+	return execution, err
 }
 
 func endAgentLease(ctx context.Context, tx pgx.Tx, organization uuid.UUID, execution AgentExecution, status AgentExecutionStatus, replySequence int64) error {
