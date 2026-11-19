@@ -23,7 +23,7 @@ const (
 )
 
 // NewChatModel assembles an AgentScope model from the deployment's AI configuration.
-func NewChatModel(settings config.Config, baseURL string, contextSize int) (model.ChatModel, error) {
+func NewChatModel(settings config.Config, baseURL string) (model.ChatModel, error) {
 	name := strings.TrimSpace(settings.ModelName)
 	if name == "" || strings.TrimSpace(settings.ModelAPIKey) == "" {
 		return nil, errors.New("AI model identifier and credential are required")
@@ -36,7 +36,6 @@ func NewChatModel(settings config.Config, baseURL string, contextSize int) (mode
 		}
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
-	credential := model.NewSecretStr(settings.ModelAPIKey)
 	client := &http.Client{
 		Timeout:   modelRequestTimeout,
 		Transport: modelTransport{redactStatus: settings.ModelProvider != "openrouter"},
@@ -49,57 +48,24 @@ func NewChatModel(settings config.Config, baseURL string, contextSize int) (mode
 		maxTokens = 32_000
 	}
 
-	var native model.ChatModel
-	var err error
 	switch settings.ModelProvider {
 	case "openrouter":
 		return newOpenRouter(name, settings.ModelAPIKey, baseURL, maxTokens, client), nil
 	case "anthropic":
-		native, err = model.NewAnthropicChatModel(&model.AnthropicConfig{
-			SecretAPIKey: credential, BaseURL: baseURL, Model: name,
-			MaxOutputTokens: maxTokens, HTTPClient: client,
+		native, err := model.NewAnthropicChatModel(&model.AnthropicConfig{
+			SecretAPIKey:    model.NewSecretStr(settings.ModelAPIKey),
+			BaseURL:         baseURL,
+			Model:           name,
+			MaxOutputTokens: maxTokens,
+			HTTPClient:      client,
 		})
-	case "openai":
-		native, err = model.NewOpenAIChatModel(model.OpenAIConfig{
-			SecretAPIKey: credential, BaseURL: baseURL, Model: name, HTTPClient: client,
-		})
-	case "gemini":
-		native, err = model.NewGeminiChatModel(model.GeminiConfig{
-			SecretAPIKey: credential, BaseURL: baseURL, Model: name, HTTPClient: client,
-		})
-	case "deepseek":
-		native, err = model.NewDeepSeekChatModel(model.DeepSeekConfig{
-			SecretAPIKey: credential, BaseURL: baseURL, Model: name, HTTPClient: client,
-		})
-	case "dashscope":
-		native, err = model.NewDashScopeChatModel(model.DashScopeConfig{
-			SecretAPIKey: credential, BaseURL: baseURL, Model: name, HTTPClient: client,
-		})
-	case "moonshot", "kimi":
-		native, err = model.NewMoonshotChatModel(model.MoonshotConfig{
-			SecretAPIKey: credential, BaseURL: baseURL, Model: name, HTTPClient: client,
-		})
-	case "xai":
-		native, err = model.NewXAIChatModel(model.XAIConfig{
-			SecretAPIKey: credential, BaseURL: baseURL, Model: name, HTTPClient: client,
-		})
-	case "ollama":
-		if baseURL == "" || contextSize <= 0 {
-			return nil, errors.New("an explicit endpoint and context capacity are required for Ollama")
+		if err != nil {
+			return nil, errors.New("AI provider configuration is invalid")
 		}
-		native, err = model.NewOllamaNativeChatModel(model.OllamaNativeConfig{
-			BaseURL: baseURL, Model: name, HTTPClient: client, NumCtx: contextSize,
-			ClientOptions: &model.ClientOptions{
-				DefaultHeaders: map[string]string{"Authorization": "Bearer " + settings.ModelAPIKey},
-			},
-		})
+		return deploymentModel{ChatModel: native, maxTokens: maxTokens}, nil
 	default:
 		return nil, errors.New("unsupported AI provider")
 	}
-	if err != nil {
-		return nil, errors.New("AI provider configuration is invalid")
-	}
-	return deploymentModel{ChatModel: native, maxTokens: maxTokens}, nil
 }
 
 func modelEndpointAllowed(endpoint *url.URL) bool {
@@ -159,7 +125,7 @@ func (m deploymentModel) limits(options *model.CallOptions) {
 	if options.MaxTokens == nil || *options.MaxTokens > m.maxTokens {
 		options.MaxTokens = &m.maxTokens
 	}
-	// Leave transport retries to the native model.
+	// Anthropic's buffered HTTP helper retries. Disable the optional model-level loop.
 	options.MaxRetries = 0
 }
 

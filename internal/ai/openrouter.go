@@ -254,35 +254,53 @@ type openRouterEndKey struct{}
 // The pinned SDK does not distinguish an exhausted reader from the SSE terminator.
 type openRouterStreamEnd struct {
 	io.ReadCloser
-	tail   [20]byte
-	length int
-	done   bool
-	failed bool
+	line       [len("data: [DONE]")]byte
+	lineLength int
+	previousCR bool
+	hasData    bool
+	sentinel   bool
+	done       bool
+	failed     bool
 }
 
 func (s *openRouterStreamEnd) Read(p []byte) (int, error) {
 	n, err := s.ReadCloser.Read(p)
 	s.failed = s.failed || err != nil && err != io.EOF
-	if s.done || n == 0 {
-		return n, err
-	}
-	// Check the overlap as well as the new bytes because reads can split a frame.
-	var overlap [40]byte
-	copy(overlap[:], s.tail[:s.length])
-	joined := s.length + copy(overlap[s.length:], p[:min(n, len(s.tail))])
-	s.done = openRouterDoneFrame(overlap[:joined]) || openRouterDoneFrame(p[:n])
-	if n >= len(s.tail) {
-		s.length = copy(s.tail[:], p[n-len(s.tail):n])
-	} else {
-		start := max(0, joined-len(s.tail))
-		s.length = copy(s.tail[:], overlap[start:joined])
+	// Observe only the data field of a complete frame. The SDK decodes the stream.
+	for _, b := range p[:n] {
+		if s.done {
+			break
+		}
+		if b == '\n' && s.previousCR {
+			s.previousCR = false
+			continue
+		}
+		s.previousCR = b == '\r'
+		if b == '\r' || b == '\n' {
+			s.finishLine()
+		} else {
+			if s.lineLength < len(s.line) {
+				s.line[s.lineLength] = b
+			}
+			s.lineLength++
+		}
 	}
 	return n, err
 }
 
-func openRouterDoneFrame(data []byte) bool {
-	return bytes.Contains(data, []byte("\n\ndata: [DONE]\n\n")) ||
-		bytes.Contains(data, []byte("\r\n\r\ndata: [DONE]\r\n\r\n"))
+func (s *openRouterStreamEnd) finishLine() {
+	if s.lineLength == 0 {
+		s.done = s.sentinel
+		s.hasData, s.sentinel = false, false
+		return
+	}
+	line := s.line[:min(s.lineLength, len(s.line))]
+	if bytes.Equal(line, []byte("data")) || bytes.HasPrefix(line, []byte("data:")) {
+		s.sentinel = !s.hasData && s.lineLength == len(line) &&
+			(bytes.Equal(line, []byte("data:[DONE]")) || bytes.Equal(line, []byte("data: [DONE]")))
+		s.hasData = true
+	}
+	s.lineLength = 0
 }
 
 func (s *openRouterStreamEnd) complete() bool { return s.done && !s.failed }

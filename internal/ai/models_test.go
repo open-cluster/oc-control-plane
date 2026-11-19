@@ -58,7 +58,7 @@ func TestNativeAnthropicModel(t *testing.T) {
 		ModelName:            "claude-fixture",
 		ModelAPIKey:          "fixture-key",
 		ModelMaxOutputTokens: 1400,
-	}, provider.URL, 64_000)
+	}, provider.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,11 +201,18 @@ func TestOpenRouterContinuation(t *testing.T) {
 		} {
 			_, _ = fmt.Fprintf(w, "data: {\"id\":\"reply\",\"model\":\"fixture\",\"object\":\"chat.completion.chunk\",\"created\":1,\"choices\":[%s]}\n\n", frame)
 		}
-		_, _ = fmt.Fprint(w, "data: [DONE]\n\n: keepalive\n\n")
+		_, _ = fmt.Fprint(w, "id: final\r\ndata:[DONE]\r\n\r\n: keepalive\n\n")
 	}))
 	defer provider.Close()
 
-	chat, err := ai.NewChatModel(config.Config{ModelProvider: "openrouter", ModelName: "fixture", ModelAPIKey: "fixture-key"}, provider.URL, 64_000)
+	chat, err := ai.NewChatModel(config.Config{
+
+		ModelProvider: "openrouter",
+
+		ModelName: "fixture",
+
+		ModelAPIKey: "fixture-key",
+	}, provider.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +305,11 @@ func TestNativeProviderErrorsAreRedacted(t *testing.T) {
 		_, _ = fmt.Fprintf(w, "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":%q}}\n\n", canary)
 	}))
 	defer server.Close()
-	chat, err := ai.NewChatModel(config.Config{ModelProvider: "anthropic", ModelName: "fixture", ModelAPIKey: "fixture-key"}, server.URL, 64_000)
+	chat, err := ai.NewChatModel(config.Config{
+		ModelProvider: "anthropic",
+		ModelName:     "fixture",
+		ModelAPIKey:   "fixture-key",
+	}, server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,38 +336,14 @@ func TestNativeProviderErrorsAreRedacted(t *testing.T) {
 	}
 }
 
-func TestOllamaContextMatchesRequestCapacity(t *testing.T) {
-	const capacity = 8192
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request struct {
-			Options struct {
-				NumCtx int `json:"num_ctx"`
-			}
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
-		if r.URL.Path != "/api/chat" || request.Options.NumCtx != capacity {
-			t.Errorf("Ollama request used capacity %d at %s", request.Options.NumCtx, r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"model":"fixture","message":{"role":"assistant","content":"ok"},"done":true,"done_reason":"stop"}`)
-	}))
-	defer server.Close()
-	settings := config.Config{ModelProvider: "ollama", ModelName: "fixture", ModelAPIKey: "fixture-key"}
-	chat, err := ai.NewChatModel(settings, server.URL, capacity)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if model.ResolveContextSize(chat, 320) != capacity {
-		t.Fatal("AgentScope would use a different context capacity from the provider")
-	}
-	if _, err := chat.Chat(t.Context(), []*message.Msg{message.UserMsg("operator", "hello")}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ai.NewChatModel(settings, server.URL, 0); err == nil {
-		t.Fatal("Ollama accepted an unspecified request capacity")
+func TestProviderSelectionRejectsUnqualifiedModels(t *testing.T) {
+	_, err := ai.NewChatModel(config.Config{
+		ModelProvider: "ollama",
+		ModelName:     "fixture",
+		ModelAPIKey:   "fixture-key",
+	}, "http://127.0.0.1:1")
+	if err == nil {
+		t.Fatal("unqualified Ollama stream was accepted")
 	}
 }
 
@@ -385,7 +372,11 @@ func TestOpenRouterTerminalFailuresDoNotPublishTools(t *testing.T) {
 				}
 			}))
 			defer provider.Close()
-			chat, err := ai.NewChatModel(config.Config{ModelProvider: "openrouter", ModelName: "fixture", ModelAPIKey: "fixture-key"}, provider.URL, 64_000)
+			chat, err := ai.NewChatModel(config.Config{
+				ModelProvider: "openrouter",
+				ModelName:     "fixture",
+				ModelAPIKey:   "fixture-key",
+			}, provider.URL)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -425,7 +416,11 @@ func TestOpenRouterCancellationClosesProviderStream(t *testing.T) {
 		}
 	}))
 	defer provider.Close()
-	chat, err := ai.NewChatModel(config.Config{ModelProvider: "openrouter", ModelName: "fixture", ModelAPIKey: "fixture-key"}, provider.URL, 64000)
+	chat, err := ai.NewChatModel(config.Config{
+		ModelProvider: "openrouter",
+		ModelName:     "fixture",
+		ModelAPIKey:   "fixture-key",
+	}, provider.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,23 +452,35 @@ func TestProviderFailureClassification(t *testing.T) {
 	for _, test := range []struct {
 		provider string
 		status   int
+		attempts int
 	}{
-		{provider: "anthropic", status: http.StatusBadRequest},
-		{provider: "openrouter", status: http.StatusBadRequest},
-		{provider: "openrouter", status: http.StatusTooManyRequests},
+		{provider: "anthropic", status: http.StatusBadRequest, attempts: 1},
+		{provider: "openrouter", status: http.StatusBadRequest, attempts: 1},
+		{provider: "openrouter", status: http.StatusTooManyRequests, attempts: 1},
+		{provider: "anthropic", status: http.StatusTooManyRequests, attempts: 3},
 	} {
 		t.Run(fmt.Sprintf("%s/%d", test.provider, test.status), func(t *testing.T) {
+			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(test.status)
 				_, _ = fmt.Fprintf(w, `{"error":{"code":%d,"message":"maximum context length exceeded (%s)"}}`, test.status, canary)
 			}))
 			defer server.Close()
-			chat, err := ai.NewChatModel(config.Config{ModelProvider: test.provider, ModelName: "fixture", ModelAPIKey: "fixture-key"}, server.URL, 64000)
+			chat, err := ai.NewChatModel(config.Config{
+				ModelProvider: test.provider,
+				ModelName:     "fixture",
+				ModelAPIKey:   "fixture-key",
+			}, server.URL)
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = chat.Chat(t.Context(), []*message.Msg{message.UserMsg("operator", "check")})
+			input := []*message.Msg{message.UserMsg("operator", "check")}
+			_, err = chat.Chat(t.Context(), input, model.WithRetries(2, time.Millisecond))
+			if got := requests.Swap(0); got != int32(test.attempts) {
+				t.Fatalf("buffered HTTP attempts = %d, want %d", got, test.attempts)
+			}
 			if err == nil || strings.Contains(err.Error(), canary) {
 				t.Fatalf("provider error is absent or contains the response payload: %v", err)
 			}
@@ -486,6 +493,34 @@ func TestProviderFailureClassification(t *testing.T) {
 				if !model.IsRetryableError(err) {
 					t.Errorf("AgentScope would miss provider throttling: %v", err)
 				}
+			}
+			if test.status != http.StatusTooManyRequests {
+				return
+			}
+			schema := json.RawMessage(`{"type":"object","properties":{"note":{"type":"string"}},"required":["note"]}`)
+			if _, _, err := model.GenerateStructuredOutputWithUsage(t.Context(), chat, input, schema); err == nil {
+				t.Fatal("the structured request accepted a throttling response")
+			}
+			if got := requests.Swap(0); got != int32(test.attempts) {
+				t.Fatalf("structured HTTP attempts = %d, want %d", got, test.attempts)
+			}
+			runtime, err := ai.NewAgent(ai.Config{
+				Name:            "fixture",
+				SessionID:       "retry-fixture",
+				Model:           chat,
+				ToolConcurrency: 1,
+			}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stream, err := runtime.ReplyStream(t.Context(), "check")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range stream {
+			}
+			if got := requests.Load(); got != 3 {
+				t.Fatalf("agent streaming HTTP attempts = %d, want 3", got)
 			}
 		})
 	}
