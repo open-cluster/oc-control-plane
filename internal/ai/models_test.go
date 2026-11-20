@@ -143,7 +143,7 @@ func TestOpenRouterPolicyAndContinuation(t *testing.T) {
 	if err := json.Unmarshal(state, &restored); err != nil {
 		t.Fatal(err)
 	}
-	history := append(restored.Context, &message.Msg{
+	restored.Context = append(restored.Context, &message.Msg{
 		Role: message.RoleUser,
 		Content: []message.ContentBlock{message.ToolResultBlock{
 			Type:   "tool_result",
@@ -152,7 +152,7 @@ func TestOpenRouterPolicyAndContinuation(t *testing.T) {
 			Output: "8443",
 		}},
 	})
-	if reply, err := chat.Chat(ctx, history); err != nil || reply.GetTextContent() != `{"summary":"checkout"}` {
+	if reply, err := chat.Chat(ctx, restored.Context); err != nil || reply.GetTextContent() != `{"summary":"checkout"}` {
 		t.Fatalf("restored continuation failed: %v", err)
 	}
 	schema := json.RawMessage(`{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"]}`)
