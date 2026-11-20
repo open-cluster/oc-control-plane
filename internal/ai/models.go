@@ -219,7 +219,7 @@ func (m deploymentModel) Chat(
 	options := append(slices.Clone(opts), m.limitOutput)
 	switch m.ChatModel.(type) {
 	case *model.AnthropicChatModel, *model.OpenAIChatModel:
-		// Keep the HTTP helper's retries and discard the caller's outer retry option.
+		// These native models wrap the retrying HTTP helper with an optional second loop.
 		options = append(options, model.WithRetries(0, 0))
 	}
 	result, err := m.ChatModel.Chat(ctx, history, options...)
