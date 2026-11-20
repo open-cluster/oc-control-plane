@@ -57,7 +57,8 @@ func (m *openRouterChatModel) CountTokens(msgs []*message.Msg, tools []model.Too
 	return (&model.OpenAIChatModel{}).CountTokens(msgs, tools)
 }
 
-func (m *openRouterChatModel) Chat(ctx context.Context, msgs []*message.Msg, opts ...model.CallOption) (*model.ChatResponse, error) {
+func (m *openRouterChatModel) Chat(ctx context.Context,
+	msgs []*message.Msg, opts ...model.CallOption) (*model.ChatResponse, error) {
 	request, err := m.request(msgs, false, opts)
 	if err != nil {
 		return nil, err
@@ -85,7 +86,10 @@ func (m *openRouterChatModel) Chat(ctx context.Context, msgs []*message.Msg, opt
 	calls := make([]message.ToolCallBlock, 0, len(choice.Message.ToolCalls))
 	for _, tool := range choice.Message.ToolCalls {
 		calls = append(calls, message.ToolCallBlock{
-			Type: "tool_call", ID: tool.ID, Name: tool.Function.Name, Input: tool.Function.Arguments,
+			Type:  "tool_call",
+			ID:    tool.ID,
+			Name:  tool.Function.Name,
+			Input: tool.Function.Arguments,
 		})
 	}
 	return openRouterReply(result.ID, result.Model, string(*choice.FinishReason), text, calls, choice.Message.ReasoningDetails, result.Usage)
@@ -241,14 +245,18 @@ func openRouterFailure(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+
 	var invalid *sdkerrors.BadRequestResponseError
 	if errors.As(err, &invalid) && model.IsContextLimitExceeded(errors.New(invalid.Error_.Message)) {
 		return aserr.ErrModelContextLimit
 	}
 	switch err.(type) {
-	case *sdkerrors.TooManyRequestsResponseError, *sdkerrors.BadGatewayResponseError,
-		*sdkerrors.ServiceUnavailableResponseError, *sdkerrors.GatewayTimeoutResponseError,
-		*sdkerrors.ProviderOverloadedResponseError, *sdkerrors.InternalServerResponseError:
+	case *sdkerrors.TooManyRequestsResponseError,
+		*sdkerrors.BadGatewayResponseError,
+		*sdkerrors.ServiceUnavailableResponseError,
+		*sdkerrors.GatewayTimeoutResponseError,
+		*sdkerrors.ProviderOverloadedResponseError,
+		*sdkerrors.InternalServerResponseError:
 		return aserr.NewThrottled(0, "AI provider temporarily unavailable")
 	}
 	if err != nil {
@@ -313,7 +321,8 @@ func (s *openRouterStreamEnd) finishLine() {
 
 func (s *openRouterStreamEnd) complete() bool { return s.done && !s.failed }
 
-func (m *openRouterChatModel) request(msgs []*message.Msg, streaming bool, opts []model.CallOption) (components.ChatRequest, error) {
+func (m *openRouterChatModel) request(
+	msgs []*message.Msg, streaming bool, opts []model.CallOption) (components.ChatRequest, error) {
 	var parameters model.CallOptions
 	for _, opt := range opts {
 		opt(&parameters)
@@ -323,24 +332,32 @@ func (m *openRouterChatModel) request(msgs []*message.Msg, streaming bool, opts 
 		maxTokens = min(maxTokens, *parameters.MaxTokens)
 	}
 	request := components.ChatRequest{
-		Model: &m.name, Stream: &streaming,
+		Model:               &m.name,
+		Stream:              &streaming,
 		MaxCompletionTokens: optionalnullable.From(new(int64(maxTokens))),
 		Temperature:         optionalnullable.From(parameters.Temperature),
 		TopP:                optionalnullable.From(parameters.TopP),
 		Seed:                optionalnullable.From(parameters.Seed),
-		Provider: optionalnullable.From(&components.ProviderPreferences{
-			Zdr:               optionalnullable.From(new(true)),
-			AllowFallbacks:    optionalnullable.From(new(false)),
-			RequireParameters: optionalnullable.From(new(true)),
-			DataCollection:    optionalnullable.From(new(components.DataCollectionDeny)),
-			Sort:              optionalnullable.From(new(components.CreateProviderPreferencesSortProviderSort(components.ProviderSortPrice))),
-		}),
+		Provider: optionalnullable.From(
+			&components.ProviderPreferences{
+				Zdr:               optionalnullable.From(new(true)),
+				AllowFallbacks:    optionalnullable.From(new(false)),
+				RequireParameters: optionalnullable.From(new(true)),
+				// -------- Important --------
+				// We do not want data being collected on provider side, so we have to keep DataCollectionDeny type.
+				// -------- Important --------
+				DataCollection: optionalnullable.From(new(components.DataCollectionDeny)),
+				Sort: optionalnullable.From(new(
+					components.CreateProviderPreferencesSortProviderSort(components.ProviderSortPrice))),
+			}),
 	}
 	if streaming {
 		request.StreamOptions = optionalnullable.From(&components.ChatStreamOptions{IncludeUsage: new(true)})
 	}
 	if parameters.ThinkingEnable != nil && !*parameters.ThinkingEnable {
-		request.Reasoning = &components.ChatRequestReasoning{Effort: optionalnullable.From(new(components.ChatRequestEffortNone))}
+		request.Reasoning = &components.ChatRequestReasoning{
+			Effort: optionalnullable.From(new(components.ChatRequestEffortNone)),
+		}
 	} else if parameters.ReasoningEffort != nil {
 		effort := components.ChatRequestEffort(*parameters.ReasoningEffort)
 		if !effort.IsExact() {
@@ -421,7 +438,10 @@ func openRouterMessages(msgs []*message.Msg) ([]components.ChatMessages, error) 
 	return messages, nil
 }
 
-func openRouterTools(schemas []model.ToolSchema, choice *model.ToolChoice) ([]components.ChatFunctionTool, *components.ChatToolChoice, error) {
+func openRouterTools(schemas []model.ToolSchema, choice *model.ToolChoice) (
+	[]components.ChatFunctionTool, *components.ChatToolChoice, error,
+) {
+	// Choice tool check ------->
 	if choice != nil && len(choice.Tools) > 0 {
 		var allowed []model.ToolSchema
 		for _, schema := range schemas {
@@ -440,12 +460,13 @@ func openRouterTools(schemas []model.ToolSchema, choice *model.ToolChoice) ([]co
 		if json.Unmarshal(schema.Function.Parameters, &parameters) != nil {
 			return nil, nil, errOpenRouter
 		}
-		tools = append(tools, components.CreateChatFunctionToolChatFunctionToolFunction(components.ChatFunctionToolFunction{
-			Type: components.ChatFunctionToolTypeFunction,
-			Function: components.ChatFunctionToolFunctionFunction{
-				Name: schema.Function.Name, Description: &schema.Function.Description, Parameters: parameters,
-			},
-		}))
+		tools = append(tools, components.CreateChatFunctionToolChatFunctionToolFunction(
+			components.ChatFunctionToolFunction{
+				Type: components.ChatFunctionToolTypeFunction,
+				Function: components.ChatFunctionToolFunctionFunction{
+					Name: schema.Function.Name, Description: &schema.Function.Description, Parameters: parameters,
+				},
+			}))
 	}
 	if choice == nil || choice.Mode == "" || choice.Mode == "auto" {
 		return tools, nil, nil
@@ -484,7 +505,9 @@ func openRouterFormat(format *model.ResponseFormat) (*components.ResponseFormat,
 		return new(components.CreateResponseFormatJSONSchema(components.ChatFormatJSONSchemaConfig{
 			Type: components.ChatFormatJSONSchemaConfigTypeJSONSchema,
 			JSONSchema: components.ChatJSONSchemaConfig{
-				Name: name, Schema: schema, Strict: optionalnullable.From(&format.Strict),
+				Name:   name,
+				Schema: schema,
+				Strict: optionalnullable.From(&format.Strict),
 			},
 		})), nil
 	default:

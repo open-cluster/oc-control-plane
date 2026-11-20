@@ -18,11 +18,11 @@ import (
 )
 
 const (
-	modelRequestTimeout = 5 * time.Minute
 	maxProviderBody     = 8 << 20
+	modelRequestTimeout = 5 * time.Minute
 )
 
-// NewChatModel assembles an AgentScope model from the deployment's AI configuration.
+// NewChatModel assembles a model from the deployment's AI configuration.
 // Ollama uses the host profile's context size for both requests and compaction.
 func NewChatModel(settings config.Config, baseURL string, contextSize int) (model.ChatModel, error) {
 	name := strings.TrimSpace(settings.ModelName)
@@ -47,8 +47,10 @@ func NewChatModel(settings config.Config, baseURL string, contextSize int) (mode
 	baseURL = strings.TrimRight(baseURL, "/")
 	credential := model.NewSecretStr(key)
 	client := &http.Client{
-		Timeout:   modelRequestTimeout,
-		Transport: modelTransport{redactStatus: provider != "openrouter"},
+		Timeout: modelRequestTimeout,
+		Transport: modelTransport{
+			redactStatus: provider != "openrouter",
+		},
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -62,7 +64,12 @@ func NewChatModel(settings config.Config, baseURL string, contextSize int) (mode
 	var err error
 	switch provider {
 	case "openrouter":
-		return newOpenRouterChatModel(name, key, baseURL, maxTokens, client), nil
+		return newOpenRouterChatModel(
+			name,
+			key,
+			baseURL,
+			maxTokens,
+			client), nil
 	case "anthropic":
 		native, err = model.NewAnthropicChatModel(&model.AnthropicConfig{
 			SecretAPIKey:    credential,
@@ -138,7 +145,10 @@ func NewChatModel(settings config.Config, baseURL string, contextSize int) (mode
 	if err != nil {
 		return nil, errors.New("AI provider configuration is invalid")
 	}
-	return deploymentModel{ChatModel: native, maxTokens: maxTokens}, nil
+	return deploymentModel{
+		ChatModel: native,
+		maxTokens: maxTokens,
+	}, nil
 }
 
 func modelEndpointAllowed(endpoint *url.URL) bool {
@@ -208,7 +218,8 @@ func (m deploymentModel) limitOutput(options *model.CallOptions) {
 	}
 }
 
-func (m deploymentModel) Chat(ctx context.Context, history []*message.Msg, opts ...model.CallOption) (*model.ChatResponse, error) {
+func (m deploymentModel) Chat(
+	ctx context.Context, history []*message.Msg, opts ...model.CallOption) (*model.ChatResponse, error) {
 	options := append(slices.Clone(opts), m.limitOutput)
 	switch m.ChatModel.(type) {
 	case *model.AnthropicChatModel, *model.OpenAIChatModel:
@@ -225,7 +236,8 @@ func (m deploymentModel) Chat(ctx context.Context, history []*message.Msg, opts 
 	return result, nil
 }
 
-func (m deploymentModel) ChatStream(ctx context.Context, history []*message.Msg, opts ...model.CallOption) (<-chan model.ChatResponse, error) {
+func (m deploymentModel) ChatStream(
+	ctx context.Context, history []*message.Msg, opts ...model.CallOption) (<-chan model.ChatResponse, error) {
 	stream, err := m.ChatModel.ChatStream(ctx, history, append(slices.Clone(opts), m.limitOutput)...)
 	if err != nil || stream == nil {
 		return nil, redactModelError(err)
