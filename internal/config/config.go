@@ -305,7 +305,7 @@ func modelConfiguration(lookup func(string) (string, bool), cfg *Config) error {
 		return fmt.Errorf("%s is required when %s is set: a constructed model identifier "+
 			"is a 404 at best", EnvModelName, EnvModelProvider)
 	}
-	if key == "" {
+	if key == "" && cfg.ModelProvider != "ollama" {
 		return fmt.Errorf("%s or %s is required when %s is set",
 			EnvModelKey, EnvModelKeyFile, EnvModelProvider)
 	}

@@ -1,0 +1,678 @@
+package ai_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"slices"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
+	aserr "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/errors"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
+	"github.com/open-cluster/oc-control-plane/internal/ai"
+	"github.com/open-cluster/oc-control-plane/internal/config"
+)
+
+func TestNativeAnthropicModel(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Model     string `json:"model"`
+			MaxTokens int    `json:"max_tokens"`
+			Stream    bool   `json:"stream"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		if r.URL.Path != "/v1/messages" || r.Header.Get("x-api-key") != "fixture-key" ||
+			request.Model != "claude-fixture" || request.MaxTokens != 1400 || !request.Stream {
+			t.Errorf("unexpected Anthropic request to %s: %+v", r.URL.Path, request)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		for eventIndex, event := range []string{
+			`{"type":"message_start","message":{"id":"fixture","model":"claude-fixture","usage":{"input_tokens":14}}}`,
+			`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+			`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Checkout healthy."}}`,
+			`{"type":"content_block_stop","index":0}`,
+			`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}`,
+			`{"type":"message_stop"}`,
+		} {
+			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", []string{"message_start", "content_block_start",
+				"content_block_delta", "content_block_stop", "message_delta", "message_stop"}[eventIndex], event)
+		}
+	}))
+	defer provider.Close()
+
+	chat, err := ai.NewChatModel(config.Config{
+		ModelProvider:        "anthropic",
+		ModelName:            "claude-fixture",
+		ModelAPIKey:          "fixture-key",
+		ModelMaxOutputTokens: 1400,
+	}, provider.URL, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := chat.(model.ChatModelUnwrapper).Unwrap().(*model.AnthropicChatModel); !ok {
+		t.Fatalf("got %T, want the native Anthropic ChatModel", chat)
+	}
+	stream, err := chat.ChatStream(t.Context(), []*message.Msg{message.UserMsg("operator", "How is checkout?")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawDelta bool
+	var final model.ChatResponse
+	for chunk := range stream {
+		if chunk.Error != nil {
+			t.Fatal(chunk.Error)
+		}
+		sawDelta = sawDelta || !chunk.IsLast && chunk.GetTextContent() == "Checkout healthy."
+		if chunk.IsLast {
+			final = chunk
+		}
+	}
+	if !sawDelta || final.GetTextContent() != "Checkout healthy." ||
+		final.StopReason != model.StopReasonStop || final.Usage == nil || final.Usage.InputTokens != 14 || final.Usage.OutputTokens != 4 {
+		t.Fatalf("unexpected native stream completion: %+v", final)
+	}
+}
+
+func TestOpenRouterContinuation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	textReceived := make(chan struct{})
+	var requests atomic.Int32
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		number := requests.Add(1)
+		var request struct {
+			Stream   bool
+			Provider struct {
+				ZDR               bool
+				AllowFallbacks    *bool  `json:"allow_fallbacks"`
+				RequireParameters bool   `json:"require_parameters"`
+				DataCollection    string `json:"data_collection"`
+				Sort              string
+			}
+			Messages       json.RawMessage
+			ToolChoice     json.RawMessage `json:"tool_choice"`
+			Tools          json.RawMessage
+			ResponseFormat json.RawMessage `json:"response_format"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		policy := request.Provider
+		if r.URL.Path != "/chat/completions" || r.Header.Get("Authorization") != "Bearer fixture-key" ||
+			!policy.ZDR || policy.AllowFallbacks == nil || *policy.AllowFallbacks || !policy.RequireParameters ||
+			policy.DataCollection != "deny" || policy.Sort != "price" {
+			t.Errorf("unexpected OpenRouter route or policy: %s %+v", r.URL.Path, policy)
+			return
+		}
+		if number >= 3 {
+			w.Header().Set("Content-Type", "application/json")
+			switch number {
+			case 3:
+				var frames []struct {
+					Role      string
+					Reasoning json.RawMessage       `json:"reasoning_details"`
+					ToolCalls []struct{ ID string } `json:"tool_calls"`
+				}
+				if err := json.Unmarshal(request.Messages, &frames); err != nil {
+					t.Error(err)
+				}
+				var rounds int
+				for _, frame := range frames {
+					if frame.Role != "assistant" || len(frame.ToolCalls) == 0 {
+						continue
+					}
+					rounds++
+					switch frame.ToolCalls[0].ID {
+					case "lookup-1":
+						if !bytes.Contains(frame.Reasoning, []byte("encrypted-fixture")) ||
+							!bytes.Contains(frame.Reasoning, []byte("signed-fixture")) ||
+							bytes.Contains(frame.Reasoning, []byte("signature-round-two")) {
+							t.Error("first assistant frame lost its own reasoning")
+						}
+					case "lookup-2":
+						if !bytes.Contains(frame.Reasoning, []byte("signature-round-two")) ||
+							bytes.Contains(frame.Reasoning, []byte("signed-fixture")) {
+							t.Error("second assistant frame lost its own reasoning")
+						}
+					default:
+						t.Error("unexpected historical tool call")
+					}
+				}
+				if rounds != 2 {
+					t.Errorf("got %d assistant tool-call frames, want two", rounds)
+				}
+				_, _ = fmt.Fprint(w, `{"id":"answer","object":"chat.completion","created":1,"model":"fixture","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"8443."}}],"usage":{"prompt_tokens":18}}`)
+			case 4:
+				if string(request.ToolChoice) != `"required"` ||
+					!bytes.Contains(request.Tools, []byte("generate_structured_output")) {
+					t.Error("the native structured helper lost its forced Tool")
+				}
+				_, _ = fmt.Fprint(w, `{"id":"summary","object":"chat.completion","created":1,"model":"fixture","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"summary-tool","type":"function","function":{"name":"generate_structured_output","arguments":"{\"summary\":\"checkout\"}"}}]}}]}`)
+			case 5:
+				for _, field := range []string{`"json_schema"`, `"strict":true`, `"name":"report"`} {
+					if !bytes.Contains(request.ResponseFormat, []byte(field)) {
+						t.Errorf("structured response format omitted %s", field)
+					}
+				}
+				_, _ = fmt.Fprint(w, `{"id":"report","object":"chat.completion","created":1,"model":"fixture","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"{\"summary\":\"checkout\"}"}}]}`)
+			}
+			return
+		}
+		if number == 2 {
+			for _, marker := range []string{`"reasoning_details"`, `"reasoning.encrypted"`, `"signed-fixture"`, `"encrypted-fixture"`, `"tool_call_id":"lookup-1"`} {
+				if !bytes.Contains(request.Messages, []byte(marker)) {
+					t.Errorf("continuation omitted %s", marker)
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"id":"follow-up","object":"chat.completion","created":1,"model":"fixture","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"lookup-2","type":"function","function":{"name":"lookup","arguments":"{}"}}],"reasoning_details":[{"type":"reasoning.text","text":"private","signature":"signature-round-two","format":"anthropic-claude-v1","index":0,"id":"round-2"}]}}],"usage":{"prompt_tokens":18,"completion_tokens":3,"total_tokens":21}}`)
+			return
+		}
+		if !request.Stream {
+			t.Error("OpenRouter stream request was buffered")
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: "+`{"id":"reply","model":"fixture","object":"chat.completion.chunk","created":1,"choices":[{"index":0,"finish_reason":null,"delta":{"content":"Checking."}}]}`+"\n\n")
+		w.(http.Flusher).Flush()
+		select {
+		case <-textReceived:
+		case <-r.Context().Done():
+			return
+		}
+		for _, frame := range []string{
+			`{"index":0,"finish_reason":null,"delta":{"reasoning_details":[{"type":"reasoning.encrypted","data":"encrypted-fixture","format":"unknown","index":0,"id":"detail-e"},{"type":"reasoning.text","text":"private","signature":"signed-fixture","format":"anthropic-claude-v1","index":1,"id":"detail-t"}],"tool_calls":[{"index":0,"id":"lookup-1","type":"function","function":{"name":"lookup","arguments":"{\"port\":"}}]}}`,
+			`{"index":0,"finish_reason":null,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"8443}"}}]}}`,
+			`{"index":0,"finish_reason":"tool_calls","delta":{}}`,
+		} {
+			_, _ = fmt.Fprintf(w, "data: {\"id\":\"reply\",\"model\":\"fixture\",\"object\":\"chat.completion.chunk\",\"created\":1,\"choices\":[%s]}\n\n", frame)
+		}
+		_, _ = fmt.Fprint(w, "id: final\r\ndata:[DONE]\r\n\r\n: keepalive\n\n")
+	}))
+	defer provider.Close()
+
+	chat, err := ai.NewChatModel(config.Config{
+
+		ModelProvider: "openrouter",
+
+		ModelName: "fixture",
+
+		ModelAPIKey: "fixture-key",
+	}, provider.URL, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := []*message.Msg{message.UserMsg("operator", "Which port?")}
+	stream, err := chat.ChatStream(ctx, input, model.WithTools([]model.ToolSchema{{
+		Type:     "function",
+		Function: model.ToolFunction{Name: "lookup", Parameters: json.RawMessage(`{"type":"object"}`)},
+	}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var final model.ChatResponse
+	for chunk := range stream {
+		if chunk.Error != nil {
+			t.Fatal(chunk.Error)
+		}
+		if !chunk.IsLast && chunk.GetTextContent() == "Checking." {
+			close(textReceived)
+		}
+		if chunk.IsLast {
+			final = chunk
+		}
+	}
+	var call message.ToolCallBlock
+	for _, block := range final.Content {
+		if toolCall, ok := block.(message.ToolCallBlock); ok {
+			call = toolCall
+		}
+	}
+	if final.StopReason != model.StopReasonToolCalls || call.ID != "lookup-1" || call.Input != `{"port":8443}` {
+		t.Fatalf("tool call did not assemble: %+v", call)
+	}
+	stateJSON, err := json.Marshal(agent.AgentState{SessionID: "fixture", Context: append(input, message.AssistantMsg("agent", final.Content))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored agent.AgentState
+	if err := json.Unmarshal(stateJSON, &restored); err != nil {
+		t.Fatal(err)
+	}
+	toolReply := &message.Msg{
+		Role: message.RoleUser,
+		Content: []message.ContentBlock{message.ToolResultBlock{
+			Type: "tool_result", ID: call.ID, Name: call.Name, Output: "8443",
+		}},
+	}
+	response, err := chat.Chat(ctx, append(restored.Context, toolReply))
+	if err != nil || response.StopReason != model.StopReasonToolCalls || response.Usage == nil || response.Usage.InputTokens != 18 {
+		t.Fatalf("restored continuation failed: %v", err)
+	}
+	// AgentScope retains consecutive tool rounds in one assistant message.
+	merged := slices.Clone(restored.Context[1].Content)
+	merged = append(merged, toolReply.Content...)
+	merged = append(merged, response.Content...)
+	merged = append(merged, message.ToolResultBlock{Type: "tool_result", ID: "lookup-2", Name: "lookup", Output: "8443"})
+	stateJSON, err = json.Marshal(agent.AgentState{SessionID: "fixture", Context: append(input, message.AssistantMsg("agent", merged))})
+	if err != nil || json.Unmarshal(stateJSON, &restored) != nil {
+		t.Fatal("could not round-trip merged tool rounds")
+	}
+	answer, err := chat.Chat(ctx, restored.Context)
+	if err != nil || answer.GetTextContent() != "8443." || answer.Usage != nil {
+		t.Fatalf("merged continuation failed: %v", err)
+	}
+	schema := json.RawMessage(`{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}`)
+	summary, _, err := model.GenerateStructuredOutputWithUsage(ctx, chat, input, schema)
+	if err != nil || !bytes.Contains(summary, []byte("checkout")) {
+		t.Fatalf("native compaction-style structured request failed: %v", err)
+	}
+	report, err := chat.Chat(ctx, input, model.WithResponseFormat(&model.ResponseFormat{
+		Type: "json_schema", JSONSchema: schema, Name: "report", Strict: true,
+	}))
+	if err != nil || report.GetTextContent() != `{"summary":"checkout"}` {
+		t.Fatalf("strict structured request failed: %v", err)
+	}
+}
+
+func TestNativeProviderErrorsAreRedacted(t *testing.T) {
+	const canary = "fixture-provider-response-do-not-expose"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct{ Stream bool }
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		if !request.Stream {
+			http.Error(w, canary, http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprintf(w, "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":%q}}\n\n", canary)
+	}))
+	defer server.Close()
+	chat, err := ai.NewChatModel(config.Config{
+		ModelProvider: "anthropic",
+		ModelName:     "fixture",
+		ModelAPIKey:   "fixture-key",
+	}, server.URL, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := []*message.Msg{message.UserMsg("operator", "hello")}
+	if _, err := chat.Chat(t.Context(), input); err == nil || strings.Contains(err.Error(), canary) {
+		t.Fatal("buffered provider failure was missing or carried a raw provider payload")
+	}
+	stream, err := chat.ChatStream(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var failed bool
+	for chunk := range stream {
+		if chunk.Error == nil {
+			continue
+		}
+		failed = true
+		if strings.Contains(chunk.Error.Error(), canary) {
+			t.Fatal("stream error carried a raw provider payload")
+		}
+	}
+	if !failed {
+		t.Fatal("provider stream error was not terminal")
+	}
+}
+
+func TestDeploymentSelectsNativeModels(t *testing.T) {
+	for _, test := range []struct {
+		provider string
+		native   model.ChatModel
+	}{
+		{provider: "anthropic", native: (*model.AnthropicChatModel)(nil)},
+		{provider: "openai", native: (*model.OpenAIChatModel)(nil)},
+		{provider: "gemini", native: (*model.GeminiChatModel)(nil)},
+		{provider: "deepseek", native: (*model.DeepSeekChatModel)(nil)},
+		{provider: "dashscope", native: (*model.DashScopeChatModel)(nil)},
+		{provider: "moonshot", native: (*model.MoonshotChatModel)(nil)},
+		{provider: "kimi", native: (*model.MoonshotChatModel)(nil)},
+		{provider: "xai", native: (*model.XAIChatModel)(nil)},
+		{provider: "ollama", native: (*model.OllamaNativeChatModel)(nil)},
+	} {
+		t.Run(test.provider, func(t *testing.T) {
+			settings := map[string]string{
+				config.EnvDatabaseDSN:   "postgres://user:password@localhost/opencluster",
+				config.EnvSealingKey:    strings.Repeat("k", 32),
+				config.EnvModelProvider: test.provider,
+				config.EnvModelName:     "fixture",
+			}
+			if test.provider != "ollama" {
+				settings[config.EnvModelKey] = "fixture-key"
+			}
+			cfg, err := config.Load(func(key string) (string, bool) {
+				value, exists := settings[key]
+				return value, exists
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			chat, err := ai.NewChatModel(cfg, "", 8192)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if wrapper, ok := chat.(model.ChatModelUnwrapper); ok {
+				chat = wrapper.Unwrap()
+			}
+			if reflect.TypeOf(chat) != reflect.TypeOf(test.native) {
+				t.Fatalf("constructed %T, want %T", chat, test.native)
+			}
+		})
+	}
+}
+
+func TestLocalOllamaUsesNativeContextCapacity(t *testing.T) {
+	const capacity = 8192
+	const outputLimit = 1400
+	var calls atomic.Int32
+	const name = "qwen3:8b"
+	settings := config.Config{
+		ModelProvider: "ollama",
+		ModelName:     name,
+	}
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/chat" {
+			t.Errorf("Ollama request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "" {
+			t.Error("keyless Ollama request carried credentials")
+		}
+		var request struct {
+			Model   string `json:"model"`
+			Options struct {
+				NumCtx     int  `json:"num_ctx"`
+				NumPredict *int `json:"num_predict"`
+			} `json:"options"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode Ollama request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if request.Model != name || request.Options.NumCtx != capacity {
+			t.Errorf("unexpected Ollama request configuration: %+v", request)
+		}
+		switch calls.Add(1) {
+		case 1:
+			if request.Options.NumPredict != nil {
+				t.Errorf("Ollama injected an output limit: %d", *request.Options.NumPredict)
+			}
+		case 2:
+			if request.Options.NumPredict == nil || *request.Options.NumPredict != capacity-1 {
+				t.Error("Ollama per-call output limit did not leave room for input")
+			}
+		default:
+			if request.Options.NumPredict == nil || *request.Options.NumPredict != outputLimit {
+				t.Error("Ollama did not apply the configured output limit")
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"message":{"role":"assistant","content":"ready"},"done":true,"done_reason":"stop"}`)
+	}))
+	defer provider.Close()
+
+	chat, err := ai.NewChatModel(settings, provider.URL, capacity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := model.ResolveContextSize(chat, 0); got != capacity {
+		t.Fatalf("AgentScope context capacity = %d, want %d", got, capacity)
+	}
+	input := []*message.Msg{message.UserMsg("operator", "check")}
+	result, err := chat.Chat(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsLast || len(result.Content) != 1 {
+		t.Fatalf("unexpected Ollama reply: %+v", result)
+	}
+
+	if _, err := chat.Chat(t.Context(), input, model.WithMaxTokens(capacity)); err != nil {
+		t.Fatal(err)
+	}
+	limited := settings
+	limited.ModelMaxOutputTokens = outputLimit
+	chat, err = ai.NewChatModel(limited, provider.URL, capacity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, requested := range []int{4000, -1} {
+		if _, err := chat.Chat(t.Context(), input, model.WithMaxTokens(requested)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, test := range []struct {
+		name        string
+		endpoint    string
+		capacity    int
+		outputLimit int64
+	}{
+		{name: "missing context"},
+		{
+			name:        "output fills the context",
+			capacity:    capacity,
+			outputLimit: capacity,
+		},
+		{
+			name:     "insecure remote endpoint",
+			endpoint: "http://192.0.2.1:11434",
+			capacity: capacity,
+		},
+		{
+			name:     "keyless remote endpoint",
+			endpoint: "https://ollama.example.com",
+			capacity: capacity,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			invalid := settings
+			invalid.ModelMaxOutputTokens = test.outputLimit
+			if _, err := ai.NewChatModel(invalid, test.endpoint, test.capacity); err == nil {
+				t.Fatal("invalid Ollama configuration was accepted")
+			}
+		})
+	}
+}
+
+func TestOpenRouterTerminalFailuresDoNotPublishTools(t *testing.T) {
+	const canary = "raw-provider-error-fixture"
+	for _, scenario := range []struct {
+		name           string
+		trailer        string
+		brokenHTTPBody bool
+	}{
+		{name: "truncated stream"},
+		{name: "EOF after finish", trailer: `data: {"id":"reply","model":"fixture","object":"chat.completion.chunk","created":1,"choices":[{"index":0,"finish_reason":"tool_calls","delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]}}]}`},
+		{name: "truncated HTTP body after finish", brokenHTTPBody: true, trailer: `data: {"id":"reply","model":"fixture","object":"chat.completion.chunk","created":1,"choices":[{"index":0,"finish_reason":"tool_calls","delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]}}]}`},
+		{name: "refusal with complete tool", trailer: `data: {"id":"reply","model":"fixture","object":"chat.completion.chunk","created":1,"choices":[{"index":0,"finish_reason":"tool_calls","delta":{"refusal":"refused","tool_calls":[{"index":0,"function":{"arguments":"}"}}]}}]}` + "\n\ndata: [DONE]"},
+		{name: "provider error", trailer: `data: {"id":"reply","model":"fixture","object":"chat.completion.chunk","created":1,"choices":[],"error":{"code":502,"message":"` + canary + `"}}`},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				if scenario.brokenHTTPBody {
+					w.Header().Set("Content-Length", "4096")
+				}
+				_, _ = fmt.Fprint(w, `data: {"id":"reply","model":"fixture","object":"chat.completion.chunk","created":1,"choices":[{"index":0,"finish_reason":null,"delta":{"tool_calls":[{"index":0,"id":"partial","type":"function","function":{"name":"lookup","arguments":"{"}}]}}]}`+"\n\n")
+				if scenario.trailer != "" {
+					_, _ = fmt.Fprint(w, scenario.trailer+"\n\n")
+				}
+			}))
+			defer provider.Close()
+			chat, err := ai.NewChatModel(config.Config{
+				ModelProvider: "openrouter",
+				ModelName:     "fixture",
+				ModelAPIKey:   "fixture-key",
+			}, provider.URL, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stream, err := chat.ChatStream(t.Context(), []*message.Msg{message.UserMsg("operator", "check")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var failed bool
+			for chunk := range stream {
+				if chunk.IsLast || len(chunk.Content) > 0 {
+					t.Fatal("incomplete provider stream published a model result")
+				}
+				if chunk.Error != nil {
+					failed = true
+					if strings.Contains(chunk.Error.Error(), canary) {
+						t.Fatal("stream error included the provider payload")
+					}
+				}
+			}
+			if !failed {
+				t.Fatal("incomplete provider stream closed without a failure")
+			}
+		})
+	}
+}
+
+func TestOpenRouterCancellationClosesProviderStream(t *testing.T) {
+	disconnected := make(chan struct{})
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, `data: {"id":"reply","model":"fixture","object":"chat.completion.chunk","created":1,"choices":[{"index":0,"finish_reason":null,"delta":{"content":"working"}}]}`+"\n\n")
+		w.(http.Flusher).Flush()
+		select {
+		case <-r.Context().Done():
+			close(disconnected)
+		case <-time.After(8 * time.Second):
+		}
+	}))
+	defer provider.Close()
+	chat, err := ai.NewChatModel(config.Config{
+		ModelProvider: "openrouter",
+		ModelName:     "fixture",
+		ModelAPIKey:   "fixture-key",
+	}, provider.URL, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := []*message.Msg{message.UserMsg("operator", "check")}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	stream, err := chat.ChatStream(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first := <-stream; first.GetTextContent() != "working" || first.IsLast {
+		t.Fatal("the fixture did not open an incremental provider stream")
+	}
+	cancel()
+	select {
+	case <-disconnected:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancellation did not close the provider request")
+	}
+	for chunk := range stream {
+		if chunk.IsLast {
+			t.Fatal("cancelled provider stream appeared to complete")
+		}
+	}
+}
+
+func TestProviderFailureClassification(t *testing.T) {
+	const canary = "private-condition-fixture"
+	for _, test := range []struct {
+		provider string
+		status   int
+		attempts int
+	}{
+		{provider: "anthropic", status: http.StatusBadRequest, attempts: 1},
+		{provider: "openrouter", status: http.StatusBadRequest, attempts: 1},
+		{provider: "openrouter", status: http.StatusTooManyRequests, attempts: 1},
+		{provider: "anthropic", status: http.StatusTooManyRequests, attempts: 3},
+		{provider: "openai", status: http.StatusTooManyRequests, attempts: 3},
+	} {
+		t.Run(fmt.Sprintf("%s/%d", test.provider, test.status), func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(test.status)
+				_, _ = fmt.Fprintf(w, `{"error":{"code":%d,"message":"maximum context length exceeded (%s)"}}`, test.status, canary)
+			}))
+			defer server.Close()
+			chat, err := ai.NewChatModel(config.Config{
+				ModelProvider: test.provider,
+				ModelName:     "fixture",
+				ModelAPIKey:   "fixture-key",
+			}, server.URL, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := []*message.Msg{message.UserMsg("operator", "check")}
+			_, err = chat.Chat(t.Context(), input, model.WithRetries(2, time.Millisecond))
+			if got := requests.Swap(0); got != int32(test.attempts) {
+				t.Fatalf("buffered HTTP attempts = %d, want %d", got, test.attempts)
+			}
+			if err == nil || strings.Contains(err.Error(), canary) {
+				t.Fatalf("provider error is absent or contains the response payload: %v", err)
+			}
+			switch test.status {
+			case http.StatusBadRequest:
+				if !errors.Is(err, aserr.ErrModelContextLimit) {
+					t.Errorf("AgentScope would miss the context limit: %v", err)
+				}
+			case http.StatusTooManyRequests:
+				if !model.IsRetryableError(err) {
+					t.Errorf("AgentScope would miss provider throttling: %v", err)
+				}
+			}
+			if test.status != http.StatusTooManyRequests {
+				return
+			}
+			schema := json.RawMessage(`{"type":"object","properties":{"note":{"type":"string"}},"required":["note"]}`)
+			if _, _, err := model.GenerateStructuredOutputWithUsage(t.Context(), chat, input, schema); err == nil {
+				t.Fatal("the structured request accepted a throttling response")
+			}
+			if got := requests.Swap(0); got != int32(test.attempts) {
+				t.Fatalf("structured HTTP attempts = %d, want %d", got, test.attempts)
+			}
+			runtime, err := ai.NewAgent(ai.Config{
+				Name:            "fixture",
+				SessionID:       "retry-fixture",
+				Model:           chat,
+				ToolConcurrency: 1,
+			}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stream, err := runtime.ReplyStream(t.Context(), "check")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range stream {
+			}
+			if got := requests.Load(); got != 3 {
+				t.Fatalf("agent streaming HTTP attempts = %d, want 3", got)
+			}
+		})
+	}
+}
