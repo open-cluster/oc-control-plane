@@ -132,6 +132,14 @@ func finishAgentCheckpoint(ctx context.Context, tx pgx.Tx, org uuid.UUID, execut
 }
 
 func validAgentCheckpoint(session string, state *agent.AgentState) bool {
-	return state != nil && state.SessionID == session &&
-		state.SchemaVersion > 0 && state.SchemaVersion <= agent.StateSchemaVersion
+	if state == nil || state.SessionID != session ||
+		state.SchemaVersion < 1 || state.SchemaVersion > agent.StateSchemaVersion {
+		return false
+	}
+	for _, msg := range state.Context {
+		if msg == nil {
+			return false
+		}
+	}
+	return true
 }

@@ -364,6 +364,9 @@ func (p *Database) CancelInvestigation(
 				return investigation.Investigation{}, audit.Target{}, nil,
 					fmt.Errorf("recording an investigation cancellation event: %w", err)
 			}
+			if _, err := revokeAgentExecution(ctx, transaction, organization, uuid.Nil, uuid.Nil, id); err != nil {
+				return investigation.Investigation{}, audit.Target{}, nil, fmt.Errorf("revoking the Investigation agent lease: %w", err)
+			}
 			return ended, audit.Target{Kind: audit.TargetInvestigation, ID: id.String()},
 				audit.Detail{"subject": ended.Subject}, nil
 		})
@@ -377,10 +380,6 @@ func (p *Database) endInvestigation(
 	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return err
-	}
-	encodedPayload, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("encoding terminal event: %w", err)
 	}
 	transaction, err := pool.Begin(ctx)
 	if err != nil {
@@ -430,13 +429,8 @@ func (p *Database) endInvestigation(
 	if tag.RowsAffected() == 0 {
 		return investigation.ErrUnknown
 	}
-	if _, err = transaction.Exec(ctx, `
-		INSERT INTO investigation_event (investigation_id, org_id, sequence, type, payload)
-		SELECT $1, $2, coalesce(max(sequence), 0) + 1, $3, $4
-		  FROM investigation_event
-		 WHERE investigation_id = $1 AND org_id = $2`,
-		id, organization, int16(payload.EventType()), encodedPayload); err != nil {
-		return fmt.Errorf("recording terminal event: %w", err)
+	if err := appendInvestigationTerminalEvent(ctx, transaction, organization, id, payload); err != nil {
+		return err
 	}
 	if conversationID != nil && assistantReply != "" {
 		if _, err = transaction.Exec(ctx, `
@@ -462,6 +456,22 @@ func (p *Database) endInvestigation(
 		}
 	}
 	return transaction.Commit(ctx)
+}
+
+func appendInvestigationTerminalEvent(ctx context.Context, tx pgx.Tx, organization, id uuid.UUID, payload investigation.EventPayload) error {
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("encoding terminal event: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO investigation_event (investigation_id, org_id, sequence, type, payload)
+		SELECT $1, $2, coalesce(max(sequence), 0) + 1, $3, $4
+		  FROM investigation_event
+		 WHERE investigation_id = $1 AND org_id = $2`,
+		id, organization, int16(payload.EventType()), encoded); err != nil {
+		return fmt.Errorf("recording terminal event: %w", err)
+	}
+	return nil
 }
 
 const triggerColumns = `e.incident_id, e.integration_id, e.title, e.status,

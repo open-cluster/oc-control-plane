@@ -56,7 +56,7 @@ func TestAgentExecution(t *testing.T) {
 		if err := saver.SaveState(ctx, session, snapshot); err != nil {
 			t.Fatal(err)
 		}
-		if err := database.EndAgentExecution(ctx, organization, first, storage.AgentExecutionCompleted); err != nil {
+		if err := database.FinishAgentExecution(ctx, organization, first, storage.AgentExecutionCompleted, "Port saved.", nil, investigation.Usage{}); err != nil {
 			t.Fatal(err)
 		}
 
@@ -206,6 +206,7 @@ func TestAgentExecution(t *testing.T) {
 		for _, invalid := range []string{
 			`{"session_id": 7, "schema_version": 1}`,
 			fmt.Sprintf(`{"session_id": %q, "schema_version": %d}`, session, agent.StateSchemaVersion+1),
+			fmt.Sprintf(`{"session_id": %q, "schema_version": 1, "context": [null]}`, session),
 		} {
 			if _, err := pool.Exec(ctx, `UPDATE agent_checkpoint SET state = $3::jsonb
 				WHERE org_id = $1 AND session_id = $2`, organization, session, invalid); err != nil {
@@ -294,7 +295,9 @@ func TestAgentExecution(t *testing.T) {
 			!errors.Is(refused.err, storage.ErrAgentExecutionUnavailable) {
 			t.Fatalf("head-only claiming failed: %v, %v", head.err, refused.err)
 		}
-		if err := database.EndAgentExecution(ctx, organization, head.execution, storage.AgentExecutionNeedsInput); err != nil {
+		if _, err := pool.Exec(ctx, `UPDATE agent_execution SET status = 'needs_input',
+			lease_token = NULL, lease_expires_at = NULL WHERE org_id = $1 AND execution_id = $2`,
+			organization, head.execution.ID); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := database.ClaimAgentExecution(ctx, organization, later.ID, time.Minute); !errors.Is(err, storage.ErrAgentExecutionUnavailable) {

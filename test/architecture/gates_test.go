@@ -149,6 +149,7 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 		"ClaimInvestigation": "discovers which tenant has work waiting; takes no " +
 			"caller-supplied identifier, and the claimed row is the authority for the " +
 			"organization it belongs to",
+		"ClaimNextAgentExecution": "discovers runnable work without a caller-supplied tenant; the selected row supplies the Organization for the scoped claim",
 		"OpenQueuedConversationTurn": "discovers durable queued Conversation work across tenants; " +
 			"the selected row is the authority for the Organization used by the capacity lock and turn",
 		"ClaimSlackMessageWork": "discovers ready or expired Slack Message work across tenants; each " +
