@@ -22,6 +22,16 @@ var _ postmortem.Store = (*Database)(nil)
 const postmortemColumns = `incident_id, status, revision, document, created_at,
 	updated_at, reviewed_at, reviewed_by_user_id`
 
+const webPostmortemSource = `NOT p.source_restricted AND NOT EXISTS (
+	SELECT 1 FROM (SELECT p.org_id, p.document AS body) doc
+	WHERE EXISTS (
+	    SELECT 1 FROM (` + citedToolRunConversations + `) cited
+	    JOIN conversation private ON private.org_id = doc.org_id AND private.conversation_id = cited.conversation_id
+	    WHERE private.source = 'slack'
+	) OR EXISTS (
+	    SELECT 1 ` + citedInvestigations + ` WHERE NOT (` + webInvestigationSource + `)
+	))`
+
 func (p *Database) GenerationInput(
 	ctx context.Context, organization uuid.UUID, incidentID uuid.UUID,
 ) (postmortem.GenerationInput, error) {
@@ -197,7 +207,7 @@ func (p *Database) Postmortem(
 		return postmortem.Postmortem{}, err
 	}
 	return scanPostmortem(pool.QueryRow(ctx, `SELECT `+postmortemColumns+`
-		FROM postmortem WHERE incident_id = $1 AND org_id = $2 AND NOT source_restricted`,
+		FROM postmortem p WHERE incident_id = $1 AND org_id = $2 AND `+webPostmortemSource,
 		incidentID, organization))
 }
 
@@ -237,10 +247,10 @@ func (p *Database) ReplaceDraft(
 				return postmortem.Postmortem{}, err
 			}
 			return scanPostmortem(tx.QueryRow(ctx, `
-				UPDATE postmortem
+				UPDATE postmortem p
 				   SET status = $3, revision = $4, document = $5, updated_at = now(),
 				       reviewed_at = NULL, reviewed_by_user_id = NULL
-				 WHERE incident_id = $1 AND org_id = $2 AND NOT source_restricted
+				 WHERE incident_id = $1 AND org_id = $2 AND `+webPostmortemSource+`
 				RETURNING `+postmortemColumns,
 				draft.IncidentID, organization, postmortem.StatusDraft,
 				draft.Revision, document))
@@ -254,7 +264,7 @@ func (p *Database) Correct(
 	return p.writePostmortem(ctx, principal, organization, audit.ActionPostmortemCorrected,
 		func(ctx context.Context, tx pgx.Tx) (postmortem.Postmortem, error) {
 			current, err := scanPostmortem(tx.QueryRow(ctx, `SELECT `+postmortemColumns+`
-				FROM postmortem WHERE incident_id = $1 AND org_id = $2 AND NOT source_restricted FOR UPDATE`,
+				FROM postmortem p WHERE incident_id = $1 AND org_id = $2 AND `+webPostmortemSource+` FOR UPDATE`,
 				incidentID, organization))
 			if err != nil {
 				return postmortem.Postmortem{}, err
@@ -280,7 +290,7 @@ func (p *Database) Correct(
 					}
 				}
 			}
-			missing, err := evidenceMissing(ctx, tx, organization, evidenceScope{}, refs)
+			missing, err := evidenceMissing(ctx, tx, organization, uuid.Nil, refs, false)
 			if err != nil {
 				return postmortem.Postmortem{}, err
 			}
@@ -292,7 +302,7 @@ func (p *Database) Correct(
 				for _, entry := range *corrections.Timeline {
 					timelineRefs = append(timelineRefs, entry.EvidenceRefs...)
 				}
-				missing, err := evidenceMissing(ctx, tx, organization, evidenceScope{allowFailed: true}, timelineRefs)
+				missing, err := evidenceMissing(ctx, tx, organization, uuid.Nil, timelineRefs, true)
 				if err != nil {
 					return postmortem.Postmortem{}, err
 				}
@@ -320,15 +330,15 @@ func (p *Database) Review(
 	return p.writePostmortem(ctx, principal, organization, audit.ActionPostmortemReviewed,
 		func(ctx context.Context, tx pgx.Tx) (postmortem.Postmortem, error) {
 			reviewed, err := scanPostmortem(tx.QueryRow(ctx, `
-				UPDATE postmortem
+				UPDATE postmortem p
 				   SET status = $3, reviewed_at = now(), reviewed_by_user_id = $4, updated_at = now()
-				 WHERE incident_id = $1 AND org_id = $2 AND status = $5 AND NOT source_restricted
+				 WHERE incident_id = $1 AND org_id = $2 AND status = $5 AND `+webPostmortemSource+`
 				RETURNING `+postmortemColumns,
 				incidentID, organization, postmortem.StatusReviewed,
 				principal.UserID(), postmortem.StatusDraft))
 			if errors.Is(err, postmortem.ErrUnknown) {
 				current, readErr := scanPostmortem(tx.QueryRow(ctx, `SELECT `+postmortemColumns+`
-					FROM postmortem WHERE incident_id = $1 AND org_id = $2 AND NOT source_restricted`,
+					FROM postmortem p WHERE incident_id = $1 AND org_id = $2 AND `+webPostmortemSource,
 					incidentID, organization))
 				if readErr == nil && current.Status == postmortem.StatusReviewed {
 					return postmortem.Postmortem{}, postmortem.ErrAlreadyReviewed

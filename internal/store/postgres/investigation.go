@@ -96,8 +96,8 @@ func (p *Database) investigation(
 	if err != nil {
 		return investigation.Investigation{}, fmt.Errorf("reading an investigation: %w", err)
 	}
-	missing, err := evidenceMissing(ctx, pool, organization, evidenceScope{conversationID: found.ConversationID},
-		resultEvidence(found.ID, found.Conclusion))
+	missing, err := evidenceMissing(ctx, pool, organization, found.ConversationID,
+		resultEvidence(found.ID, found.Conclusion), false)
 	if err != nil {
 		return investigation.Investigation{}, fmt.Errorf("checking cited evidence: %w", err)
 	}

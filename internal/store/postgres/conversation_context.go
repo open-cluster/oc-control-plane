@@ -42,7 +42,7 @@ func (p *Database) ConversationBrief(
 	for _, finding := range brief.Findings {
 		refs = append(refs, finding.References()...)
 	}
-	brief.MissingEvidence, err = evidenceMissing(ctx, db, organization, evidenceScope{conversationID: conversationID}, refs)
+	brief.MissingEvidence, err = evidenceMissing(ctx, db, organization, conversationID, refs, false)
 	if err != nil {
 		return investigation.Brief{}, fmt.Errorf("checking prior evidence: %w", err)
 	}

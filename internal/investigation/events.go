@@ -315,7 +315,7 @@ func (h Handlers) follow(
 			return
 		}
 		readCtx, cancel := context.WithTimeout(request.Context(), readTimeout)
-		events, err := h.Store.Events(readCtx, organization, found.ID, after, 0)
+		events, err := h.Store.WebEvents(readCtx, organization, found.ID, after, 0)
 		cancel()
 		if err != nil {
 			h.Logger.ErrorContext(ctx, "an investigation event stream could not be read",

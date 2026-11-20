@@ -469,13 +469,8 @@ func finishAgentInvestigation(ctx context.Context, tx pgx.Tx, org uuid.UUID, exe
 		if conclusion == nil {
 			return errors.New("completed Investigation requires a validated conclusion")
 		}
-		missing, err := evidenceMissing(ctx, tx, org, evidenceScope{executionID: execution.ID},
-			resultEvidence(execution.InvestigationID, *conclusion))
-		if err != nil {
+		if err := validateAgentConclusionEvidence(ctx, tx, org, execution.ID, *conclusion); err != nil {
 			return err
-		}
-		if missing {
-			return ErrAgentEvidenceUnavailable
 		}
 		encoded, err := json.Marshal(conclusion)
 		if err != nil {

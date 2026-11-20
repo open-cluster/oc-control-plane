@@ -663,6 +663,26 @@ func TestAgentCoordinatorFinishesAndCancelsInvestigationThroughProductStorage(t 
 		&investigation.Conclusion{Status: investigation.Inconclusive, Summary: "stale"}, investigation.Usage{}); !errors.Is(err, storage.ErrAgentLeaseLost) {
 		t.Fatalf("canceled Investigation accepted a terminal write: %v", err)
 	}
+	_, unsupported := admit()
+	claim, err = database.ClaimAgentExecution(ctx, org, unsupported.ID, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conclusion := &investigation.Conclusion{
+		Status:  investigation.Inconclusive,
+		Summary: "Impact cited by ordinal",
+		Impact: investigation.Impact{
+			Summary: "Checkout errors",
+			RunRefs: []int{1},
+		},
+	}
+	if err := database.FinishAgentExecution(ctx, org, claim, storage.AgentExecutionCompleted, "",
+		conclusion, investigation.Usage{}); !errors.Is(err, storage.ErrAgentEvidenceUnavailable) {
+		t.Fatalf("native finalization accepted an ordinal Impact citation: %v", err)
+	}
+	if err := database.FinishAgentExecution(ctx, org, claim, storage.AgentExecutionFailed, "", nil, investigation.Usage{}); err != nil {
+		t.Fatal(err)
+	}
 	entity, work := admit()
 	if _, _, claimed, err := database.ClaimInvestigation(ctx, investigation.Claim{Worker: "legacy-fixture", LeaseFor: time.Minute}); err != nil || claimed {
 		t.Fatalf("legacy worker could claim admitted native work: %v", err)

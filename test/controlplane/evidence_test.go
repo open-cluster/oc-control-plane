@@ -1,8 +1,10 @@
 package controlplane
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"slices"
 	"strings"
@@ -177,6 +179,19 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 	if status, body := plane.call(t, http.MethodGet, derived, nil); status != http.StatusNotFound {
 		t.Fatalf("a retained web report exposed a restricted Slack citation: %d %s", status, body)
 	}
+	refs[1] = investigation.EvidenceRef{ToolRunID: runIDs[1]}
+	encodedRefs, err = json.Marshal(refs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(ctx, `UPDATE investigation
+		SET conclusion = jsonb_set(conclusion, '{findings,0,evidenceRefs}', $3::jsonb)
+		WHERE org_id = $1 AND investigation_id = $2`, surfaceOrg, ids[2], encodedRefs); err != nil {
+		t.Fatal(err)
+	}
+	if status, body := plane.call(t, http.MethodGet, derived, nil); status != http.StatusNotFound {
+		t.Fatalf("a UUID-only Slack citation exposed its web report: %d %s", status, body)
+	}
 	webChat, current := uuid.New(), uuid.New()
 	if _, err := database.Exec(ctx, `INSERT INTO conversation (org_id, conversation_id, source, subject)
 		VALUES ($1, $2, 'web', 'web conversation')`, surfaceOrg, webChat); err != nil {
@@ -205,5 +220,38 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 	brief, err := store.ConversationBrief(ctx, uuid.MustParse(surfaceOrg), webChat, current, 1)
 	if err != nil || len(brief.Findings) != 0 || len(brief.Recent) != 0 {
 		t.Fatalf("a later web turn received restricted history: %+v, %v", brief, err)
+	}
+	if status, body := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/conversations/"+webChat.String(), nil); status != http.StatusOK ||
+		strings.Contains(body, "prior restricted summary") {
+		t.Fatalf("the web Conversation exposed restricted history: %d %s", status, body)
+	}
+
+	if _, err := database.Exec(ctx, `
+		INSERT INTO investigation_event (org_id, investigation_id, sequence, type, payload)
+		VALUES ($1, $2, 1, $3, '{"text":"visible progress"}')`,
+		surfaceOrg, current, int16(investigation.EventProgress)); err != nil {
+		t.Fatal(err)
+	}
+	stream := openEventStream(t, plane, current.String(), "")
+	defer func() { _ = stream.Body.Close() }()
+	reader := bufio.NewReader(stream.Body)
+	if first, err := reader.ReadString('\n'); err != nil || first != "id: 1\n" {
+		t.Fatalf("the open stream did not emit public progress: %q, %v", first, err)
+	}
+	if _, err := database.Exec(ctx, `
+		WITH concluded AS (
+		    UPDATE investigation SET status = 2, concluded_at = now(),
+		        conclusion = jsonb_build_object('findings', jsonb_build_array(jsonb_build_object('evidenceRefs',
+		            jsonb_build_array(jsonb_build_object('toolRunId', $3::uuid)))))
+		    WHERE org_id = $1 AND investigation_id = $2 RETURNING org_id, investigation_id
+		)
+		INSERT INTO investigation_event (org_id, investigation_id, sequence, type, payload)
+		SELECT org_id, investigation_id, 2, $4, '{"summary":"restricted terminal summary"}'
+		FROM concluded`, surfaceOrg, current, runIDs[1], int16(investigation.EventConcluded)); err != nil {
+		t.Fatal(err)
+	}
+	events, err := io.ReadAll(reader)
+	if err != nil || strings.Contains(string(events), "restricted terminal summary") {
+		t.Fatalf("an open web stream exposed a restricted terminal event: %q, %v", events, err)
 	}
 }

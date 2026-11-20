@@ -31,6 +31,7 @@ Uncertainty, missing telemetry, and unresolved assumptions remain explicit.
 Tool Runs preserve subsecond execution timing separately from source-query bounds.
 Each Tool Run has a stable evidence ID. Existing Investigation citations retain their
 original references.
+Web reports and event streams enforce source access for both kinds of citation.
 Source limits and content clipped for the model remain distinct limitations.
 Editors and Admins can inspect retained bounded observations on demand. Ordinary
 Investigation detail remains lightweight.

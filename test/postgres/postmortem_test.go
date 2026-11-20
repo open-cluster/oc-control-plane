@@ -83,4 +83,63 @@ func TestPostmortemLifecycleIsIncidentOwnedAndTenantScoped(t *testing.T) {
 		t.Errorf("review timestamp moved backwards: created=%s reviewed=%s",
 			created.CreatedAt, reviewed.UpdatedAt)
 	}
+
+	ctx := t.Context()
+	runID, reportID := uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `
+		WITH thread AS (
+		    INSERT INTO conversation (org_id, conversation_id, source, subject)
+		    VALUES ($1, gen_random_uuid(), 'slack', 'private thread') RETURNING conversation_id
+		), message AS (
+		    INSERT INTO conversation_message (org_id, conversation_id, sequence, role, text, window_from, window_until)
+		    SELECT $1, conversation_id, 1, 1, 'private question', now()-interval '1 hour', now() FROM thread
+		    RETURNING conversation_id, sequence
+		), execution AS (
+		    INSERT INTO agent_execution (org_id, execution_id, conversation_id, message_sequence, status)
+		    SELECT $1, gen_random_uuid(), conversation_id, sequence, 'completed' FROM message RETURNING execution_id
+		)
+		INSERT INTO investigation_tool_run (org_id, tool_run_id, execution_id, tool, window_from,
+		    window_until, outcome, started_at, finished_at)
+		SELECT $1, $2, execution_id, 'read', now()-interval '1 hour', now(), 1, now(), now() FROM execution`,
+		organization, runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO investigation (org_id, investigation_id, incident_id, subject, window_from,
+		    window_until, status, concluded_at, conclusion)
+		VALUES ($1, $2, $3, 'derived report', now()-interval '1 hour', now(), 2, now(),
+		    jsonb_build_object('findings', jsonb_build_array(jsonb_build_object('evidenceRefs',
+		        jsonb_build_array(jsonb_build_object('toolRunId', $4::uuid))))))`,
+		organization, reportID, incident, runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE postmortem SET document = jsonb_set(document, '{rootCauses}',
+		    jsonb_build_array(jsonb_build_object('evidenceRefs',
+		        jsonb_build_array(jsonb_build_object('toolRunId', $3::uuid)))))
+		WHERE org_id = $1 AND incident_id = $2`, organization, incident, runID); err != nil {
+		t.Fatal(err)
+	}
+	input, err = database.GenerationInput(ctx, organization, incident)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, result := range input.Results {
+		if result.InvestigationID == reportID {
+			t.Error("Postmortem generation could read a report citing a private Slack Chat Tool Run")
+		}
+	}
+	if _, err := database.Postmortem(ctx, organization, incident); !errors.Is(err, postmortem.ErrUnknown) {
+		t.Errorf("a retained Postmortem with private UUID evidence was readable: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE postmortem SET document = jsonb_build_object(
+		    'executiveSummary', 'summary retained from the derived report',
+		    'timeline', jsonb_build_array(jsonb_build_object('investigationId', $3::uuid)))
+		WHERE org_id = $1 AND incident_id = $2`, organization, incident, reportID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Postmortem(ctx, organization, incident); !errors.Is(err, postmortem.ErrUnknown) {
+		t.Errorf("a Postmortem with a private derived summary was readable: %v", err)
+	}
 }
