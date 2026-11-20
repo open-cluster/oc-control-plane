@@ -22,6 +22,7 @@ const (
 type RelayJob struct {
 	ID                uuid.UUID
 	InvestigationID   uuid.UUID
+	ToolRunID         uuid.UUID
 	IntegrationID     uuid.UUID
 	RegistrationID    uuid.UUID
 	CapabilityID      string
@@ -41,15 +42,39 @@ var ErrJobRefused = errors.New("job refused")
 
 func (p *Database) EnqueueVerifiedJob(
 	ctx context.Context, organization uuid.UUID, job RelayJob) error {
+	if job.ToolRunID != uuid.Nil {
+		return ErrJobRefused
+	}
 	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return err
 	}
-	tag, err := pool.Exec(ctx, `
+	return enqueueVerifiedJob(ctx, pool, organization, uuid.Nil, job)
+}
+
+func (p *Database) EnqueueAgentToolJob(
+	ctx context.Context, org, executionID, leaseToken uuid.UUID, job RelayJob,
+) error {
+	if job.ToolRunID == uuid.Nil || job.InvestigationID != uuid.Nil {
+		return ErrJobRefused
+	}
+	pool, err := p.poolForOrganization(org)
+	if err != nil {
+		return err
+	}
+	return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		return useExecutionLease(ctx, tx, org, executionID, leaseToken, func(AgentExecution) error {
+			return enqueueVerifiedJob(ctx, tx, org, executionID, job)
+		})
+	})
+}
+
+func enqueueVerifiedJob(ctx context.Context, db executor, organization, executionID uuid.UUID, job RelayJob) error {
+	tag, err := db.Exec(ctx, `
 		INSERT INTO relay_job
 			(job_id, org_id, integration_id, registration_id,
-			 capability_id, capability_version, arguments, investigation_id)
-		SELECT $1, $2, integration.integration_id, integration.relay_id, $5, $6, $7, $8
+			 capability_id, capability_version, arguments, investigation_id, tool_run_id)
+		SELECT $1, $2, integration.integration_id, integration.relay_id, $5, $6, $7, $8, $10
 		  FROM integration
 		 WHERE integration.integration_id = $3
 		   AND integration.org_id = $2
@@ -64,10 +89,15 @@ func (p *Database) EnqueueVerifiedJob(
 		          AND investigation.investigation_id = $8
 		          AND investigation.status = $9
 		          FOR NO KEY UPDATE))
-		 FOR SHARE OF integration`,
+		   AND ($10::uuid IS NULL OR EXISTS (
+		       SELECT 1 FROM investigation_tool_run run
+		        WHERE run.org_id = $2 AND run.tool_run_id = $10 AND run.execution_id = $11
+		          AND run.integration_id = $3 AND run.outcome IS NULL))
+		 FOR SHARE OF integration
+		 ON CONFLICT (org_id, tool_run_id) WHERE tool_run_id IS NOT NULL DO NOTHING`,
 		job.ID, organization, job.IntegrationID, job.RegistrationID,
 		job.CapabilityID, job.CapabilityVersion, job.Arguments,
-		nullableUUID(job.InvestigationID), int16(1))
+		nullableUUID(job.InvestigationID), int16(1), nullableUUID(job.ToolRunID), nullableUUID(executionID))
 	if err != nil {
 		return fmt.Errorf("enqueueing verified job: %w", err)
 	}

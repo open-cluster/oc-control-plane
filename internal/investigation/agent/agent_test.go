@@ -150,7 +150,7 @@ func (r *records) ConversationHistory(context.Context, uuid.UUID, uuid.UUID, uui
 	return r.history, nil
 }
 
-func (r *records) EvidenceMissing(_ context.Context, _ uuid.UUID, refs []investigation.EvidenceRef) (bool, error) {
+func (r *records) EvidenceMissing(_ context.Context, _, _ uuid.UUID, refs []investigation.EvidenceRef) (bool, error) {
 	for _, ref := range refs {
 		if ref == r.missingEvidence {
 			return true, nil

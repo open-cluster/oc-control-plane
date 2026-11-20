@@ -3,6 +3,7 @@ package storage_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,6 +15,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
+	"github.com/open-cluster/oc-control-plane/internal/postmortem"
 	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
@@ -77,6 +80,12 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if _, err := connection.Exec(ctx, `INSERT INTO investigation_tool_run
+		(org_id, investigation_id, ordinal, tool, window_from, window_until, outcome, started_at, finished_at)
+		VALUES ($1, $2, 1, 'read', now() - interval '1 hour', now(), 1, now(), now()),
+		       ($1, $2, 2, 'read', now() - interval '1 hour', now(), 1, now(), now())`, org, investigationID); err != nil {
+		t.Fatal(err)
+	}
 	database := openDatabaseForTest(t, dsn)
 	applied, err := database.Migrate(ctx)
 	if err != nil {
@@ -93,8 +102,21 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 		"0010_agent_recovery",
 		"0011_conversation_checkpoint",
 		"0012_agent_execution_claim",
+		"0013_tool_run_ownership",
 	}) {
 		t.Fatalf("applied migrations = %v", applied)
+	}
+	runs, err := database.InvestigationToolRuns(ctx, org, investigationID)
+	if err != nil || len(runs) != 2 || runs[0].ID == uuid.Nil || runs[1].ID == uuid.Nil ||
+		runs[0].ID == runs[1].ID || runs[0].Ordinal != 1 || runs[1].Ordinal != 2 {
+		t.Fatalf("retained Tool Runs did not gain distinct identities: %+v, %v", runs, err)
+	}
+	refs := []investigation.EvidenceRef{
+		{InvestigationID: investigationID, ToolRunOrdinal: 1},
+		{ToolRunID: runs[1].ID},
+	}
+	if missing, err := database.EvidenceMissing(ctx, org, uuid.Nil, refs); err != nil || missing {
+		t.Fatalf("retained citations did not resolve after migration: missing=%t, %v", missing, err)
 	}
 	pausedIntegration, err := database.Integration(ctx, org, pausedIntegrationID)
 	if err != nil || !pausedIntegration.Disconnected || len(pausedIntegration.CredentialSealed) != 0 || len(pausedIntegration.WebhookSecretDigest) != 0 || pausedIntegration.Status != "" || !pausedIntegration.VerifiedAt.IsZero() || len(pausedIntegration.VerificationGrants) != 0 || pausedIntegration.Installation != nil {
@@ -296,6 +318,10 @@ func TestCleanupMigrationValidatesAndConvertsPostmortemReviewers(t *testing.T) {
 		org, integrationID, reviewedIncident, draftIncident); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := connection.Exec(ctx, `INSERT INTO conversation(conversation_id,org_id,incident_id,surface,subject)
+		VALUES ($1,$2,$3,2,'Slack testimony')`, uuid.New(), org, draftIncident); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := connection.Exec(ctx, `INSERT INTO postmortem(
 			incident_id, org_id, status, revision, document, updated_at, reviewed_at, reviewed_by)
 		VALUES ($2, $1, 'reviewed', 1, '{"reviewedBy":"legacy"}', now(), now(), 'not-a-user'),
@@ -339,6 +365,7 @@ func TestCleanupMigrationValidatesAndConvertsPostmortemReviewers(t *testing.T) {
 		"0010_agent_recovery",
 		"0011_conversation_checkpoint",
 		"0012_agent_execution_claim",
+		"0013_tool_run_ownership",
 	}) {
 		t.Fatalf("repaired reviewer migration applied %v: %v", applied, err)
 	}
@@ -356,6 +383,12 @@ func TestCleanupMigrationValidatesAndConvertsPostmortemReviewers(t *testing.T) {
 	}
 	if converted == nil || *converted != reviewerID || draftReviewer != nil || reviewedMetadata || draftMetadata {
 		t.Fatalf("converted reviewers = %v/%v metadata=%v/%v", converted, draftReviewer, reviewedMetadata, draftMetadata)
+	}
+	if _, err := database.Postmortem(ctx, org, reviewedIncident); err != nil {
+		t.Fatalf("the reviewed Postmortem was not preserved: %v", err)
+	}
+	if _, err := database.Postmortem(ctx, org, draftIncident); !errors.Is(err, postmortem.ErrUnknown) {
+		t.Fatalf("a legacy Postmortem derived from Slack was visible to a web reader: %v", err)
 	}
 }
 
@@ -503,6 +536,7 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 		"0010_agent_recovery",
 		"0011_conversation_checkpoint",
 		"0012_agent_execution_claim",
+		"0013_tool_run_ownership",
 	}) {
 		t.Fatalf("fresh migration applied %v, want every schema migration", applied)
 	}

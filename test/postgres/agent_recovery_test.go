@@ -667,6 +667,7 @@ func TestAgentCoordinatorFinishesAndCancelsInvestigationThroughProductStorage(t 
 	if _, _, claimed, err := database.ClaimInvestigation(ctx, investigation.Claim{Worker: "legacy-fixture", LeaseFor: time.Minute}); err != nil || claimed {
 		t.Fatalf("legacy worker could claim admitted native work: %v", err)
 	}
+	rejected, rejectedWork := admit()
 
 	const answer = "No confirmed cause was found."
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -680,7 +681,7 @@ func TestAgentCoordinatorFinishesAndCancelsInvestigationThroughProductStorage(t 
 		t.Fatal(err)
 	}
 	startFixtureAgentWorker(t, t.Context(), database, nil, func(_ context.Context, owner uuid.UUID, execution storage.AgentExecution) (app.ExecutionProfile, error) {
-		if owner != org || execution.InvestigationID != entity.ID {
+		if owner != org || (execution.InvestigationID != entity.ID && execution.InvestigationID != rejected.ID) {
 			t.Error("worker resolved a canceled or foreign Investigation")
 		}
 		return app.ExecutionProfile{
@@ -688,6 +689,12 @@ func TestAgentCoordinatorFinishesAndCancelsInvestigationThroughProductStorage(t 
 			Conclusion: func(ctx context.Context, final string) (investigation.Conclusion, error) {
 				if _, bounded := ctx.Deadline(); !bounded {
 					return investigation.Conclusion{}, errors.New("terminal validator had no deadline")
+				}
+				if execution.InvestigationID == rejected.ID {
+					return investigation.Conclusion{Status: investigation.Inconclusive, Findings: []investigation.Finding{{
+						Kind: investigation.FindingCause, Statement: "Unverified cause",
+						EvidenceRefs: []investigation.EvidenceRef{{ToolRunID: uuid.New()}},
+					}}}, nil
 				}
 				return investigation.Conclusion{Status: investigation.Inconclusive, Summary: final}, nil
 			},
@@ -710,7 +717,7 @@ func TestAgentCoordinatorFinishesAndCancelsInvestigationThroughProductStorage(t 
 			if result != investigation.StatusConcluded || summary != answer || terminalEvents != 1 || usage != (investigation.Usage{InputTokens: 17, OutputTokens: 3}) {
 				t.Fatalf("expected an atomic Investigation conclusion, got %s, %q, %d terminal events and usage %+v", result, summary, terminalEvents, usage)
 			}
-			return
+			break
 		}
 		if result != investigation.StatusRunning || status == storage.AgentExecutionFailed || summary != "" {
 			t.Fatalf("unexpected intermediate result: %s, %s, %q", status, result, summary)
@@ -718,6 +725,28 @@ func TestAgentCoordinatorFinishesAndCancelsInvestigationThroughProductStorage(t 
 		select {
 		case <-ctx.Done():
 			t.Fatal("Investigation never completed")
+		case <-time.After(30 * time.Millisecond):
+		}
+	}
+	for {
+		result, err := database.Investigation(ctx, org, rejected.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Status == investigation.StatusConcluded {
+			t.Fatal("unavailable evidence supported a completed Investigation")
+		}
+		if result.Status == investigation.StatusFailed {
+			var status storage.AgentExecutionStatus
+			if err := pool.QueryRow(ctx, `SELECT status FROM agent_execution WHERE org_id = $1 AND execution_id = $2`,
+				org, rejectedWork.ID).Scan(&status); err != nil || status != storage.AgentExecutionFailed {
+				t.Fatalf("evidence rejection did not terminalize execution: %v, %v", status, err)
+			}
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("the rejected Investigation did not terminate")
 		case <-time.After(30 * time.Millisecond):
 		}
 	}

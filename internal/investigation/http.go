@@ -37,7 +37,7 @@ type Handlers struct {
 type HTTPStore interface {
 	CreateInvestigation(context.Context, authz.Principal, uuid.UUID,
 		NewInvestigation, int) (Investigation, error)
-	Investigation(context.Context, uuid.UUID, uuid.UUID) (Investigation, error)
+	WebInvestigation(context.Context, uuid.UUID, uuid.UUID) (Investigation, error)
 	InvestigationToolRuns(context.Context, uuid.UUID, uuid.UUID) ([]ToolRun, error)
 	InvestigationToolRunObservation(context.Context, uuid.UUID, uuid.UUID, int) (ToolRun, error)
 	QueryInvestigations(context.Context, authz.Principal, uuid.UUID, Query) (List, error)
@@ -239,7 +239,7 @@ func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	found, err := h.Store.Investigation(ctx, organization, id)
+	found, err := h.Store.WebInvestigation(ctx, organization, id)
 	if err != nil {
 		h.fail(writer, request, err)
 		return

@@ -279,7 +279,11 @@ func finishAgentReply(ctx context.Context, db *storage.Database, org uuid.UUID, 
 		}
 		conclusion = &validated
 	}
-	return db.FinishAgentExecution(ctx, org, execution, storage.AgentExecutionCompleted, reply, conclusion, usage)
+	err := db.FinishAgentExecution(ctx, org, execution, storage.AgentExecutionCompleted, reply, conclusion, usage)
+	if errors.Is(err, storage.ErrAgentEvidenceUnavailable) {
+		return failAgentExecution(ctx, db, org, execution, usage)
+	}
+	return err
 }
 
 func failAgentExecution(ctx context.Context, db *storage.Database, org uuid.UUID, execution storage.AgentExecution,

@@ -20,6 +20,7 @@ import (
 var (
 	ErrAgentLeaseLost            = errors.New("agent execution lease is no longer current")
 	ErrAgentExecutionUnavailable = errors.New("agent execution is unavailable")
+	ErrAgentEvidenceUnavailable  = errors.New("unavailable Tool Run evidence")
 	ErrClientMessageConflict     = errors.New("client message ID already names different input")
 )
 
@@ -293,7 +294,10 @@ func claimEligibleAgentExecution(
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AgentExecution{}, ErrAgentExecutionUnavailable
 	}
-	return execution, err
+	if err != nil {
+		return AgentExecution{}, err
+	}
+	return execution, interruptAgentToolRuns(ctx, tx, organization, id)
 }
 
 func endAgentLease(ctx context.Context, tx pgx.Tx, organization uuid.UUID, execution AgentExecution, status AgentExecutionStatus, replySequence int64) error {
@@ -303,6 +307,9 @@ func endAgentLease(ctx context.Context, tx pgx.Tx, organization uuid.UUID, execu
 		return err
 	}
 
+	if err := interruptAgentToolRuns(ctx, tx, organization, execution.ID); err != nil {
+		return err
+	}
 	return finishAgentCheckpoint(ctx, tx, organization, execution, status)
 }
 
@@ -320,26 +327,42 @@ func (p *Database) withAgentLease(ctx context.Context, organization uuid.UUID, e
 }
 
 func useAgentLease(ctx context.Context, tx pgx.Tx, org uuid.UUID, execution AgentExecution, action func(pgx.Tx) error) error {
+	return useExecutionLease(ctx, tx, org, execution.ID, execution.LeaseToken, func(owned AgentExecution) error {
+		if owned.ConversationID != execution.ConversationID || owned.InvestigationID != execution.InvestigationID ||
+			owned.MessageSequence != execution.MessageSequence {
+			return ErrAgentLeaseLost
+		}
+		return action(tx)
+	})
+}
+
+func useExecutionLease(
+	ctx context.Context, tx pgx.Tx, org, id, token uuid.UUID, action func(AgentExecution) error,
+) error {
+	if token == uuid.Nil {
+		return ErrAgentLeaseLost
+	}
 	// Lock before checking time so a transaction that waited cannot use an expired lease.
 	var expires time.Time
+	var owned AgentExecution
+	var conversationID, investigationID uuid.NullUUID
 	err := tx.QueryRow(ctx, `
 		WITH owned AS MATERIALIZED (
-		    SELECT lease_expires_at FROM agent_execution
-		     WHERE org_id = $1 AND execution_id = $2 AND status = 'running'
-		       AND lease_token = $3 AND conversation_id IS NOT DISTINCT FROM $4::uuid
-		       AND investigation_id IS NOT DISTINCT FROM $5::uuid
-		       AND coalesce(message_sequence, 0) = $6
+		    SELECT lease_expires_at, conversation_id, investigation_id, coalesce(message_sequence, 0) AS message_sequence
+		     FROM agent_execution
+		     WHERE org_id = $1 AND execution_id = $2 AND status = 'running' AND lease_token = $3
 		     FOR UPDATE)
-		SELECT lease_expires_at FROM owned WHERE lease_expires_at > clock_timestamp()`,
-		org, execution.ID, execution.LeaseToken, nullableUUID(execution.ConversationID),
-		nullableUUID(execution.InvestigationID), execution.MessageSequence).Scan(&expires)
+		SELECT lease_expires_at, conversation_id, investigation_id, message_sequence
+		  FROM owned WHERE lease_expires_at > clock_timestamp()`,
+		org, id, token).Scan(&expires, &conversationID, &investigationID, &owned.MessageSequence)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrAgentLeaseLost
 	}
 	if err != nil {
 		return err
 	}
-	if err := action(tx); err != nil {
+	owned.ConversationID, owned.InvestigationID = conversationID.UUID, investigationID.UUID
+	if err := action(owned); err != nil {
 		return err
 	}
 	var current bool
@@ -446,6 +469,14 @@ func finishAgentInvestigation(ctx context.Context, tx pgx.Tx, org uuid.UUID, exe
 		if conclusion == nil {
 			return errors.New("completed Investigation requires a validated conclusion")
 		}
+		missing, err := evidenceMissing(ctx, tx, org, evidenceScope{executionID: execution.ID},
+			resultEvidence(execution.InvestigationID, *conclusion))
+		if err != nil {
+			return err
+		}
+		if missing {
+			return ErrAgentEvidenceUnavailable
+		}
 		encoded, err := json.Marshal(conclusion)
 		if err != nil {
 			return err
@@ -484,6 +515,7 @@ func (p *Database) CancelAgentChatExecution(ctx context.Context, org, conversati
 
 func revokeAgentExecution(ctx context.Context, tx pgx.Tx, org, conversationID, id, investigationID uuid.UUID) (bool, error) {
 	var found bool
+	var revoked uuid.NullUUID
 	err := tx.QueryRow(ctx, `
 		WITH revoked AS (
 		    UPDATE agent_execution SET status = 'cancelled', lease_token = NULL, lease_expires_at = NULL
@@ -494,8 +526,11 @@ func revokeAgentExecution(ctx context.Context, tx pgx.Tx, org, conversationID, i
 		    DELETE FROM agent_checkpoint c USING revoked r
 		     WHERE c.org_id = $1 AND c.writer_execution_id = r.execution_id
 		)
-		SELECT EXISTS (SELECT 1 FROM agent_execution WHERE org_id = $1
+		SELECT (SELECT execution_id FROM revoked), EXISTS (SELECT 1 FROM agent_execution WHERE org_id = $1
 		    AND ((conversation_id = $2 AND execution_id = $3) OR investigation_id = $4))`,
-		org, nullableUUID(conversationID), nullableUUID(id), nullableUUID(investigationID)).Scan(&found)
+		org, nullableUUID(conversationID), nullableUUID(id), nullableUUID(investigationID)).Scan(&revoked, &found)
+	if err == nil && revoked.Valid {
+		err = interruptAgentToolRuns(ctx, tx, org, revoked.UUID)
+	}
 	return found, err
 }

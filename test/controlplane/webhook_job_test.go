@@ -17,8 +17,10 @@ import (
 	relayv1 "github.com/open-cluster/oc-relay/gen/go/opencluster/relay/v1"
 
 	"github.com/open-cluster/oc-control-plane/internal/app"
+	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/kubernetes"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/relay/capability"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -257,23 +259,53 @@ func TestKubernetesWorkloadToolRunsAcrossTheComposedRelayAndDatabase(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	type answer struct {
-		result integrations.ToolResult
-		err    error
-	}
-	completed := make(chan answer, 1)
-	go func() {
-		result, callErr := kubernetes.Definition(kubernetes.RelayExecutor{Database: database}).
-			Tools[0].Run(ctx, integrations.ToolRequest{
+	tool := kubernetes.Definition(kubernetes.RelayExecutor{Database: database}).Tools[0]
+	principal := ownerOf(t, organization)
+	chatRead := func() (storage.AgentExecution, integrations.ToolRequest) {
+		t.Helper()
+		chat, createErr := database.OpenConversation(ctx, principal, organization, conversation.NewConversation{
+			Source: conversation.SourceWeb, Subject: "checkout",
+		})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		accepted, admitErr := database.AdmitAgentChat(ctx, principal, organization, chat.ID, uuid.New(),
+			conversation.NewMessage{Text: "Read the checkout workload."})
+		if admitErr != nil {
+			t.Fatal(admitErr)
+		}
+		claim, claimErr := database.ClaimAgentExecution(ctx, organization, accepted.ID, time.Minute)
+		if claimErr != nil {
+			t.Fatal(claimErr)
+		}
+		request := integrations.ToolRequest{
 			Integration: integration,
 			Arguments: map[string]any{
 				"namespace": "shop", "workloadKind": "Deployment", "workloadName": "checkout",
 				"maxPods": float64(3),
 			},
 			WindowFrom: time.Now().Add(-time.Hour), WindowUntil: time.Now(),
+			ExecutionID: claim.ID, ExecutionLeaseToken: claim.LeaseToken,
+		}
+		request.ToolRunID, admitErr = database.BeginAgentToolRun(ctx, organization, claim, investigation.ToolRun{
+			IntegrationID: integration.ID, Tool: tool.Name, Arguments: request.Arguments,
+			WindowFrom: request.WindowFrom, WindowUntil: request.WindowUntil, StartedAt: time.Now(),
 		})
+		if admitErr != nil {
+			t.Fatal(admitErr)
+		}
+		return claim, request
+	}
+	type answer struct {
+		result integrations.ToolResult
+		err    error
+	}
+	claim, request := chatRead()
+	completed := make(chan answer, 1)
+	go func() {
+		result, callErr := tool.Run(ctx, request)
 		completed <- answer{result: result, err: callErr}
 	}()
 	select {
@@ -324,6 +356,12 @@ func TestKubernetesWorkloadToolRunsAcrossTheComposedRelayAndDatabase(t *testing.
 		if len(got.result.Sources) != 1 || got.result.Sources[0] != "shop/deployment/checkout" {
 			t.Fatalf("result provenance = %+v", got.result.Sources)
 		}
+		if err := database.CompleteAgentToolRun(ctx, organization, claim, investigation.ToolRun{
+			ID: request.ToolRunID, Summary: got.result.Summary, Sources: got.result.Sources,
+			Outcome: investigation.RunSucceeded, FinishedAt: time.Now(),
+		}); err != nil {
+			t.Fatal(err)
+		}
 	case <-ctx.Done():
 		t.Fatalf("the Relay-backed Tool did not finish: %v", ctx.Err())
 	}
@@ -332,15 +370,20 @@ func TestKubernetesWorkloadToolRunsAcrossTheComposedRelayAndDatabase(t *testing.
 		t.Fatal(err)
 	}
 	defer func() { _ = pool.Close(context.Background()) }()
+	var owned bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM relay_job j JOIN investigation_tool_run r USING (org_id, tool_run_id)
+			WHERE j.org_id = $1 AND j.job_id = $2 AND j.investigation_id IS NULL
+			  AND r.execution_id = $3 AND r.investigation_id IS NULL AND r.outcome = 1)`,
+		organization, assignment.GetJobId(), claim.ID).Scan(&owned); err != nil || !owned {
+		t.Fatalf("the completed Relay read did not belong to Chat: %t, %v", owned, err)
+	}
+	cancelledClaim, cancelledRequest := chatRead()
 	cancelledContext, cancelRead := context.WithCancel(ctx)
+	defer cancelRead()
 	cancelled := make(chan answer, 1)
 	go func() {
-		result, readErr := kubernetes.Definition(kubernetes.RelayExecutor{Database: database}).
-			Tools[0].Run(cancelledContext, integrations.ToolRequest{
-			Integration: integration,
-			Arguments: map[string]any{"namespace": "shop", "workloadKind": "Deployment",
-				"workloadName": "checkout"},
-		})
+		result, readErr := tool.Run(cancelledContext, cancelledRequest)
 		cancelled <- answer{result: result, err: readErr}
 	}()
 	select {
@@ -349,14 +392,17 @@ func TestKubernetesWorkloadToolRunsAcrossTheComposedRelayAndDatabase(t *testing.
 	case <-time.After(500 * time.Millisecond):
 	}
 	cancellable := awaitAssignment(t, stream)
-	cancelRead()
-	select {
-	case stopped := <-cancelled:
-		if !errors.Is(stopped.err, context.Canceled) {
-			t.Fatalf("cancelling the in-flight Tool returned %v", stopped.err)
-		}
-	case <-ctx.Done():
-		t.Fatalf("the cancelled Tool did not return: %v", ctx.Err())
+	_, otherRequest := chatRead()
+	otherContext, cancelOther := context.WithCancel(ctx)
+	defer cancelOther()
+	other := make(chan error, 1)
+	go func() {
+		_, err := tool.Run(otherContext, otherRequest)
+		other <- err
+	}()
+	otherAssignment := awaitAssignment(t, stream)
+	if err := database.CancelAgentChatExecution(ctx, organization, cancelledClaim.ConversationID, cancelledClaim.ID); err != nil {
+		t.Fatal(err)
 	}
 	cancellation := awaitCancellation(t, stream)
 	if cancellation.GetJobId() != cancellable.GetJobId() ||
@@ -382,6 +428,31 @@ func TestKubernetesWorkloadToolRunsAcrossTheComposedRelayAndDatabase(t *testing.
 		organization.String(), cancellable.GetJobId()).Scan(&jobStatus); err != nil || jobStatus != int16(storage.JobCancelled) {
 		t.Fatalf("the cancelled Job did not retain its terminal outcome: status=%d error=%v", jobStatus, err)
 	}
+	if err := pool.QueryRow(ctx, `SELECT status, cancel_requested_at IS NOT NULL
+		FROM relay_job WHERE org_id = $1 AND job_id = $2`,
+		organization, otherAssignment.GetJobId()).Scan(&jobStatus, &requested); err != nil || jobStatus != int16(storage.JobLeased) || requested {
+		t.Fatalf("cancellation affected another Chat's leased job: status=%d requested=%t error=%v", jobStatus, requested, err)
+	}
+	cancelOther()
+	awaitCancellation(t, stream)
+	sendCancelledResult(t, stream, otherAssignment.GetJobId(), otherAssignment.GetLeaseEpoch())
+	awaitResultAck(t, stream)
+	select {
+	case stopped := <-cancelled:
+		if stopped.err == nil {
+			t.Fatal("the cancelled Tool returned successful evidence")
+		}
+	case <-ctx.Done():
+		t.Fatalf("the cancelled Tool did not return: %v", ctx.Err())
+	}
+	select {
+	case err := <-other:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelling the Tool context returned %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("the second Tool did not return: %v", ctx.Err())
+	}
 	if _, err = pool.Exec(context.Background(), `
 		UPDATE integration SET verification_grants = '{}'
 		 WHERE org_id = $1 AND integration_id = $2`, organization.String(), integration.ID); err != nil {
@@ -400,7 +471,7 @@ func TestKubernetesWorkloadToolRunsAcrossTheComposedRelayAndDatabase(t *testing.
 	var jobs int
 	if err = pool.QueryRow(context.Background(), `
 		SELECT count(*) FROM relay_job WHERE org_id = $1 AND integration_id = $2`,
-		organization.String(), integration.ID).Scan(&jobs); err != nil || jobs != 2 {
+		organization.String(), integration.ID).Scan(&jobs); err != nil || jobs != 3 {
 		t.Fatalf("revoked verification wrote additional Relay jobs: count=%d error=%v", jobs, err)
 	}
 }

@@ -3115,10 +3115,15 @@ components:
     EvidenceRef:
       type: object
       additionalProperties: false
-      required:
-        - investigationId
-        - toolRunOrdinal
+      anyOf:
+        - required:
+            - toolRunId
+        - required:
+            - investigationId
+            - toolRunOrdinal
       properties:
+        toolRunId:
+          $ref: '#/components/schemas/UUID'
         investigationId:
           $ref: '#/components/schemas/UUID'
         toolRunOrdinal:
@@ -3338,7 +3343,7 @@ components:
       type: object
       additionalProperties: false
       required:
-        - ordinal
+        - id
         - tool
         - windowFrom
         - windowUntil
@@ -3349,6 +3354,8 @@ components:
         - windowApplied
         - modelClipped
       properties:
+        id:
+          $ref: '#/components/schemas/UUID'
         ordinal:
           type: integer
           minimum: 1
@@ -3406,7 +3413,7 @@ components:
       type: object
       additionalProperties: false
       required:
-        - ordinal
+        - id
         - tool
         - windowFrom
         - windowUntil
@@ -3419,8 +3426,11 @@ components:
       allOf:
         - required:
             - investigationId
+            - ordinal
             - observationText
       properties:
+        id:
+          $ref: '#/components/schemas/UUID'
         ordinal:
           type: integer
           minimum: 1
@@ -4189,6 +4199,10 @@ components:
             type: integer
             minimum: 1
           uniqueItems: true
+        evidenceRefs:
+          type: array
+          items:
+            $ref: '#/components/schemas/EvidenceRef'
     CitedStatement:
       type: object
       additionalProperties: false

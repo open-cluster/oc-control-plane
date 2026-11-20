@@ -25,14 +25,18 @@ type ToolArgument struct {
 }
 
 type ToolRequest struct {
-	InvestigationID uuid.UUID
-	Integration     Integration
-	Credential      string
-	Arguments       map[string]any
-	OriginChannel   string
-	OriginThread    string
-	WindowFrom      time.Time
-	WindowUntil     time.Time
+	// The host sets execution ownership separately from provider arguments.
+	ExecutionID         uuid.UUID
+	ExecutionLeaseToken uuid.UUID `json:"-"`
+	ToolRunID           uuid.UUID
+	InvestigationID     uuid.UUID
+	Integration         Integration
+	Credential          string
+	Arguments           map[string]any
+	OriginChannel       string
+	OriginThread        string
+	WindowFrom          time.Time
+	WindowUntil         time.Time
 }
 
 func (r ToolRequest) ClampWindow(from, until time.Time) (time.Time, time.Time) {

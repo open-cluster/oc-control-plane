@@ -72,8 +72,8 @@ func (p *Database) GenerationInput(
 
 	results, err := pool.Query(ctx, `
 		SELECT investigation_id, conclusion
-		  FROM investigation
-		 WHERE incident_id = $1 AND org_id = $2 AND status = $3
+		  FROM investigation i
+		 WHERE incident_id = $1 AND org_id = $2 AND status = $3 AND `+webInvestigationSource+`
 		 ORDER BY created_at, investigation_id`, incidentID, organization,
 		int16(investigation.StatusConcluded))
 	if err != nil {
@@ -101,19 +101,17 @@ func (p *Database) GenerationInput(
 	}
 
 	runs, err := pool.Query(ctx, `
-		SELECT r.investigation_id, r.ordinal, r.tool, r.purpose,
+		SELECT i.investigation_id, r.tool_run_id, coalesce(r.ordinal, 0), r.tool, r.purpose,
 		       r.outcome, r.summary, r.started_at, r.finished_at
-		  FROM investigation_tool_run r
-		  JOIN investigation i
-		    ON i.org_id = r.org_id AND i.investigation_id = r.investigation_id
-		 WHERE i.incident_id = $1 AND r.org_id = $2
-		 ORDER BY i.created_at, r.ordinal`, incidentID, organization)
+		  FROM investigation_tool_run r `+toolRunOwnerJoins+`
+		 WHERE i.incident_id = $1 AND r.org_id = $2 AND r.outcome IS NOT NULL AND `+webInvestigationSource+`
+		 ORDER BY i.created_at, r.ordinal, r.started_at, r.tool_run_id`, incidentID, organization)
 	if err != nil {
 		return postmortem.GenerationInput{}, fmt.Errorf("reading postmortem tool runs: %w", err)
 	}
 	for runs.Next() {
 		var evidence postmortem.RunEvidence
-		if err = runs.Scan(&evidence.InvestigationID, &evidence.Run.Ordinal,
+		if err = runs.Scan(&evidence.InvestigationID, &evidence.Run.ID, &evidence.Run.Ordinal,
 			&evidence.Run.Tool, &evidence.Run.Purpose,
 			&evidence.Run.Outcome, &evidence.Run.Summary, &evidence.Run.StartedAt,
 			&evidence.Run.FinishedAt); err != nil {
@@ -133,7 +131,7 @@ func (p *Database) GenerationInput(
 		  FROM investigation_event e
 		  JOIN investigation i
 		    ON i.org_id = e.org_id AND i.investigation_id = e.investigation_id
-		 WHERE i.incident_id = $1 AND e.org_id = $2
+		 WHERE i.incident_id = $1 AND e.org_id = $2 AND `+webInvestigationSource+`
 		 ORDER BY i.created_at, e.sequence`, incidentID, organization)
 	if err != nil {
 		return postmortem.GenerationInput{}, fmt.Errorf("reading postmortem events: %w", err)
@@ -167,7 +165,9 @@ func (p *Database) GenerationInput(
 		  FROM conversation_message m
 		  JOIN conversation c
 		    ON c.org_id = m.org_id AND c.conversation_id = m.conversation_id
-		 WHERE c.incident_id = $1 AND m.org_id = $2
+		  LEFT JOIN investigation i
+		    ON i.org_id = m.org_id AND i.investigation_id = m.investigation_id
+		 WHERE c.incident_id = $1 AND m.org_id = $2 AND c.source = 'web' AND `+webInvestigationSource+`
 		 ORDER BY m.created_at, m.conversation_id, m.sequence`,
 		incidentID, organization)
 	if err != nil {
@@ -197,7 +197,7 @@ func (p *Database) Postmortem(
 		return postmortem.Postmortem{}, err
 	}
 	return scanPostmortem(pool.QueryRow(ctx, `SELECT `+postmortemColumns+`
-		FROM postmortem WHERE incident_id = $1 AND org_id = $2`,
+		FROM postmortem WHERE incident_id = $1 AND org_id = $2 AND NOT source_restricted`,
 		incidentID, organization))
 }
 
@@ -240,7 +240,7 @@ func (p *Database) ReplaceDraft(
 				UPDATE postmortem
 				   SET status = $3, revision = $4, document = $5, updated_at = now(),
 				       reviewed_at = NULL, reviewed_by_user_id = NULL
-				 WHERE incident_id = $1 AND org_id = $2
+				 WHERE incident_id = $1 AND org_id = $2 AND NOT source_restricted
 				RETURNING `+postmortemColumns,
 				draft.IncidentID, organization, postmortem.StatusDraft,
 				draft.Revision, document))
@@ -254,7 +254,7 @@ func (p *Database) Correct(
 	return p.writePostmortem(ctx, principal, organization, audit.ActionPostmortemCorrected,
 		func(ctx context.Context, tx pgx.Tx) (postmortem.Postmortem, error) {
 			current, err := scanPostmortem(tx.QueryRow(ctx, `SELECT `+postmortemColumns+`
-				FROM postmortem WHERE incident_id = $1 AND org_id = $2 FOR UPDATE`,
+				FROM postmortem WHERE incident_id = $1 AND org_id = $2 AND NOT source_restricted FOR UPDATE`,
 				incidentID, organization))
 			if err != nil {
 				return postmortem.Postmortem{}, err
@@ -269,14 +269,36 @@ func (p *Database) Correct(
 				}
 				for _, statement := range *statements {
 					refs = append(refs, statement.EvidenceRefs...)
+					if len(statement.RunRefs) > 0 {
+						id, err := uuid.Parse(statement.InvestigationID)
+						if err != nil || id == uuid.Nil {
+							return postmortem.Postmortem{}, postmortem.ErrUnavailableEvidence
+						}
+						for _, ordinal := range statement.RunRefs {
+							refs = append(refs, investigation.EvidenceRef{InvestigationID: id, ToolRunOrdinal: ordinal})
+						}
+					}
 				}
 			}
-			missing, err := evidenceMissing(ctx, tx, organization, refs)
+			missing, err := evidenceMissing(ctx, tx, organization, evidenceScope{}, refs)
 			if err != nil {
 				return postmortem.Postmortem{}, err
 			}
 			if missing {
 				return postmortem.Postmortem{}, postmortem.ErrUnavailableEvidence
+			}
+			if corrections.Timeline != nil {
+				var timelineRefs []investigation.EvidenceRef
+				for _, entry := range *corrections.Timeline {
+					timelineRefs = append(timelineRefs, entry.EvidenceRefs...)
+				}
+				missing, err := evidenceMissing(ctx, tx, organization, evidenceScope{allowFailed: true}, timelineRefs)
+				if err != nil {
+					return postmortem.Postmortem{}, err
+				}
+				if missing {
+					return postmortem.Postmortem{}, postmortem.ErrUnavailableEvidence
+				}
 			}
 			current = postmortem.ApplyCorrections(current, corrections)
 			current.Revision++
@@ -300,13 +322,13 @@ func (p *Database) Review(
 			reviewed, err := scanPostmortem(tx.QueryRow(ctx, `
 				UPDATE postmortem
 				   SET status = $3, reviewed_at = now(), reviewed_by_user_id = $4, updated_at = now()
-				 WHERE incident_id = $1 AND org_id = $2 AND status = $5
+				 WHERE incident_id = $1 AND org_id = $2 AND status = $5 AND NOT source_restricted
 				RETURNING `+postmortemColumns,
 				incidentID, organization, postmortem.StatusReviewed,
 				principal.UserID(), postmortem.StatusDraft))
 			if errors.Is(err, postmortem.ErrUnknown) {
 				current, readErr := scanPostmortem(tx.QueryRow(ctx, `SELECT `+postmortemColumns+`
-					FROM postmortem WHERE incident_id = $1 AND org_id = $2`,
+					FROM postmortem WHERE incident_id = $1 AND org_id = $2 AND NOT source_restricted`,
 					incidentID, organization))
 				if readErr == nil && current.Status == postmortem.StatusReviewed {
 					return postmortem.Postmortem{}, postmortem.ErrAlreadyReviewed

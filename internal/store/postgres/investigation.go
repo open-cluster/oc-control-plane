@@ -19,7 +19,7 @@ import (
 
 var _ investigation.HTTPStore = (*Database)(nil)
 
-const toolRunColumns = `r.integration_id, r.ordinal, r.tool, r.purpose, r.arguments,
+const toolRunColumns = `r.tool_run_id, r.integration_id, coalesce(r.ordinal, 0), r.tool, r.purpose, r.arguments,
     r.window_from, r.window_until, r.outcome, r.truncated, r.summary, r.sources, r.error,
     r.started_at, r.finished_at, r.window_applied, r.model_clipped`
 
@@ -69,14 +69,26 @@ func (p *Database) CreateInvestigation(
 func (p *Database) Investigation(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 ) (investigation.Investigation, error) {
+	return p.investigation(ctx, organization, id, false)
+}
+
+func (p *Database) WebInvestigation(
+	ctx context.Context, organization, id uuid.UUID,
+) (investigation.Investigation, error) {
+	return p.investigation(ctx, organization, id, true)
+}
+
+func (p *Database) investigation(
+	ctx context.Context, organization, id uuid.UUID, webOnly bool,
+) (investigation.Investigation, error) {
 	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return investigation.Investigation{}, err
 	}
 	row := pool.QueryRow(ctx, `
 		SELECT `+investigationColumns+`
-		  FROM investigation
-		 WHERE investigation_id = $1 AND org_id = $2`, id, organization)
+		  FROM investigation i
+		 WHERE investigation_id = $1 AND org_id = $2 AND (NOT $3 OR `+webInvestigationSource+`)`, id, organization, webOnly)
 	found, err := scanInvestigation(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return investigation.Investigation{}, investigation.ErrUnknown
@@ -84,7 +96,8 @@ func (p *Database) Investigation(
 	if err != nil {
 		return investigation.Investigation{}, fmt.Errorf("reading an investigation: %w", err)
 	}
-	missing, err := evidenceMissing(ctx, pool, organization, resultEvidence(found))
+	missing, err := evidenceMissing(ctx, pool, organization, evidenceScope{conversationID: found.ConversationID},
+		resultEvidence(found.ID, found.Conclusion))
 	if err != nil {
 		return investigation.Investigation{}, fmt.Errorf("checking cited evidence: %w", err)
 	}
@@ -104,9 +117,11 @@ func (p *Database) InvestigationToolRuns(
 
 	runRows, err := pool.Query(ctx, `
 		SELECT `+toolRunColumns+`
-		  FROM investigation_tool_run r
-		 WHERE r.investigation_id = $1 AND r.org_id = $2
-		 ORDER BY r.ordinal`, id, organization)
+		  FROM investigation_tool_run r `+toolRunOwnerJoins+`
+		 WHERE r.org_id = $2 AND r.outcome IS NOT NULL AND `+webInvestigationSource+`
+		   AND (r.investigation_id = $1 OR r.execution_id = (
+		        SELECT execution_id FROM agent_execution WHERE org_id = $2 AND investigation_id = $1))
+		 ORDER BY r.ordinal, r.started_at, r.tool_run_id`, id, organization)
 	if err != nil {
 		return nil, fmt.Errorf("reading an investigation's runs: %w", err)
 	}
@@ -132,10 +147,10 @@ func (p *Database) InvestigationToolRunObservation(ctx context.Context, organiza
 		return investigation.ToolRun{}, err
 	}
 	row := pool.QueryRow(ctx, `SELECT `+toolRunColumns+`, r.observation_text,
-        coalesce(i.name, ''), coalesce(i.provider, '')
-        FROM investigation_tool_run r
-        LEFT JOIN integration i ON i.org_id = r.org_id AND i.integration_id = r.integration_id
-        WHERE r.org_id = $1 AND r.investigation_id = $2 AND r.ordinal = $3`, organization, id, ordinal)
+        coalesce(integration.name, ''), coalesce(integration.provider, '')
+        FROM investigation_tool_run r `+toolRunOwnerJoins+`
+        LEFT JOIN integration ON integration.org_id = r.org_id AND integration.integration_id = r.integration_id
+        WHERE r.org_id = $1 AND r.investigation_id = $2 AND r.ordinal = $3 AND `+webInvestigationSource, organization, id, ordinal)
 	run, err := scanToolRun(row, true)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return investigation.ToolRun{}, investigation.ErrUnknown
@@ -150,7 +165,7 @@ func scanToolRun(row pgx.Row, observation bool) (investigation.ToolRun, error) {
 	var run investigation.ToolRun
 	var integrationID *uuid.UUID
 	var arguments, sources []byte
-	fields := []any{&integrationID, &run.Ordinal, &run.Tool, &run.Purpose, &arguments,
+	fields := []any{&run.ID, &integrationID, &run.Ordinal, &run.Tool, &run.Purpose, &arguments,
 		&run.WindowFrom, &run.WindowUntil, &run.Outcome, &run.Truncated, &run.Summary,
 		&sources, &run.Error, &run.StartedAt, &run.FinishedAt, &run.WindowApplied, &run.ModelClipped}
 	if observation {
@@ -203,8 +218,8 @@ func (p *Database) QueryInvestigations(
 
 	rows, err := pool.Query(ctx, `
 		SELECT `+investigationColumns+`
-		  FROM investigation
-		 WHERE org_id = $1 `+cursor+` `+incident+`
+		  FROM investigation i
+		 WHERE org_id = $1 AND `+webInvestigationSource+` `+cursor+` `+incident+`
 		 ORDER BY created_at DESC, investigation_id DESC
 		 LIMIT $2`, arguments...)
 	if err != nil {
@@ -261,19 +276,20 @@ func (p *Database) RecordToolRun(
 		return err
 	}
 	tag, err := tx.Exec(ctx, `
-		INSERT INTO investigation_tool_run (investigation_id, org_id,
+		INSERT INTO investigation_tool_run (investigation_id, org_id, tool_run_id,
 		                                    integration_id, ordinal, tool,
 		                                    purpose, arguments,
 		                                    window_from, window_until,
 		                                    outcome, truncated, summary, sources, error,
 		                                    started_at, finished_at, observation_text, model_clipped, window_applied)
-		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $18, $19, $20
+		SELECT $1, $2, coalesce($21::uuid, gen_random_uuid()),
+		       $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $18, $19, $20
 		FROM investigation WHERE investigation_id = $1 AND org_id = $2 AND status = 1
 		AND lease_token = $17 AND lease_expires_at > clock_timestamp()`,
 		id, organization, nullableUUID(run.IntegrationID), run.Ordinal,
 		run.Tool, run.Purpose, arguments, run.WindowFrom, run.WindowUntil,
 		int16(run.Outcome), run.Truncated, run.Summary, sources, run.Error,
-		run.StartedAt, run.FinishedAt, token, run.ObservationText, run.ModelClipped, run.WindowApplied)
+		run.StartedAt, run.FinishedAt, token, run.ObservationText, run.ModelClipped, run.WindowApplied, nullableUUID(run.ID))
 	if err != nil {
 		return fmt.Errorf("recording a tool run: %w", err)
 	}
@@ -316,21 +332,21 @@ func (p *Database) CancelInvestigation(
 			investigation.Investigation, audit.Target, audit.Detail, error,
 		) {
 			row := transaction.QueryRow(ctx, `
-				UPDATE investigation
+				UPDATE investigation AS i
 				   SET status = $3,
 				       concluded_at = now(),
 				       cancel_requested_at = now(),
 				       lease_worker = '',
 				       lease_token = NULL,
 				       lease_expires_at = NULL
-				 WHERE investigation_id = $1 AND org_id = $2 AND status = 1
+				 WHERE investigation_id = $1 AND org_id = $2 AND status = 1 AND `+webInvestigationSource+`
 				RETURNING `+investigationColumns,
 				id, organization, int16(investigation.StatusCancelled))
 			ended, err := scanInvestigation(row)
 			if errors.Is(err, pgx.ErrNoRows) {
 				var exists bool
 				if checkErr := transaction.QueryRow(ctx,
-					`SELECT EXISTS (SELECT 1 FROM investigation WHERE investigation_id = $1 AND org_id = $2)`,
+					`SELECT EXISTS (SELECT 1 FROM investigation i WHERE investigation_id = $1 AND org_id = $2 AND `+webInvestigationSource+`)`,
 					id, organization).Scan(&exists); checkErr != nil {
 					return investigation.Investigation{}, audit.Target{}, nil, checkErr
 				}

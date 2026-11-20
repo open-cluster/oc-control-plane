@@ -257,7 +257,7 @@ func (h Handlers) streamEvents(writer http.ResponseWriter, request *http.Request
 
 	nextAuth := time.Now().Add(eventAuthInterval)
 	readCtx, cancelRead := context.WithTimeout(request.Context(), readTimeout)
-	found, err := h.Store.Investigation(readCtx, organization, id)
+	found, err := h.Store.WebInvestigation(readCtx, organization, id)
 	cancelRead()
 	if err != nil {
 		h.fail(writer, request, err)
@@ -331,7 +331,7 @@ func (h Handlers) follow(
 				return
 			}
 			readCtx, cancel = context.WithTimeout(ctx, readTimeout)
-			found, err = h.Store.Investigation(readCtx, organization, found.ID)
+			found, err = h.Store.WebInvestigation(readCtx, organization, found.ID)
 			cancel()
 			if err != nil || !stillAuthorized() {
 				return

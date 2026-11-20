@@ -25,7 +25,7 @@ type Store interface {
 	TriggerIncident(context.Context, uuid.UUID, uuid.UUID) (investigation.Trigger, error)
 	ConversationBrief(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, int) (investigation.Brief, error)
 	ConversationHistory(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, int64) (investigation.HistoryPage, error)
-	EvidenceMissing(context.Context, uuid.UUID, []investigation.EvidenceRef) (bool, error)
+	EvidenceMissing(context.Context, uuid.UUID, uuid.UUID, []investigation.EvidenceRef) (bool, error)
 	ConversationOrigin(context.Context, uuid.UUID, uuid.UUID) (*investigation.ConversationOrigin, error)
 	InvestigationMessages(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) ([]investigation.AssignedMessage, error)
 	WorkloadInventory(context.Context, uuid.UUID, int) ([]string, error)
@@ -383,7 +383,7 @@ func (r *Agent) Run(
 						refs = append(refs, finding.EvidenceRefs...)
 					}
 					if len(refs) > 0 {
-						missing, checkErr := r.Store.EvidenceMissing(moveCtx, organization, refs)
+						missing, checkErr := r.Store.EvidenceMissing(moveCtx, organization, opened.ConversationID, refs)
 						if checkErr != nil {
 							err = Failed(OutcomeRejected, r.modelConfig.Provider, completion.Model,
 								"the prior evidence could not be verified")

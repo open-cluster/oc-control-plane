@@ -27,10 +27,11 @@ var (
 )
 
 type TimelineEntry struct {
-	At              time.Time `json:"at"`
-	Description     string    `json:"description"`
-	InvestigationID string    `json:"investigationId,omitempty"`
-	RunRefs         []int     `json:"runRefs"`
+	At              time.Time                   `json:"at"`
+	Description     string                      `json:"description"`
+	InvestigationID string                      `json:"investigationId,omitempty"`
+	RunRefs         []int                       `json:"runRefs"`
+	EvidenceRefs    []investigation.EvidenceRef `json:"evidenceRefs,omitempty"`
 }
 
 type CitedStatement struct {
