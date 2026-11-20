@@ -96,7 +96,8 @@ func (m *openRouterChatModel) Chat(ctx context.Context,
 	return openRouterReply(result.ID, result.Model, string(*choice.FinishReason), text, calls, choice.Message.ReasoningDetails, result.Usage)
 }
 
-func (m *openRouterChatModel) ChatStream(ctx context.Context, msgs []*message.Msg, opts ...model.CallOption) (<-chan model.ChatResponse, error) {
+func (m *openRouterChatModel) ChatStream(ctx context.Context, msgs []*message.Msg, opts ...model.CallOption,
+) (<-chan model.ChatResponse, error) {
 	request, err := m.request(msgs, true, opts)
 	if err != nil {
 		return nil, err
@@ -124,8 +125,8 @@ func (m *openRouterChatModel) ChatStream(ctx context.Context, msgs []*message.Ms
 				return
 			}
 			id, name = chunk.ID, chunk.Model
-			if chunk.Usage != nil {
 			// OpenRouter reports usage even without stream options, including on chunks with no choices.
+			if chunk.Usage != nil {
 				usage = chunk.Usage
 			}
 			if len(chunk.Choices) == 0 {
@@ -193,7 +194,9 @@ func (m *openRouterChatModel) ChatStream(ctx context.Context, msgs []*message.Ms
 	return out, nil
 }
 
-func openRouterReply(id, name, stop, text string, calls []message.ToolCallBlock, details []components.ReasoningDetailUnion, usage *components.ChatUsage) (*model.ChatResponse, error) {
+func openRouterReply(id, name, stop, text string,
+	calls []message.ToolCallBlock, details []components.ReasoningDetailUnion, usage *components.ChatUsage) (*model.ChatResponse, error,
+) {
 	if stop != model.StopReasonStop && stop != model.StopReasonToolCalls ||
 		(len(calls) > 0) != (stop == model.StopReasonToolCalls) || text == "" && len(calls) == 0 {
 		return nil, errOpenRouter
