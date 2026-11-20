@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -124,6 +125,7 @@ func (m *openRouterChatModel) ChatStream(ctx context.Context, msgs []*message.Ms
 			}
 			id, name = chunk.ID, chunk.Model
 			if chunk.Usage != nil {
+			// OpenRouter reports usage even without stream options, including on chunks with no choices.
 				usage = chunk.Usage
 			}
 			if len(chunk.Choices) == 0 {
@@ -165,7 +167,9 @@ func (m *openRouterChatModel) ChatStream(ctx context.Context, msgs []*message.Ms
 			if delta, _ := choice.Delta.Content.GetOrZero(); delta != "" {
 				text.WriteString(delta)
 				if !sendModelChunk(ctx, out, model.ChatResponse{
-					ID: id, ModelName: name, Content: []message.ContentBlock{message.TextBlock{Type: "text", Text: delta}},
+					ID:        id,
+					ModelName: name,
+					Content:   []message.ContentBlock{message.TextBlock{Type: "text", Text: delta}},
 				}) {
 					return
 				}
@@ -175,13 +179,8 @@ func (m *openRouterChatModel) ChatStream(ctx context.Context, msgs []*message.Ms
 			sendModelChunk(ctx, out, model.ChatResponse{Error: openRouterFailure(ctx, err)})
 			return
 		}
-		indices := make([]int64, 0, len(calls))
-		for index := range calls {
-			indices = append(indices, index)
-		}
-		slices.Sort(indices)
 		ordered := make([]message.ToolCallBlock, 0, len(calls))
-		for _, index := range indices {
+		for _, index := range slices.Sorted(maps.Keys(calls)) {
 			ordered = append(ordered, calls[index])
 		}
 		completed, err := openRouterReply(id, name, stop, text.String(), ordered, details, usage)
@@ -199,10 +198,16 @@ func openRouterReply(id, name, stop, text string, calls []message.ToolCallBlock,
 		(len(calls) > 0) != (stop == model.StopReasonToolCalls) || text == "" && len(calls) == 0 {
 		return nil, errOpenRouter
 	}
-	reply := &model.ChatResponse{ID: id, ModelName: name, StopReason: stop, IsLast: true}
+	reply := &model.ChatResponse{
+		ID:         id,
+		ModelName:  name,
+		StopReason: stop,
+		IsLast:     true,
+	}
 	if len(details) > 0 {
 		reply.Content = append(reply.Content, message.ThinkingBlock{
-			Type: "thinking", Extra: map[string]any{openRouterReasoning: details},
+			Type:  "thinking",
+			Extra: map[string]any{openRouterReasoning: details},
 		})
 	}
 	if text != "" {
@@ -221,7 +226,10 @@ func openRouterReply(id, name, stop, text string, calls []message.ToolCallBlock,
 		(usage.PromptTokens > 0 && usage.CompletionTokens > 0 ||
 			usage.TotalTokens > 0 && usage.TotalTokens == usage.PromptTokens+usage.CompletionTokens) {
 		input := int(usage.PromptTokens)
-		reply.Usage = &model.ChatUsage{InputTokens: input, OutputTokens: int(usage.CompletionTokens)}
+		reply.Usage = &model.ChatUsage{
+			InputTokens:  input,
+			OutputTokens: int(usage.CompletionTokens),
+		}
 		if detail, ok := usage.PromptTokensDetails.GetOrZero(); ok {
 			cached, created := 0, 0
 			if detail.CachedTokens != nil {
@@ -351,9 +359,6 @@ func (m *openRouterChatModel) request(
 					components.CreateProviderPreferencesSortProviderSort(components.ProviderSortPrice))),
 			}),
 	}
-	if streaming {
-		request.StreamOptions = optionalnullable.From(&components.ChatStreamOptions{IncludeUsage: new(true)})
-	}
 	if parameters.ThinkingEnable != nil && !*parameters.ThinkingEnable {
 		request.Reasoning = &components.ChatRequestReasoning{
 			Effort: optionalnullable.From(new(components.ChatRequestEffortNone)),
@@ -363,7 +368,9 @@ func (m *openRouterChatModel) request(
 		if !effort.IsExact() {
 			return components.ChatRequest{}, errOpenRouter
 		}
-		request.Reasoning = &components.ChatRequestReasoning{Effort: optionalnullable.From(&effort)}
+		request.Reasoning = &components.ChatRequestReasoning{
+			Effort: optionalnullable.From(&effort),
+		}
 	}
 
 	var err error
@@ -464,7 +471,9 @@ func openRouterTools(schemas []model.ToolSchema, choice *model.ToolChoice) (
 			components.ChatFunctionToolFunction{
 				Type: components.ChatFunctionToolTypeFunction,
 				Function: components.ChatFunctionToolFunctionFunction{
-					Name: schema.Function.Name, Description: &schema.Function.Description, Parameters: parameters,
+					Name:        schema.Function.Name,
+					Description: &schema.Function.Description,
+					Parameters:  parameters,
 				},
 			}))
 	}

@@ -64,12 +64,7 @@ func NewChatModel(settings config.Config, baseURL string, contextSize int) (mode
 	var err error
 	switch provider {
 	case "openrouter":
-		return newOpenRouterChatModel(
-			name,
-			key,
-			baseURL,
-			maxTokens,
-			client), nil
+		return newOpenRouterChatModel(name, key, baseURL, maxTokens, client), nil
 	case "anthropic":
 		native, err = model.NewAnthropicChatModel(&model.AnthropicConfig{
 			SecretAPIKey:    credential,
@@ -219,11 +214,13 @@ func (m deploymentModel) limitOutput(options *model.CallOptions) {
 }
 
 func (m deploymentModel) Chat(
-	ctx context.Context, history []*message.Msg, opts ...model.CallOption) (*model.ChatResponse, error) {
+	ctx context.Context, history []*message.Msg, opts ...model.CallOption,
+) (*model.ChatResponse, error) {
 	options := append(slices.Clone(opts), m.limitOutput)
 	switch m.ChatModel.(type) {
 	case *model.AnthropicChatModel, *model.OpenAIChatModel:
 		// These native models wrap the retrying HTTP helper with an optional second loop.
+		// Keep the HTTP helper's retries and discard the caller's outer retry option.
 		options = append(options, model.WithRetries(0, 0))
 	}
 	result, err := m.ChatModel.Chat(ctx, history, options...)
@@ -237,8 +234,10 @@ func (m deploymentModel) Chat(
 }
 
 func (m deploymentModel) ChatStream(
-	ctx context.Context, history []*message.Msg, opts ...model.CallOption) (<-chan model.ChatResponse, error) {
-	stream, err := m.ChatModel.ChatStream(ctx, history, append(slices.Clone(opts), m.limitOutput)...)
+	ctx context.Context, history []*message.Msg, opts ...model.CallOption,
+) (<-chan model.ChatResponse, error) {
+	options := append(slices.Clone(opts), m.limitOutput)
+	stream, err := m.ChatModel.ChatStream(ctx, history, options...)
 	if err != nil || stream == nil {
 		return nil, redactModelError(err)
 	}

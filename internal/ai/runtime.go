@@ -69,7 +69,10 @@ func NewAgent(config Config, checkpoint *agent.AgentState) (*agent.UnifiedAgent,
 		options = append(options, agent.WithPermissionContext(config.Permissions))
 	}
 	if config.StateSaver != nil {
-		options = append(options, agent.WithStateSaver(config.StateSaver), agent.WithReplyRecovery())
+		options = append(options,
+			agent.WithStateSaver(config.StateSaver),
+			agent.WithReplyRecovery(),
+		)
 	}
 	return agent.NewUnifiedAgent(config.Name, config.Instructions, config.Model, options...), nil
 }
