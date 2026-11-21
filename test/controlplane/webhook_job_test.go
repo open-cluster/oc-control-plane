@@ -392,6 +392,10 @@ func TestKubernetesWorkloadToolRunsAcrossTheComposedRelayAndDatabase(t *testing.
 	case <-time.After(500 * time.Millisecond):
 	}
 	cancellable := awaitAssignment(t, stream)
+	if _, err := pool.Exec(ctx, `DELETE FROM investigation_tool_run
+		WHERE org_id = $1 AND tool_run_id = $2`, organization, cancelledRequest.ToolRunID); err == nil {
+		t.Fatal("deleting a Tool Run discarded its leased Relay Job")
+	}
 	_, otherRequest := chatRead()
 	otherContext, cancelOther := context.WithCancel(ctx)
 	defer cancelOther()

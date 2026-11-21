@@ -167,14 +167,30 @@ func decodeConclusion(document []byte, runs []investigation.ToolRun, allowed []i
 
 		// Evidence and duplicate check ----->
 		seenEvidence := make(map[investigation.EvidenceRef]bool, len(finding.EvidenceRefs))
-		for _, ref := range finding.EvidenceRefs {
-			if ref.InvestigationID == uuid.Nil || ref.ToolRunOrdinal <= 0 || !slices.Contains(allowed, ref) {
+		for index, ref := range finding.EvidenceRefs {
+			if ref.InvestigationID == uuid.Nil || ref.ToolRunOrdinal <= 0 {
 				return investigation.Conclusion{}, errUnavailablePriorEvidence
 			}
+			var matched investigation.EvidenceRef
+			for _, available := range allowed {
+				if available.InvestigationID != ref.InvestigationID || available.ToolRunOrdinal != ref.ToolRunOrdinal ||
+					(ref.ToolRunID != uuid.Nil && available.ToolRunID != ref.ToolRunID) {
+					continue
+				}
+				matched = available
+				if matched.ToolRunID != uuid.Nil {
+					break
+				}
+			}
+			if matched.InvestigationID == uuid.Nil {
+				return investigation.Conclusion{}, errUnavailablePriorEvidence
+			}
+			ref.ToolRunID = uuid.Nil
 			if seenEvidence[ref] {
 				return investigation.Conclusion{}, fmt.Errorf("a finding repeats prior evidence")
 			}
 			seenEvidence[ref] = true
+			finding.EvidenceRefs[index] = matched
 		}
 		if causalFinding(finding.Kind) && strings.TrimSpace(finding.Mechanism) == "" {
 			return investigation.Conclusion{}, fmt.Errorf("causal finding has no mechanism")

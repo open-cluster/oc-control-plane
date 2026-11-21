@@ -1545,6 +1545,9 @@ components:
     EvidenceRef:
       type: object
       additionalProperties: false
+      dependentRequired:
+        investigationId: [toolRunOrdinal]
+        toolRunOrdinal: [investigationId]
       anyOf:
         - required: [toolRunId]
         - required: [investigationId, toolRunOrdinal]

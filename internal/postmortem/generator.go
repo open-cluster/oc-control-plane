@@ -3,6 +3,7 @@ package postmortem
 import (
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
@@ -40,7 +41,8 @@ func DraftFrom(input GenerationInput) Postmortem {
 			}
 			if run.Ordinal > 0 {
 				entry.RunRefs = []int{run.Ordinal}
-			} else {
+			}
+			if run.ID != uuid.Nil {
 				entry.EvidenceRefs = []investigation.EvidenceRef{{ToolRunID: run.ID}}
 			}
 			draft.Timeline = append(draft.Timeline, entry)

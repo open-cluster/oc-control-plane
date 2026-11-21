@@ -16,6 +16,30 @@ import (
 	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
+func TestEvidenceReferenceSchemaRequiresCompleteOrdinalPair(t *testing.T) {
+	t.Parallel()
+
+	schema := serializedSchema(t, "EvidenceRef")
+	runID, investigationID := uuid.NewString(), uuid.NewString()
+	for _, ref := range []map[string]any{
+		{"toolRunId": runID},
+		{"investigationId": investigationID, "toolRunOrdinal": 1},
+		{"toolRunId": runID, "investigationId": investigationID, "toolRunOrdinal": 1},
+	} {
+		if err := schema.Validate(ref); err != nil {
+			t.Errorf("schema rejected a supported reference %v: %v", ref, err)
+		}
+	}
+	for _, ref := range []map[string]any{
+		{"toolRunId": runID, "investigationId": investigationID},
+		{"toolRunId": runID, "toolRunOrdinal": 1},
+	} {
+		if err := schema.Validate(ref); err == nil {
+			t.Errorf("schema accepted an incomplete ordinal pair: %v", ref)
+		}
+	}
+}
+
 func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 	plane := startIntegrationPlane(t)
 	ctx := context.Background()
@@ -221,9 +245,13 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 	if err != nil || len(brief.Findings) != 0 || len(brief.Recent) != 0 {
 		t.Fatalf("a later web turn received restricted history: %+v, %v", brief, err)
 	}
-	if status, body := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/conversations/"+webChat.String(), nil); status != http.StatusOK ||
-		strings.Contains(body, "prior restricted summary") {
-		t.Fatalf("the web Conversation exposed restricted history: %d %s", status, body)
+	for _, suffix := range []string{"", "/turns"} {
+		path := plane.base(surfaceOrg) + "/conversations/" + webChat.String() + suffix
+		status, body := plane.call(t, http.MethodGet, path, nil)
+		if status != http.StatusOK || strings.Contains(body, "prior restricted summary") ||
+			strings.Contains(body, ids[2].String()) || !strings.Contains(body, current.String()) {
+			t.Errorf("web Conversation projection exposed restricted history or lost a visible turn: %d %s", status, body)
+		}
 	}
 
 	if _, err := database.Exec(ctx, `

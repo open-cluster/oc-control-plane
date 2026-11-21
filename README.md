@@ -29,9 +29,8 @@ Every material Finding is backed by the Tool Runs that support it, so operators 
 how a conclusion was reached instead of treating the AI response as a black box.
 Uncertainty, missing telemetry, and unresolved assumptions remain explicit.
 Tool Runs preserve subsecond execution timing separately from source-query bounds.
-Each Tool Run has a stable evidence ID. Existing Investigation citations retain their
-original references.
-Web reports and event streams enforce source access for both kinds of citation.
+Each Tool Run has a stable evidence ID. Retained citations keep their original ordinal links.
+Web reports, Conversation turns, and event streams enforce source access for both citation forms.
 Source limits and content clipped for the model remain distinct limitations.
 Editors and Admins can inspect retained bounded observations on demand. Ordinary
 Investigation detail remains lightweight.

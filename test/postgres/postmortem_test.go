@@ -68,22 +68,6 @@ func TestPostmortemLifecycleIsIncidentOwnedAndTenantScoped(t *testing.T) {
 	if err != nil || corrected.Impact != impact || corrected.ActionItems[0].Owner != "Database team" {
 		t.Fatalf("corrected = %+v err=%v", corrected, err)
 	}
-	reviewed, err := database.Review(context.Background(), principal,
-		organization, incident)
-	if err != nil || reviewed.Status != postmortem.StatusReviewed || reviewed.ReviewedAt.IsZero() ||
-		reviewed.ReviewedByUserID == nil || *reviewed.ReviewedByUserID != principal.UserID() {
-		t.Fatalf("reviewed = %+v err=%v", reviewed, err)
-	}
-
-	other := uuid.MustParse("22222222-2222-4222-8222-222222222222")
-	if _, err := database.Postmortem(context.Background(), other, incident); !errors.Is(err, postmortem.ErrUnknown) {
-		t.Fatalf("other tenant read error = %v", err)
-	}
-	if reviewed.UpdatedAt.Before(created.CreatedAt.Add(-time.Second)) {
-		t.Errorf("review timestamp moved backwards: created=%s reviewed=%s",
-			created.CreatedAt, reviewed.UpdatedAt)
-	}
-
 	ctx := t.Context()
 	runID, reportID := uuid.New(), uuid.New()
 	if _, err := pool.Exec(ctx, `
@@ -113,6 +97,34 @@ func TestPostmortemLifecycleIsIncidentOwnedAndTenantScoped(t *testing.T) {
 		organization, reportID, incident, runID); err != nil {
 		t.Fatal(err)
 	}
+
+	timeline := []postmortem.TimelineEntry{{
+		Description: "Unrecorded read", InvestigationID: uuid.NewString(), RunRefs: []int{1},
+	}}
+	if _, err := database.Correct(ctx, principal, organization, incident, postmortem.Corrections{Timeline: &timeline}); !errors.Is(err, postmortem.ErrUnavailableEvidence) {
+		t.Errorf("correction accepted a dangling timeline ordinal: %v", err)
+	}
+	restricted := []postmortem.ActionItem{{
+		Title: "Review private source", InvestigationID: reportID.String(),
+	}}
+	if _, err := database.Correct(ctx, principal, organization, incident, postmortem.Corrections{ActionItems: &restricted}); !errors.Is(err, postmortem.ErrUnavailableEvidence) {
+		t.Errorf("correction accepted a restricted Investigation: %v", err)
+	}
+	reviewed, err := database.Review(ctx, principal, organization, incident)
+	if err != nil || reviewed.Status != postmortem.StatusReviewed || reviewed.ReviewedAt.IsZero() ||
+		reviewed.ReviewedByUserID == nil || *reviewed.ReviewedByUserID != principal.UserID() ||
+		reviewed.Revision != corrected.Revision {
+		t.Fatalf("reviewed = %+v err=%v", reviewed, err)
+	}
+	other := uuid.MustParse("22222222-2222-4222-8222-222222222222")
+	if _, err := database.Postmortem(ctx, other, incident); !errors.Is(err, postmortem.ErrUnknown) {
+		t.Fatalf("other tenant read error = %v", err)
+	}
+	if reviewed.UpdatedAt.Before(created.CreatedAt.Add(-time.Second)) {
+		t.Errorf("review timestamp moved backwards: created=%s reviewed=%s",
+			created.CreatedAt, reviewed.UpdatedAt)
+	}
+
 	if _, err := pool.Exec(ctx, `
 		UPDATE postmortem SET document = jsonb_set(document, '{rootCauses}',
 		    jsonb_build_array(jsonb_build_object('evidenceRefs',

@@ -77,6 +77,10 @@ func TestAgentToolRunsSurviveLeaseTakeover(t *testing.T) {
 	if err := complete(recovered, interrupted); err == nil {
 		t.Fatal("new worker published an observation under an old attempt")
 	}
+	if _, err := pool.Exec(ctx, `DELETE FROM agent_execution
+		WHERE org_id = $1 AND execution_id = $2`, org, claim.ID); err == nil {
+		t.Fatal("deleting an execution discarded its Tool Runs")
+	}
 	for _, check := range []struct {
 		id      uuid.UUID
 		missing bool

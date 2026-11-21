@@ -71,8 +71,9 @@ func evidenceMissing(ctx context.Context, pool querier, org, conversationID uuid
 			SELECT 1 FROM investigation_tool_run r `+toolRunOwnerJoins+`
 			 WHERE r.org_id = $1 AND r.outcome IS NOT NULL AND (r.outcome = $5 OR $7)
 			   AND (reference.tool_run_id IS NULL OR r.tool_run_id = reference.tool_run_id)
-			   AND ((reference.tool_run_id IS NOT NULL AND reference.investigation_id IS NULL AND reference.ordinal = 0)
-			        OR (r.investigation_id = reference.investigation_id AND r.ordinal = reference.ordinal))
+			   AND CASE WHEN reference.investigation_id IS NULL
+			            THEN reference.tool_run_id IS NOT NULL AND reference.ordinal = 0
+			            ELSE r.investigation_id = reference.investigation_id AND r.ordinal = reference.ordinal END
 			   AND (`+webToolRunSource+` OR source.conversation_id = $6)
 			   AND NOT EXISTS (`+privateInvestigationSources+`
 			       AND private.conversation_id IS DISTINCT FROM $6)))`,

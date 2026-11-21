@@ -51,7 +51,8 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 			investigation_id, org_id, question, subject, window_from, window_until, status,
 			conclusion, concluded_at, conversation_id, turn)
 		VALUES ($3, $1, 'Why did checkout fail?', 'Checkout', now() - interval '1 hour', now(), 2,
-			'{"hypotheses":[{"id":"legacy","statement":"Deploy","status":"exploring","test":"Read history","runRefs":[]}]}'::jsonb,
+			'{"hypotheses":[{"id":"legacy","statement":"Deploy","status":"exploring","test":"Read history","runRefs":[]}],
+			  "findings":[{"statement":"Checkout was unavailable","kind":"observation","runRefs":[1,9]}]}'::jsonb,
 			now(), $2, 1)`, org, conversationID, investigationID); err != nil {
 		t.Fatal(err)
 	}
@@ -114,9 +115,26 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 	refs := []investigation.EvidenceRef{
 		{InvestigationID: investigationID, ToolRunOrdinal: 1},
 		{ToolRunID: runs[1].ID},
+		{ToolRunID: runs[0].ID, InvestigationID: investigationID, ToolRunOrdinal: 1},
 	}
 	if missing, err := database.EvidenceMissing(ctx, org, uuid.Nil, refs); err != nil || missing {
 		t.Fatalf("retained citations did not resolve after migration: missing=%t, %v", missing, err)
+	}
+	refs[2].ToolRunID = runs[1].ID
+	if missing, err := database.EvidenceMissing(ctx, org, uuid.Nil, refs); err != nil || !missing {
+		t.Fatalf("a combined citation resolved to two different runs: missing=%t, %v", missing, err)
+	}
+	report, err := database.WebInvestigation(ctx, org, investigationID)
+	if err != nil || len(report.Conclusion.Findings) != 1 {
+		t.Fatalf("retained Finding = %+v, %v", report.Conclusion.Findings, err)
+	}
+	finding := report.Conclusion.Findings[0]
+	if finding.Statement != "Checkout was unavailable" || !reflect.DeepEqual(finding.RunRefs, []int{1, 9}) ||
+		!reflect.DeepEqual(finding.EvidenceRefs, []investigation.EvidenceRef{{
+			ToolRunID: runs[0].ID, InvestigationID: investigationID, ToolRunOrdinal: 1,
+		}}) || len(report.Conclusion.Limitations) != 1 ||
+		report.Conclusion.Limitations[0].Statement != investigation.MissingEvidenceStatement {
+		t.Fatalf("migrated Finding = %+v, limitations = %+v", finding, report.Conclusion.Limitations)
 	}
 	pausedIntegration, err := database.Integration(ctx, org, pausedIntegrationID)
 	if err != nil || !pausedIntegration.Disconnected || len(pausedIntegration.CredentialSealed) != 0 || len(pausedIntegration.WebhookSecretDigest) != 0 || pausedIntegration.Status != "" || !pausedIntegration.VerifiedAt.IsZero() || len(pausedIntegration.VerificationGrants) != 0 || pausedIntegration.Installation != nil {
@@ -318,8 +336,30 @@ func TestCleanupMigrationValidatesAndConvertsPostmortemReviewers(t *testing.T) {
 		org, integrationID, reviewedIncident, draftIncident); err != nil {
 		t.Fatal(err)
 	}
+	privateThread := uuid.New()
 	if _, err := connection.Exec(ctx, `INSERT INTO conversation(conversation_id,org_id,incident_id,surface,subject)
-		VALUES ($1,$2,$3,2,'Slack testimony')`, uuid.New(), org, draftIncident); err != nil {
+		VALUES (gen_random_uuid(),$1,$2,2,'Empty Slack thread'), ($4,$1,$3,2,'Slack testimony')`,
+		org, reviewedIncident, draftIncident, privateThread); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.Exec(ctx, `INSERT INTO conversation_message
+		(conversation_id, org_id, sequence, role, actor_kind, text, window_from, window_until)
+		VALUES ($2, $1, 1, 1, 2, 'Private testimony', now()-interval '1 hour', now())`, org, privateThread); err != nil {
+		t.Fatal(err)
+	}
+	investigationID := uuid.New()
+	if _, err := connection.Exec(ctx, `
+		INSERT INTO investigation (org_id, investigation_id, incident_id, question, subject,
+		    window_from, window_until, status, concluded_at)
+		VALUES ($1, $2, $3, '', 'Checkout', now()-interval '1 hour', now(), 2, now());
+		`, org, investigationID, reviewedIncident); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.Exec(ctx, `
+		INSERT INTO investigation_tool_run (org_id, investigation_id, ordinal, tool,
+		    window_from, window_until, outcome, started_at, finished_at)
+		VALUES ($1, $2, 1, 'read', now()-interval '1 hour', now(), 1, now(), now())`,
+		org, investigationID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := connection.Exec(ctx, `INSERT INTO postmortem(
@@ -327,6 +367,16 @@ func TestCleanupMigrationValidatesAndConvertsPostmortemReviewers(t *testing.T) {
 		VALUES ($2, $1, 'reviewed', 1, '{"reviewedBy":"legacy"}', now(), now(), 'not-a-user'),
 		       ($3, $1, 'draft', 1, '{"reviewedBy":""}', now(), NULL, '')`,
 		org, reviewedIncident, draftIncident); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.Exec(ctx, `
+		UPDATE postmortem SET document = document || jsonb_build_object(
+		    'timeline', jsonb_build_array(jsonb_build_object(
+		        'description', 'Checkout stopped', 'investigationId', $3::uuid, 'runRefs', jsonb_build_array(1))),
+		    'rootCauses', jsonb_build_array(jsonb_build_object(
+		        'statement', 'Pool exhausted', 'evidenceRefs', jsonb_build_array(
+		            jsonb_build_object('investigationId', $3::uuid, 'toolRunOrdinal', 1)))))
+		WHERE org_id = $1 AND incident_id = $2`, org, reviewedIncident, investigationID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -384,8 +434,21 @@ func TestCleanupMigrationValidatesAndConvertsPostmortemReviewers(t *testing.T) {
 	if converted == nil || *converted != reviewerID || draftReviewer != nil || reviewedMetadata || draftMetadata {
 		t.Fatalf("converted reviewers = %v/%v metadata=%v/%v", converted, draftReviewer, reviewedMetadata, draftMetadata)
 	}
-	if _, err := database.Postmortem(ctx, org, reviewedIncident); err != nil {
-		t.Fatalf("the reviewed Postmortem was not preserved: %v", err)
+	runs, err := database.InvestigationToolRuns(ctx, org, investigationID)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("retained Postmortem Tool Run = %+v, %v", runs, err)
+	}
+	reviewed, err := database.Postmortem(ctx, org, reviewedIncident)
+	want := []investigation.EvidenceRef{{
+		ToolRunID: runs[0].ID, InvestigationID: investigationID, ToolRunOrdinal: 1,
+	}}
+	if err != nil || reviewed.Status != postmortem.StatusReviewed || reviewed.Revision != 1 ||
+		len(reviewed.Timeline) != 1 || reviewed.Timeline[0].Description != "Checkout stopped" ||
+		!reflect.DeepEqual(reviewed.Timeline[0].EvidenceRefs, want) ||
+		!reflect.DeepEqual(reviewed.Timeline[0].RunRefs, []int{1}) ||
+		len(reviewed.RootCauses) != 1 || reviewed.RootCauses[0].Statement != "Pool exhausted" ||
+		!reflect.DeepEqual(reviewed.RootCauses[0].EvidenceRefs, want) {
+		t.Fatalf("the reviewed Postmortem was not preserved with stable citations: %+v, %v", reviewed, err)
 	}
 	if _, err := database.Postmortem(ctx, org, draftIncident); !errors.Is(err, postmortem.ErrUnknown) {
 		t.Fatalf("a legacy Postmortem derived from Slack was visible to a web reader: %v", err)

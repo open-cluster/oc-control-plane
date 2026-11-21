@@ -42,8 +42,9 @@ func readConversationTurns(
 	limit = pageLimit(limit)
 	rows, err := queries.Query(ctx, `
 		SELECT investigation_id, turn, status, stopped_by, error, created_at, concluded_at, lease_worker <> ''
-		  FROM investigation
+		  FROM investigation i
 		 WHERE org_id = $1 AND conversation_id = $2
+		   AND NOT EXISTS (`+privateInvestigationSources+` AND private.conversation_id IS DISTINCT FROM $2)
 		   AND ($3::integer = 0 OR (turn, investigation_id) > ($3, $4::uuid))
 		 ORDER BY turn, investigation_id
 		 LIMIT $5`, organization, id, after, afterID, limit+1)

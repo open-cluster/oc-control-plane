@@ -22,15 +22,16 @@ var _ postmortem.Store = (*Database)(nil)
 const postmortemColumns = `incident_id, status, revision, document, created_at,
 	updated_at, reviewed_at, reviewed_by_user_id`
 
-const webPostmortemSource = `NOT p.source_restricted AND NOT EXISTS (
-	SELECT 1 FROM (SELECT p.org_id, p.document AS body) doc
-	WHERE EXISTS (
+const privatePostmortemReferences = `WHERE EXISTS (
 	    SELECT 1 FROM (` + citedToolRunConversations + `) cited
 	    JOIN conversation private ON private.org_id = doc.org_id AND private.conversation_id = cited.conversation_id
 	    WHERE private.source = 'slack'
 	) OR EXISTS (
 	    SELECT 1 ` + citedInvestigations + ` WHERE NOT (` + webInvestigationSource + `)
-	))`
+	)`
+
+const webPostmortemSource = `NOT p.source_restricted AND NOT EXISTS (
+	SELECT 1 FROM (SELECT p.org_id, p.document AS body) doc ` + privatePostmortemReferences + `)`
 
 func (p *Database) GenerationInput(
 	ctx context.Context, organization uuid.UUID, incidentID uuid.UUID,
@@ -279,14 +280,9 @@ func (p *Database) Correct(
 				}
 				for _, statement := range *statements {
 					refs = append(refs, statement.EvidenceRefs...)
-					if len(statement.RunRefs) > 0 {
-						id, err := uuid.Parse(statement.InvestigationID)
-						if err != nil || id == uuid.Nil {
-							return postmortem.Postmortem{}, postmortem.ErrUnavailableEvidence
-						}
-						for _, ordinal := range statement.RunRefs {
-							refs = append(refs, investigation.EvidenceRef{InvestigationID: id, ToolRunOrdinal: ordinal})
-						}
+					refs, err = appendOrdinalCitations(refs, statement.InvestigationID, statement.RunRefs)
+					if err != nil {
+						return postmortem.Postmortem{}, err
 					}
 				}
 			}
@@ -301,6 +297,10 @@ func (p *Database) Correct(
 				var timelineRefs []investigation.EvidenceRef
 				for _, entry := range *corrections.Timeline {
 					timelineRefs = append(timelineRefs, entry.EvidenceRefs...)
+					timelineRefs, err = appendOrdinalCitations(timelineRefs, entry.InvestigationID, entry.RunRefs)
+					if err != nil {
+						return postmortem.Postmortem{}, err
+					}
 				}
 				missing, err := evidenceMissing(ctx, tx, organization, uuid.Nil, timelineRefs, true)
 				if err != nil {
@@ -316,11 +316,33 @@ func (p *Database) Correct(
 			if err != nil {
 				return postmortem.Postmortem{}, err
 			}
-			return scanPostmortem(tx.QueryRow(ctx, `
+			saved, err := scanPostmortem(tx.QueryRow(ctx, `
 				UPDATE postmortem SET revision = $3, document = $4, updated_at = now()
-				 WHERE incident_id = $1 AND org_id = $2 RETURNING `+postmortemColumns,
+				 WHERE incident_id = $1 AND org_id = $2 AND NOT EXISTS (
+				     SELECT 1 FROM (SELECT $2::uuid AS org_id, $4::jsonb AS body) doc `+privatePostmortemReferences+`)
+				 RETURNING `+postmortemColumns,
 				incidentID, organization, current.Revision, document))
+			if errors.Is(err, postmortem.ErrUnknown) {
+				return postmortem.Postmortem{}, postmortem.ErrUnavailableEvidence
+			}
+			return saved, err
 		})
+}
+
+func appendOrdinalCitations(refs []investigation.EvidenceRef, investigationID string, ordinals []int) ([]investigation.EvidenceRef, error) {
+	if len(ordinals) == 0 {
+		return refs, nil
+	}
+	id, err := uuid.Parse(investigationID)
+	if err != nil || id == uuid.Nil {
+		return nil, postmortem.ErrUnavailableEvidence
+	}
+	for _, ordinal := range ordinals {
+		refs = append(refs, investigation.EvidenceRef{
+			InvestigationID: id, ToolRunOrdinal: ordinal,
+		})
+	}
+	return refs, nil
 }
 
 func (p *Database) Review(
