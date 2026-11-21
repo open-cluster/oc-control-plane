@@ -32,9 +32,11 @@ func searchTracesTool() integrations.Tool {
 			Description: "Maximum traces, 1–50; default 20. Reaching the limit is conservatively marked incomplete."},
 	}
 	return integrations.Tool{
-		Name:           "tempo_search_traces",
-		RequiredGrants: []string{queryGrant},
-		Arguments:      toolArguments,
+		Name:            "tempo_search_traces",
+		ReadOnly:        true,
+		ConcurrencySafe: true,
+		RequiredGrants:  []string{queryGrant},
+		Arguments:       toolArguments,
 		Description: "Search the selected Tempo Integration for traces, returning IDs, root service/operation, timing, " +
 			"available service error counts and matched error hints. Results are nondeterministic subsets, not ranked or exhaustive evidence. " +
 			"Service appearances count each observed service once per returned trace in this sample; missing service statistics are unknown. Presence does not attribute latency. " +
@@ -157,9 +159,11 @@ func getTraceTool() integrations.Tool {
 			Description: "Optional RFC3339 backend-search end within Investigation window, rounded down to seconds."},
 	}
 	return integrations.Tool{
-		Name:           "tempo_get_trace",
-		RequiredGrants: []string{queryGrant},
-		Arguments:      toolArguments,
+		Name:            "tempo_get_trace",
+		ReadOnly:        true,
+		ConcurrencySafe: true,
+		RequiredGrants:  []string{queryGrant},
+		Arguments:       toolArguments,
 		Description: "Retrieve up to 200 chronological spans for a known Tempo trace: " +
 			"IDs and parent references, services, operations, timestamps, durations and source error status. " +
 			"Backend search hints may omit parts or return spans outside the window; " +

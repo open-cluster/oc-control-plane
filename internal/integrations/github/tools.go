@@ -63,7 +63,9 @@ func listRepositoriesTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: toolListRepositories,
+		Name:            toolListRepositories,
+		ReadOnly:        true,
+		ConcurrencySafe: true,
 		Description: "List repositories accessible to this Integration, with stable IDs, " +
 			"names, descriptions, visibility, archive state, and default branches. Use to " +
 			"find the repository for an affected service before repository-specific reads. " +
@@ -151,7 +153,9 @@ func readCommitsTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: toolReadCommits,
+		Name:            toolReadCommits,
+		ReadOnly:        true,
+		ConcurrencySafe: true,
 		Description: "Read commits from an accessible repository in the Investigation " +
 			"window. Use when checking whether a code change preceded the incident. Do not " +
 			"use to prove deployment; a commit alone does not establish production rollout. " +

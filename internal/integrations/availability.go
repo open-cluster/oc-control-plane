@@ -43,6 +43,12 @@ func SupportedTools(definition Definition, integration Integration) []Tool {
 	return offered
 }
 
+// AllowedForOrigin restricts reads of the originating provider to the bound thread.
+func (t Tool) AllowedForOrigin(integration Integration, origin *Integration) bool {
+	return origin == nil || integration.Provider != origin.Provider ||
+		(integration.ID == origin.ID && t.SupportsThreadScope)
+}
+
 func integrationEligible(integration Integration) (bool, string) {
 	if integration.Disconnected {
 		return false, "this Integration is disconnected"

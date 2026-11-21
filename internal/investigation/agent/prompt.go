@@ -138,37 +138,16 @@ func exchangeTools(orientation orientation, conclude integrations.ToolDefinition
 }
 
 func envelopeDefinition(definition integrations.ToolDefinition, sources []offeredSource) integrations.ToolDefinition {
-	var ids []any
-	var names []string
+	var eligible []integrations.Integration
 	for _, source := range sources {
 		for _, tool := range source.Tools {
 			if tool.Name == definition.Name {
-				ids = append(ids, source.Integration.ID.String())
-				names = append(names, source.Integration.Name+" ("+source.Integration.ID.String()+")")
+				eligible = append(eligible, source.Integration)
 				break
 			}
 		}
 	}
-	definition.InputSchema = map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"purpose": map[string]any{
-				"type":        "string",
-				"description": "Concise operator-visible reason for this read.",
-			},
-			"input": definition.InputSchema,
-		},
-		"required":             []any{"input"},
-		"additionalProperties": false,
-	}
-	if len(ids) > 1 {
-		definition.InputSchema["properties"].(map[string]any)["integrationId"] = map[string]any{
-			"type": "string", "enum": ids,
-			"description": "Select the connected source: " + strings.Join(names, "; "),
-		}
-		definition.InputSchema["required"] = []any{"input", "integrationId"}
-	}
-	return definition
+	return definition.WithInputEnvelope(eligible)
 }
 
 func ConcludeDefinition() integrations.ToolDefinition {

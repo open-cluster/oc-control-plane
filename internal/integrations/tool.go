@@ -3,6 +3,7 @@ package integrations
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +15,8 @@ type Tool struct {
 	Arguments           []ToolArgument
 	RequiredGrants      []string
 	SupportsThreadScope bool
+	ReadOnly            bool
+	ConcurrencySafe     bool
 	Run                 func(ctx context.Context, request ToolRequest) (ToolResult, error)
 }
 
@@ -98,6 +101,39 @@ func (t Tool) Definition() ToolDefinition {
 		Description: t.Description,
 		InputSchema: schema,
 	}
+}
+
+// WithInputEnvelope preserves the Tool's argument schema and supplies purpose and source selection.
+func (definition ToolDefinition) WithInputEnvelope(sources []Integration) ToolDefinition {
+	fields := map[string]any{
+		"purpose": map[string]any{
+			"type":        "string",
+			"description": "Concise operator-visible reason for this read.",
+		},
+		"input": definition.InputSchema,
+	}
+	required := []any{"input"}
+	if len(sources) > 1 {
+		ids := make([]any, 0, len(sources))
+		names := make([]string, 0, len(sources))
+		for _, source := range sources {
+			ids = append(ids, source.ID.String())
+			names = append(names, source.Name+" ("+source.ID.String()+")")
+		}
+		fields["integrationId"] = map[string]any{
+			"type":        "string",
+			"enum":        ids,
+			"description": "Select the connected source: " + strings.Join(names, "; "),
+		}
+		required = append(required, "integrationId")
+	}
+	definition.InputSchema = map[string]any{
+		"type":                 "object",
+		"properties":           fields,
+		"required":             required,
+		"additionalProperties": false,
+	}
+	return definition
 }
 
 func toAny(values []string) []any {
