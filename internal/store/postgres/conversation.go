@@ -125,7 +125,7 @@ func (p *Database) QueryConversations(
 	rows, err := pool.Query(ctx, fmt.Sprintf(`
 		SELECT `+conversationColumns+`
 		  FROM conversation
-		 WHERE org_id = $1`+narrowing+`
+		 WHERE org_id = $1 AND source = 'web'`+narrowing+`
 		 ORDER BY last_activity_at %s, conversation_id %s
 		 LIMIT $2`, direction, direction), arguments...)
 	if err != nil {

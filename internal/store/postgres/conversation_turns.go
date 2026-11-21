@@ -14,8 +14,12 @@ import (
 func (p *Database) ConversationTurns(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID, limit int, cursor string,
 ) (conversation.TurnPage, error) {
-	if _, err := p.conversationByID(ctx, organization, id); err != nil {
+	found, err := p.conversationByID(ctx, organization, id)
+	if err != nil {
 		return conversation.TurnPage{}, err
+	}
+	if found.Source != conversation.SourceWeb {
+		return conversation.TurnPage{}, conversation.ErrUnknown
 	}
 	pool, err := p.poolForOrganization(organization)
 	if err != nil {

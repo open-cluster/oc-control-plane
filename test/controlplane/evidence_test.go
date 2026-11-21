@@ -189,6 +189,15 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 		VALUES ($1, $2, 'slack', 'private conversation')`, surfaceOrg, privateChat); err != nil {
 		t.Fatal(err)
 	}
+	for _, suffix := range []string{"", "/turns"} {
+		path := plane.base(surfaceOrg) + "/conversations/" + privateChat.String() + suffix
+		if status, body := plane.call(t, http.MethodGet, path, nil); status != http.StatusNotFound {
+			t.Fatalf("web Conversation endpoint exposed Slack content: %d %s", status, body)
+		}
+	}
+	if status, body := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/conversations", nil); status != http.StatusOK || strings.Contains(body, privateChat.String()) {
+		t.Fatalf("web Conversation listing exposed a Slack thread: %d %s", status, body)
+	}
 	if _, err := database.Exec(ctx, `UPDATE investigation SET conversation_id = $3, turn = 1
 		WHERE org_id = $1 AND investigation_id = $2`, surfaceOrg, ids[1], privateChat); err != nil {
 		t.Fatal(err)
