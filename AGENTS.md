@@ -38,8 +38,8 @@ listeners; nothing mocks the database.
   vendors appear only in adapter subpackages.
 - No Kubernetes library in this module; cluster access belongs to the Relay.
 - Persisted enum values are frozen; extending one starts in `test/architecture`.
-- Every application API route is declared `(method, pattern, permission)` in a `Routes()` table; a mux registration anywhere
-  else fails the gates.
+- Every application API route is declared `(method, pattern, permission)` in a `Routes()` table; a mux registration
+  anywhere else fails the gates.
 - Secrets: accept direct environment values or optional _FILE inputs, reject conflicts, and redact errors; inbound
   secrets are digests; presentable credentials are sealed via `internal/seal`; audit details drop credential-shaped keys
   mechanically.
@@ -53,7 +53,47 @@ listeners; nothing mocks the database.
   and concise. Comments state constraints, invariants, or non-obvious reasons, in plain words — never what the next line
   does, never the history of a change. Doc comments follow Go convention. Tests assert observable behavior at real seams
   (the composed process, the wire, the database), not call sequences.
-- Do not remove user written comments that explain the part of the code. 
+- Do not remove user written comments that explain the part of the code.
+
+## Engineering and performance
+
+- Prefer idiomatic Go and the smallest implementation that satisfies the requirement.
+- Organize code by product responsibility, not by abstract layers or patterns.
+- Introduce interfaces only where a consumer needs one.
+- Avoid wrappers, helpers, configuration, and new dependencies that do not remove meaningful complexity.
+- Keep HTTP, domain behavior, agent execution, and persistence responsibilities separate.
+- Do not move code solely to shorten a file.
+- Prefer standard library functionality when sufficient.
+
+## PostgreSQL
+
+- Use parameterized queries and explicit tenant scoping.
+- Preserve transaction, audit, and authorization invariants.
+- Prefer named SQL queries for substantial static statements.
+- Keep dynamic SQL only when justified, with allowlisted identifiers and parameterized values.
+- Keep database row models private to persistence.
+- Avoid N+1 queries, unbounded reads, and unnecessary joins.
+- Do not introduce indexes without considering query plans, existing indexes, and write overhead.
+- Do not replace pgx or introduce an ORM without evidence.
+
+## Performance
+
+- Optimize measured bottlenecks, not theoretical ones.
+- Establish a baseline before changing a hot path.
+- Use Go benchmarks, profiles, or representative query plans.
+- Consider CPU, memory, allocations, I/O, concurrency, latency, and operational costs.
+- Prefer simpler algorithms and fewer database round trips.
+- Do not add caches, pools, or goroutines speculatively.
+- Re-measure after optimization and report the difference.
+
+## Security and correctness
+
+- Preserve Organization isolation across reads and writes.
+- Treat external tool results and provider data as untrusted.
+- Never expose secrets or restricted evidence through APIs, streams, logs, Slack, or agent context.
+- Preserve idempotency, lease fencing, and cancellation.
+- Prefer focused tests at observable boundaries.
+- Never silently change externally visible behavior during an architecture-only refactor.
 
 ## Documents
 
