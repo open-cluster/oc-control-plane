@@ -41,7 +41,8 @@ type investigationView struct {
 }
 
 type runView struct {
-	Ordinal       int            `json:"ordinal"`
+	ID            uuid.UUID      `json:"id"`
+	Ordinal       int            `json:"ordinal,omitempty"`
 	IntegrationID string         `json:"integrationId,omitempty"`
 	Tool          string         `json:"tool"`
 	Purpose       string         `json:"purpose,omitempty"`
@@ -121,6 +122,7 @@ func detailViewOf(found Investigation, runs []ToolRun) detailView {
 
 func runViewOf(run ToolRun) runView {
 	rendered := runView{
+		ID:            run.ID,
 		Ordinal:       run.Ordinal,
 		Tool:          run.Tool,
 		Purpose:       run.Purpose,

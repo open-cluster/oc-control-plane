@@ -89,9 +89,10 @@ the mechanism that produced impact.
 
 ## Tool Run
 
-One attempted Tool execution, successful or failed. Its one-based ordinal is the citation
-used within its Investigation. It records Integration, purpose, arguments, bounded window,
-outcome, truncation, summary, and source identifiers.
+One attempted Tool execution with a stable UUID allocated before dispatch. Agent executions
+own their Tool Runs. Existing Investigation runs retain their one-based citation ordinals.
+A completed Tool Run records Integration, purpose, arguments, bounded window, outcome,
+truncation, summary, and source identifiers.
 
 ## Action Proposal
 
@@ -108,6 +109,7 @@ cluster credentials inside the customer boundary.
 
 One durable Relay capability execution. It is leased and fenced so it is neither lost nor
 recorded twice, and it names the Integration and Relay involved.
+Agent execution work links to the owning Tool Run so cancellation stays scoped to that execution.
 
 ## Postmortem
 

@@ -15,6 +15,93 @@ import (
 	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
+func TestAgentToolRunsSurviveLeaseTakeover(t *testing.T) {
+	database, org := migratedDatabase(t)
+	ctx := t.Context()
+	chat := openConversation(t, database, org, "checkout")
+	admitted, err := database.AdmitAgentChat(ctx, ownerOf(t, org), org, chat.ID, uuid.New(),
+		conversation.NewMessage{Text: "Check checkout."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := database.ClaimAgentExecution(ctx, org, admitted.ID, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	begin := func() uuid.UUID {
+		t.Helper()
+		id, err := database.BeginAgentToolRun(ctx, org, claim, investigation.ToolRun{
+			Tool: "query_metrics", WindowFrom: now.Add(-time.Hour), WindowUntil: now, StartedAt: now,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	first, second, interrupted := begin(), begin(), begin()
+	if first == uuid.Nil || second == uuid.Nil || first == second {
+		t.Fatalf("attempts received invalid identities %s and %s", first, second)
+	}
+	observation := "a bounded observation"
+	complete := func(execution storage.AgentExecution, id uuid.UUID) error {
+		return database.CompleteAgentToolRun(ctx, org, execution, investigation.ToolRun{
+			ID: id, Outcome: investigation.RunSucceeded, FinishedAt: now.Add(time.Second),
+			ObservationText: &observation,
+		})
+	}
+	for _, id := range []uuid.UUID{second, first} {
+		if err := complete(claim, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	observation = "different observation"
+	if err := complete(claim, first); err == nil {
+		t.Fatal("committed Tool Run was accepted for completion again")
+	}
+	pool, err := poolForTest(database, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE agent_execution SET lease_expires_at = clock_timestamp()
+		WHERE org_id = $1 AND execution_id = $2`, org, claim.ID); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := database.ClaimAgentExecution(ctx, org, claim.ID, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := complete(claim, interrupted); !errors.Is(err, storage.ErrAgentLeaseLost) {
+		t.Fatalf("stale worker completed an interrupted Tool Run: %v", err)
+	}
+	if err := complete(recovered, interrupted); err == nil {
+		t.Fatal("new worker published an observation under an old attempt")
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM agent_execution
+		WHERE org_id = $1 AND execution_id = $2`, org, claim.ID); err == nil {
+		t.Fatal("deleting an execution discarded its Tool Runs")
+	}
+	for _, check := range []struct {
+		id      uuid.UUID
+		missing bool
+	}{
+		{id: first}, {id: second}, {id: interrupted, missing: true}, {id: uuid.New(), missing: true},
+	} {
+		missing, err := database.EvidenceMissing(ctx, org, uuid.Nil, []investigation.EvidenceRef{{ToolRunID: check.id}})
+		if err != nil || missing != check.missing {
+			t.Fatalf("evidence %s missing = %t, want %t, error = %v", check.id, missing, check.missing, err)
+		}
+	}
+	for _, id := range []uuid.UUID{first, second} {
+		var retained string
+		if err := pool.QueryRow(ctx, `SELECT observation_text FROM investigation_tool_run
+			WHERE org_id = $1 AND execution_id = $2 AND tool_run_id = $3 AND investigation_id IS NULL`,
+			org, claim.ID, id).Scan(&retained); err != nil || retained != "a bounded observation" {
+			t.Fatalf("retained observation = %q, error = %v", retained, err)
+		}
+	}
+}
+
 func TestAgentExecution(t *testing.T) {
 	database, organization, foreignOrg := twoOrganizationsInOneDatabase(t)
 	principal := ownerOf(t, organization)

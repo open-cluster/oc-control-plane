@@ -203,6 +203,7 @@ type Investigation struct {
 }
 
 type ToolRun struct {
+	ID              uuid.UUID
 	IntegrationID   uuid.UUID
 	Ordinal         int
 	Tool            string

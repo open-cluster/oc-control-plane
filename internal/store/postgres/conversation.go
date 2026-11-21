@@ -125,7 +125,7 @@ func (p *Database) QueryConversations(
 	rows, err := pool.Query(ctx, fmt.Sprintf(`
 		SELECT `+conversationColumns+`
 		  FROM conversation
-		 WHERE org_id = $1`+narrowing+`
+		 WHERE org_id = $1 AND source = 'web'`+narrowing+`
 		 ORDER BY last_activity_at %s, conversation_id %s
 		 LIMIT $2`, direction, direction), arguments...)
 	if err != nil {
@@ -166,7 +166,7 @@ func (p *Database) ConversationDetail(
 		return conversation.Detail{}, err
 	}
 
-	said, err := conversationMessages(ctx, pool, organization, id, messages)
+	said, err := conversationMessages(ctx, pool, organization, id, messages, found.Source)
 	if err != nil {
 		return conversation.Detail{}, err
 	}
@@ -182,7 +182,7 @@ func conversationMessages(
 	ctx context.Context,
 	queries querier,
 	organization uuid.UUID,
-	id uuid.UUID, limit int,
+	id uuid.UUID, limit int, source conversation.Source,
 ) ([]conversation.Message, error) {
 	if limit <= 0 {
 		limit = defaultPageSize
@@ -190,13 +190,15 @@ func conversationMessages(
 	rows, err := queries.Query(ctx, `
 		SELECT sequence, role, author_id, author_name, text, source_reference,
 		       investigation_id, created_at, window_from, window_until
-		  FROM (SELECT sequence, role, author_id, author_name, text, source_reference,
-		               investigation_id, created_at, window_from, window_until
-		          FROM conversation_message
-		         WHERE org_id = $1 AND conversation_id = $2
-		         ORDER BY sequence DESC
+		  FROM (SELECT m.sequence, m.role, m.author_id, m.author_name, m.text, m.source_reference,
+		               m.investigation_id, m.created_at, m.window_from, m.window_until
+		          FROM conversation_message m
+		          LEFT JOIN investigation i ON i.org_id = m.org_id AND i.investigation_id = m.investigation_id
+		         WHERE m.org_id = $1 AND m.conversation_id = $2
+		           AND ($4 <> 'web' OR m.role <> $5 OR `+webInvestigationSource+`)
+		         ORDER BY m.sequence DESC
 		         LIMIT $3) newest
-		 ORDER BY sequence`, organization, id, limit)
+		 ORDER BY sequence`, organization, id, limit, source, int16(conversation.RoleAssistant))
 	if err != nil {
 		return nil, fmt.Errorf("reading a conversation's messages: %w", err)
 	}

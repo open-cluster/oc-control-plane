@@ -42,7 +42,7 @@ func (p *Database) ConversationBrief(
 	for _, finding := range brief.Findings {
 		refs = append(refs, finding.References()...)
 	}
-	brief.MissingEvidence, err = evidenceMissing(ctx, db, organization, refs)
+	brief.MissingEvidence, err = evidenceMissing(ctx, db, organization, conversationID, refs, false)
 	if err != nil {
 		return investigation.Brief{}, fmt.Errorf("checking prior evidence: %w", err)
 	}
@@ -65,21 +65,20 @@ func readPriorTurns(
 	brief *investigation.Brief,
 ) error {
 	rows, err := db.Query(ctx, `
-		SELECT CASE WHEN turn.conversation_id = $2 THEN turn.turn ELSE 0 END,
-		       turn.investigation_id, turn.conclusion, turn.concluded_at,
-		       turn.window_from, turn.window_until
-		  FROM investigation turn
-		  JOIN investigation current ON current.org_id = turn.org_id
+		SELECT CASE WHEN i.conversation_id = $2 THEN i.turn ELSE 0 END,
+		       i.investigation_id, i.conclusion, i.concluded_at,
+		       i.window_from, i.window_until
+		  FROM investigation i
+		  JOIN investigation current ON current.org_id = i.org_id
 		   AND current.conversation_id = $2 AND current.investigation_id = $3
-		 WHERE turn.org_id = $1
-		   AND turn.status = 2
-		   AND turn.investigation_id <> $3
-		   AND turn.concluded_at < current.created_at
-		   AND (turn.conversation_id IS DISTINCT FROM $2 OR turn.turn < current.turn)
-		   AND (turn.conversation_id = $2
-		        OR (turn.incident_id IS NOT NULL
-		            AND turn.incident_id = current.incident_id))
-		 ORDER BY turn.conversation_id = $2 DESC, turn.turn DESC, turn.created_at DESC
+		 WHERE i.org_id = $1
+		   AND i.status = 2
+		   AND i.investigation_id <> $3
+		   AND i.concluded_at < current.created_at
+		   AND (i.conversation_id IS DISTINCT FROM $2 OR i.turn < current.turn)
+		   AND (i.conversation_id = $2 OR i.incident_id = current.incident_id)
+		   AND NOT EXISTS (`+privateInvestigationSources+` AND private.conversation_id <> $2)
+		 ORDER BY i.conversation_id = $2 DESC, i.turn DESC, i.created_at DESC
 		 LIMIT $4`, organizationID, conversationID, currentInvestigationID, investigation.BriefMaxFindings)
 	if err != nil {
 		return fmt.Errorf("reading a conversation's prior findings: %w", err)
@@ -184,14 +183,16 @@ func readPriorMessages(
 	}
 	rows, err := db.Query(ctx, `
 		SELECT message.sequence, message.role, message.author_name, message.text,
-		       message.created_at, owner.investigation_id,
-		       CASE WHEN $6 AND message.role = 2 AND owner.status = 2 THEN owner.conclusion END
+		       message.created_at, i.investigation_id,
+		       CASE WHEN $6 AND message.role = 2 AND i.status = 2 THEN i.conclusion END
 		  FROM conversation_message message
-		  JOIN investigation owner ON owner.org_id = message.org_id
-		   AND owner.conversation_id = message.conversation_id
-		   AND owner.investigation_id = message.investigation_id
+		  JOIN investigation i ON i.org_id = message.org_id
+		   AND i.conversation_id = message.conversation_id
+		   AND i.investigation_id = message.investigation_id
 		 WHERE message.org_id = $1 AND message.conversation_id = $2
-		   AND owner.turn < $3 AND ($4::bigint = 0 OR message.sequence < $4)
+		   AND i.turn < $3 AND ($4::bigint = 0 OR message.sequence < $4)
+		   AND (message.role <> 2 OR NOT EXISTS (`+privateInvestigationSources+`
+		        AND private.conversation_id <> $2))
 		 ORDER BY message.sequence DESC LIMIT $5`, organizationID, conversationID, currentTurn, beforeSequence, limit+1, includeConclusions)
 	if err != nil {
 		return page, fmt.Errorf("reading prior Messages: %w", err)

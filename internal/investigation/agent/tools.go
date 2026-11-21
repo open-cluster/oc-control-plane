@@ -121,6 +121,7 @@ func (r *Agent) execute(
 	call toolCall, ordinal int,
 ) (investigation.ToolRun, error) {
 	run := investigation.ToolRun{
+		ID:          uuid.New(),
 		Ordinal:     ordinal,
 		Tool:        call.Tool,
 		Arguments:   call.Arguments,

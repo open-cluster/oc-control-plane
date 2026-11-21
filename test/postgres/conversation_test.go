@@ -288,6 +288,7 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 		t.Fatalf("recorded purpose metadata = %+v", recordedRuns)
 	}
 	refresh := recordedRuns[0]
+	refresh.ID = uuid.Nil
 	refresh.Ordinal, refresh.Purpose = 2, ""
 	refresh.Outcome, refresh.Summary = investigation.RunFailed, "source unavailable"
 	refresh.Error = "source unavailable"
@@ -300,7 +301,7 @@ func TestConversationsOnOneIncidentShareFindingsAndNothingElse(t *testing.T) {
 		t.Fatalf("an absent purpose was not preserved: runs=%+v err=%v", recordedRuns, err)
 	}
 	for _, ordinal := range []int{1, 2} {
-		missing, err := database.EvidenceMissing(context.Background(), organization, []investigation.EvidenceRef{{
+		missing, err := database.EvidenceMissing(context.Background(), organization, uuid.Nil, []investigation.EvidenceRef{{
 			InvestigationID: adaTurn.InvestigationID, ToolRunOrdinal: ordinal,
 		}})
 		if err != nil || missing != (ordinal == 2) {
@@ -682,7 +683,7 @@ func TestConversationContextKeepsInterleavedRepliesAndExcludesQueuedMessages(t *
 	if err != nil || len(history.Exchange) != len(want) {
 		t.Fatalf("older exchange = %+v, error=%v", history, err)
 	}
-	missing, err := database.EvidenceMissing(ctx, organization, []investigation.EvidenceRef{{
+	missing, err := database.EvidenceMissing(ctx, organization, uuid.Nil, []investigation.EvidenceRef{{
 		InvestigationID: turn.InvestigationID,
 		ToolRunOrdinal:  1,
 	}})

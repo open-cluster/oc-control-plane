@@ -17,6 +17,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
+	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 	intake "github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
@@ -273,23 +274,23 @@ func TestSlackEvents_AMentionOpensAConversationInItsThread(t *testing.T) {
 	}
 	status, answer = plane.call(t, http.MethodGet,
 		plane.base(surfaceOrg)+"/conversations/"+found[0].ID, nil)
-	if status != http.StatusOK {
-		t.Fatalf("reading Slack Conversation = %d: %s", status, answer)
+	if status != http.StatusNotFound {
+		t.Fatalf("web read of a private Slack Conversation = %d: %s", status, answer)
 	}
-	var detail struct {
-		Source   string `json:"source"`
-		Messages []struct {
-			Role       string  `json:"role"`
-			AuthorID   string  `json:"authorId"`
-			AuthorName string  `json:"authorName"`
-			ActorKind  *string `json:"actorKind"`
-		} `json:"messages"`
+
+	ctx := t.Context()
+	database, err := pgx.Connect(ctx, plane.dsn)
+	if err != nil {
+		t.Fatal(err)
 	}
-	decodeInto(t, answer, &detail)
-	if detail.Source != "slack" || len(detail.Messages) != 1 ||
-		detail.Messages[0].Role != "user" || detail.Messages[0].AuthorID != "U9SRE" ||
-		detail.Messages[0].ActorKind != nil {
-		t.Fatalf("public Slack identity = %s", answer)
+	defer func() { _ = database.Close(ctx) }()
+	var role int16
+	var author string
+	err = database.QueryRow(ctx, `
+		SELECT role, author_id FROM conversation_message
+		 WHERE org_id = $1 AND conversation_id = $2`, surfaceOrg, found[0].ID).Scan(&role, &author)
+	if err != nil || role != int16(conversation.RoleUser) || author != "U9SRE" {
+		t.Fatalf("stored Slack Message role = %d, author = %q, err = %v", role, author, err)
 	}
 }
 

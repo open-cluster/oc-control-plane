@@ -3,6 +3,7 @@ package postmortem
 import (
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
@@ -34,10 +35,17 @@ func DraftFrom(input GenerationInput) Postmortem {
 			description = run.Summary
 		}
 		if description != "" {
-			draft.Timeline = append(draft.Timeline, TimelineEntry{
+			entry := TimelineEntry{
 				At: run.FinishedAt, Description: description,
-				InvestigationID: evidence.InvestigationID.String(), RunRefs: []int{run.Ordinal},
-			})
+				InvestigationID: evidence.InvestigationID.String(), RunRefs: []int{},
+			}
+			if run.Ordinal > 0 {
+				entry.RunRefs = []int{run.Ordinal}
+			}
+			if run.ID != uuid.Nil {
+				entry.EvidenceRefs = []investigation.EvidenceRef{{ToolRunID: run.ID}}
+			}
+			draft.Timeline = append(draft.Timeline, entry)
 		}
 	}
 	for _, evidence := range input.Events {

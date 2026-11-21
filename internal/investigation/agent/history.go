@@ -72,7 +72,7 @@ func (r *Agent) readHistory(ctx context.Context, state *runState, call toolCall)
 		result.Error = "stored Conversation history could not be encoded within its response budget"
 		return result
 	}
-	page.MissingEvidence, err = r.Store.EvidenceMissing(readCtx, state.organization, historyEvidence(page))
+	page.MissingEvidence, err = r.Store.EvidenceMissing(readCtx, state.organization, state.opened.ConversationID, historyEvidence(page))
 	if err != nil {
 		result.Error = "stored Conversation evidence could not be checked; continuity is limited"
 		return result

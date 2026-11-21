@@ -150,7 +150,7 @@ func (r *records) ConversationHistory(context.Context, uuid.UUID, uuid.UUID, uui
 	return r.history, nil
 }
 
-func (r *records) EvidenceMissing(_ context.Context, _ uuid.UUID, refs []investigation.EvidenceRef) (bool, error) {
+func (r *records) EvidenceMissing(_ context.Context, _, _ uuid.UUID, refs []investigation.EvidenceRef) (bool, error) {
 	for _, ref := range refs {
 		if ref == r.missingEvidence {
 			return true, nil
@@ -216,6 +216,9 @@ func configuredTestAgent(t *testing.T, store *records, completer Completer, cata
 
 func TestRunLoadsRecentReplyDetailsAndStopsRepeatedHistoryReads(t *testing.T) {
 	prior := uuid.New()
+	retained := investigation.EvidenceRef{
+		ToolRunID: uuid.New(), InvestigationID: prior, ToolRunOrdinal: 1,
+	}
 	store := &records{
 		messages: []investigation.AssignedMessage{{Sequence: 2, Text: "why roll back?"}},
 		brief: investigation.Brief{
@@ -232,7 +235,8 @@ func TestRunLoadsRecentReplyDetailsAndStopsRepeatedHistoryReads(t *testing.T) {
 			InvestigationID: prior,
 			Answer: &investigation.Conclusion{
 				Findings: []investigation.Finding{
-					{Statement: "latency increased", RunRefs: []int{1}},
+					{Statement: "an older citation used the same ordinal", RunRefs: []int{1}},
+					{Statement: "latency increased", EvidenceRefs: []investigation.EvidenceRef{retained}},
 					{Statement: "a prior source is no longer available", RunRefs: []int{2}},
 				},
 				Actions: []investigation.ActionProposal{{
@@ -313,6 +317,10 @@ func TestRunLoadsRecentReplyDetailsAndStopsRepeatedHistoryReads(t *testing.T) {
 	if store.status != investigation.StatusConcluded || len(store.runs) != 0 || len(store.conclusion.Findings) != 1 ||
 		len(store.conclusion.Limitations) != 1 || store.conclusion.Limitations[0].Statement != investigation.MissingEvidenceStatement {
 		t.Fatalf("history did not retain prior evidence without creating new Tool Runs: %+v", store)
+	}
+	refs := store.conclusion.Findings[0].EvidenceRefs
+	if len(refs) != 1 || refs[0] != retained {
+		t.Fatalf("the legacy citation lost its stable Tool Run identity: %+v", refs)
 	}
 }
 
