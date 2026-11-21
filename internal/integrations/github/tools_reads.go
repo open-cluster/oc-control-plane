@@ -87,7 +87,9 @@ func readCommitTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: toolReadCommit,
+		Name:            toolReadCommit,
+		ReadOnly:        true,
+		ConcurrencySafe: true,
 		Description: "Read one commit's metadata, changed files, and bounded patches. Use " +
 			"after github_read_commits identifies a relevant commit and the Investigation " +
 			"needs the actual change. Do not use to list history or prove deployment. " +
@@ -148,7 +150,9 @@ func readPullRequestTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: toolReadPullRequest,
+		Name:            toolReadPullRequest,
+		ReadOnly:        true,
+		ConcurrencySafe: true,
 		Description: "Read one pull request's intent, merge state, changed files, bounded " +
 			"patches, and available CI checks. Use when a known pull request explains why a " +
 			"change was made or whether CI objected. Do not use to discover its number or " +
@@ -248,7 +252,9 @@ func readWorkflowRunsTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: toolReadWorkflowRuns,
+		Name:            toolReadWorkflowRuns,
+		ReadOnly:        true,
+		ConcurrencySafe: true,
 		Description: "Read CI/CD workflow runs for a repository in the Investigation " +
 			"window, newest first. Use to find failed or cancelled runs and obtain a run ID " +
 			"for github_read_job_log. Do not use a successful run to prove production health " +
@@ -338,7 +344,9 @@ func readJobLogTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: toolReadJobLog,
+		Name:            toolReadJobLog,
+		ReadOnly:        true,
+		ConcurrencySafe: true,
 		Description: fmt.Sprintf("Read the failing job and final %d bytes of its log from "+
 			"a known workflow run. Use to identify the failed step and its final output. Do "+
 			"not use for successful runs or to identify the code change. Results report log "+
@@ -445,7 +453,9 @@ func readFileTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: toolReadFile,
+		Name:            toolReadFile,
+		ReadOnly:        true,
+		ConcurrencySafe: true,
 		Description: fmt.Sprintf("Read the first %d bytes of one known file at a branch, "+
 			"tag, or commit. Use when a changed file's surrounding configuration matters. "+
 			"Do not browse with guessed paths or use this instead of github_read_commit for "+
@@ -509,7 +519,9 @@ func listReleasesTool(app *App, client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: toolListReleases,
+		Name:            toolListReleases,
+		ReadOnly:        true,
+		ConcurrencySafe: true,
 		Description: "List a repository's published releases, newest first, with tags, " +
 			"publish times, authors, prerelease state, and links. Use to identify artifacts " +
 			"published near an incident. Do not treat a release as proof of production " +

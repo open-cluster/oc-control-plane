@@ -225,15 +225,22 @@ func (p *Database) ConversationOrigin(ctx context.Context, organization uuid.UUI
 	if err != nil {
 		return nil, err
 	}
+	return conversationOrigin(ctx, pool, organization, id, false)
+}
+
+func conversationOrigin(ctx context.Context, on querier, organization, id uuid.UUID, requireVerified bool) (*investigation.ConversationOrigin, error) {
 	var source conversation.Source
 	var integration *uuid.UUID
 	var channel, thread string
-	err = pool.QueryRow(ctx, `SELECT c.source, i.integration_id,
+	err := on.QueryRow(ctx, `SELECT c.source, i.integration_id,
 		COALESCE(s.channel_id, ''), COALESCE(s.thread_ts, '')
 		FROM conversation c
 		LEFT JOIN slack_conversation s ON s.org_id = c.org_id AND s.conversation_id = c.conversation_id
 		LEFT JOIN integration i ON i.org_id = c.org_id AND i.integration_id = s.integration_id
-		WHERE c.org_id = $1 AND c.conversation_id = $2`, organization, id).
+		    AND (NOT $3 OR (NOT i.disconnected AND i.verification_status = 'verified' AND i.verified_at IS NOT NULL
+		        AND EXISTS (SELECT 1 FROM integration_installation installed
+		                     WHERE installed.org_id = i.org_id AND installed.integration_id = i.integration_id)))
+		WHERE c.org_id = $1 AND c.conversation_id = $2`, organization, id, requireVerified).
 		Scan(&source, &integration, &channel, &thread)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, conversation.ErrUnknown

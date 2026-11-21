@@ -124,7 +124,9 @@ func listChannelsTool(client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: "slack_list_channels",
+		Name:            "slack_list_channels",
+		ReadOnly:        true,
+		ConcurrencySafe: true,
 		Description: "List public, unarchived Slack channels with IDs, names, topics, " +
 			"purposes, and member counts. Use to select relevant channels before reading " +
 			"history. Do not use to read messages or search for where a phrase was said. " +
@@ -207,7 +209,9 @@ func channelHistoryTool(client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: "slack_get_channel_history",
+		Name:            "slack_get_channel_history",
+		ReadOnly:        true,
+		ConcurrencySafe: true,
 		Description: "Read messages from one known Slack channel in the Investigation " +
 			"window, including authors, thread markers, reply counts, and links. Use for " +
 			"incident discussion, reactions, and reported actions. Do not use for thread " +
@@ -278,7 +282,9 @@ func threadRepliesTool(client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: "slack_get_thread_replies",
+		Name:            "slack_get_thread_replies",
+		ReadOnly:        true,
+		ConcurrencySafe: true,
 		Description: "Read the newest bounded tail of a known Slack thread in message " +
 			"order, including authors, text, and links. Use after channel history identifies " +
 			"a message with replies. Do not use for a channel timeline or speculatively on " +
@@ -352,7 +358,9 @@ func searchMessagesTool(client *Client) integrations.Tool {
 		},
 	}
 	return integrations.Tool{
-		Name: "slack_search_messages",
+		Name:            "slack_search_messages",
+		ReadOnly:        true,
+		ConcurrencySafe: true,
 		Description: "Search Slack messages for exact identifiers across the workspace " +
 			"within the Investigation window. Use when the relevant channel is unknown and " +
 			"an error string, ticket, service, or hostname is available. Do not use vague " +

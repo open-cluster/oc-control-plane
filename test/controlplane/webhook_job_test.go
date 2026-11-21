@@ -292,7 +292,7 @@ func TestKubernetesWorkloadToolRunsAcrossTheComposedRelayAndDatabase(t *testing.
 		request.ToolRunID, admitErr = database.BeginAgentToolRun(ctx, organization, claim, investigation.ToolRun{
 			IntegrationID: integration.ID, Tool: tool.Name, Arguments: request.Arguments,
 			WindowFrom: request.WindowFrom, WindowUntil: request.WindowUntil, StartedAt: time.Now(),
-		})
+		}, nil)
 		if admitErr != nil {
 			t.Fatal(admitErr)
 		}
@@ -359,7 +359,7 @@ func TestKubernetesWorkloadToolRunsAcrossTheComposedRelayAndDatabase(t *testing.
 		if err := database.CompleteAgentToolRun(ctx, organization, claim, investigation.ToolRun{
 			ID: request.ToolRunID, Summary: got.result.Summary, Sources: got.result.Sources,
 			Outcome: investigation.RunSucceeded, FinishedAt: time.Now(),
-		}); err != nil {
+		}, nil); err != nil {
 			t.Fatal(err)
 		}
 	case <-ctx.Done():

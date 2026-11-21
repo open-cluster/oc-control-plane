@@ -61,9 +61,11 @@ func queryTool() integrations.Tool {
 			Description: "Optional range step in whole seconds, 1–86400. Raised when needed to evaluate at most 240 timestamps per series."},
 	}
 	return integrations.Tool{
-		Name:           "prometheus_query",
-		RequiredGrants: []string{queryGrant},
-		Arguments:      declared,
+		Name:            "prometheus_query",
+		ReadOnly:        true,
+		ConcurrencySafe: true,
+		RequiredGrants:  []string{queryGrant},
+		Arguments:       declared,
 		Description: "Evaluate read-only PromQL as an instant or range query against the selected Prometheus Integration. " +
 			"Returns labeled string-valued samples, effective evaluation times/step, annotations and possible incompleteness; NaN/Inf are not zero. " +
 			"Inspect actual labels before filtering. increase() estimates counter changes and may be fractional, not exact event counts. " +
@@ -244,10 +246,12 @@ func discoverMetricsTool() integrations.Tool {
 			Description: `Optional label matchers such as {job="checkout"}, at most 2048 bytes. Use to scope discovery to the relevant service.`},
 	}
 	return integrations.Tool{
-		Name:           "prometheus_discover_metrics",
-		RequiredGrants: []string{queryGrant},
-		Arguments:      declared,
-		Description:    "Discover up to 50 metric names matching a literal hint and optional service label matchers in the Investigation window, capped at 24 hours. Use before constructing PromQL when metric names are unknown. This returns names, not measurements. Warnings and limits indicate incomplete discovery; absence does not prove a metric never existed.",
+		Name:            "prometheus_discover_metrics",
+		ReadOnly:        true,
+		ConcurrencySafe: true,
+		RequiredGrants:  []string{queryGrant},
+		Arguments:       declared,
+		Description:     "Discover up to 50 metric names matching a literal hint and optional service label matchers in the Investigation window, capped at 24 hours. Use before constructing PromQL when metric names are unknown. This returns names, not measurements. Warnings and limits indicate incomplete discovery; absence does not prove a metric never existed.",
 		Run: func(ctx context.Context, request integrations.ToolRequest) (integrations.ToolResult, error) {
 			arguments, err := integrations.ReadArguments(declared, request.Arguments)
 			if err != nil {
