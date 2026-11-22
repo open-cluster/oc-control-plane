@@ -10,7 +10,7 @@ type findingView struct {
 	Statement    string        `json:"statement"`
 	Kind         FindingKind   `json:"kind,omitempty"`
 	Mechanism    string        `json:"mechanism,omitempty"`
-	RunRefs      []int         `json:"runRefs"`
+	RunRefs      []int         `json:"runRefs,omitempty"`
 	EvidenceRefs []EvidenceRef `json:"evidenceRefs,omitempty"`
 }
 

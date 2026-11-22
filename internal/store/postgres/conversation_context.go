@@ -11,6 +11,8 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
+var errConversationOrigin = errors.New("conversation provider origin is missing or inconsistent")
+
 func (p *Database) ConversationOrigin(ctx context.Context, organization uuid.UUID, id uuid.UUID) (*investigation.ConversationOrigin, error) {
 	pool, err := p.poolForOrganization(organization)
 	if err != nil {
@@ -43,7 +45,7 @@ func conversationOrigin(ctx context.Context, on querier, organization, id uuid.U
 		return nil, nil
 	}
 	if source != conversation.SourceSlack || integration == nil || *integration == uuid.Nil || channel == "" || thread == "" {
-		return nil, errors.New("conversation provider origin is missing or inconsistent")
+		return nil, errConversationOrigin
 	}
 	return &investigation.ConversationOrigin{
 		IntegrationID: *integration,

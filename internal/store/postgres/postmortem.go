@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -279,15 +280,17 @@ func (p *Database) Correct(
 					continue
 				}
 				for _, statement := range *statements {
-					refs = append(refs, statement.EvidenceRefs...)
-					refs, err = appendOrdinalCitations(refs, statement.InvestigationID, statement.RunRefs)
-					if err != nil {
-						return postmortem.Postmortem{}, err
+					if !newPostmortemEvidence(statement.RunRefs, statement.EvidenceRefs) {
+						return postmortem.Postmortem{}, postmortem.ErrUnavailableEvidence
 					}
+					refs = append(refs, statement.EvidenceRefs...)
 				}
 			}
 			if corrections.ActionItems != nil {
 				for _, action := range *corrections.ActionItems {
+					if !newPostmortemEvidence(action.RunRefs, action.EvidenceRefs) {
+						return postmortem.Postmortem{}, postmortem.ErrUnavailableEvidence
+					}
 					refs = append(refs, action.EvidenceRefs...)
 				}
 			}
@@ -301,11 +304,10 @@ func (p *Database) Correct(
 			if corrections.Timeline != nil {
 				var timelineRefs []investigation.EvidenceRef
 				for _, entry := range *corrections.Timeline {
-					timelineRefs = append(timelineRefs, entry.EvidenceRefs...)
-					timelineRefs, err = appendOrdinalCitations(timelineRefs, entry.InvestigationID, entry.RunRefs)
-					if err != nil {
-						return postmortem.Postmortem{}, err
+					if !newPostmortemEvidence(entry.RunRefs, entry.EvidenceRefs) {
+						return postmortem.Postmortem{}, postmortem.ErrUnavailableEvidence
 					}
+					timelineRefs = append(timelineRefs, entry.EvidenceRefs...)
 				}
 				missing, err := evidenceMissing(ctx, tx, organization, uuid.Nil, timelineRefs, true)
 				if err != nil {
@@ -334,20 +336,10 @@ func (p *Database) Correct(
 		})
 }
 
-func appendOrdinalCitations(refs []investigation.EvidenceRef, investigationID string, ordinals []int) ([]investigation.EvidenceRef, error) {
-	if len(ordinals) == 0 {
-		return refs, nil
-	}
-	id, err := uuid.Parse(investigationID)
-	if err != nil || id == uuid.Nil {
-		return nil, postmortem.ErrUnavailableEvidence
-	}
-	for _, ordinal := range ordinals {
-		refs = append(refs, investigation.EvidenceRef{
-			InvestigationID: id, ToolRunOrdinal: ordinal,
-		})
-	}
-	return refs, nil
+func newPostmortemEvidence(ordinals []int, refs []investigation.EvidenceRef) bool {
+	return len(ordinals) == 0 && !slices.ContainsFunc(refs, func(ref investigation.EvidenceRef) bool {
+		return !stableToolRunRef(ref)
+	})
 }
 
 func (p *Database) Review(

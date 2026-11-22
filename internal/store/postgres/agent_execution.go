@@ -15,6 +15,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
@@ -419,10 +420,12 @@ func (p *Database) FinishAgentExecution(ctx context.Context, org uuid.UUID, exec
 		if len(checkpoint) != 1 || status != AgentExecutionCompleted {
 			return ErrAgentCheckpoint
 		}
-		var err error
-		state, err = encodeAgentCheckpoint(execution.SessionID(), checkpoint[0])
-		if err != nil {
-			return err
+		if execution.checkpointConversation() != uuid.Nil {
+			var err error
+			state, err = encodeAgentCheckpoint(execution.SessionID(), checkpoint[0])
+			if err != nil {
+				return err
+			}
 		}
 	}
 	pool, err := p.poolForOrganization(org)
@@ -508,17 +511,38 @@ func finishAgentInvestigation(ctx context.Context, tx pgx.Tx, org uuid.UUID, exe
 			return err
 		}
 		if err := investigation.ValidateConclusionStatus(*conclusion); err != nil {
+			return fmt.Errorf("%w: %s", investigation.ErrInvalidConclusion, err)
+		}
+		if conclusion.Status == investigation.AnswerOnly && execution.investigationConversationID == uuid.Nil {
+			return investigation.ErrInvalidConclusion
+		}
+		_, origin, err := agentToolScope(ctx, tx, org, execution)
+		if err != nil {
 			return err
 		}
-		if _, _, err := agentToolScope(ctx, tx, org, execution); err != nil {
-			return err
+		if origin != nil {
+			err := lockActiveIntegration(ctx, tx, org, origin.IntegrationID)
+			if errors.Is(err, integrations.ErrDisconnected) || errors.Is(err, integrations.ErrUnknown) {
+				return ErrAgentToolRunUnavailable
+			}
+			if err != nil {
+				return err
+			}
+			// Recheck the verified Installation after locking its Integration.
+			_, current, err := agentToolScope(ctx, tx, org, execution)
+			if err != nil {
+				return err
+			}
+			if current == nil || *current != *origin {
+				return ErrAgentToolRunUnavailable
+			}
 		}
 		encoded, err := json.Marshal(conclusion)
 		if err != nil {
 			return err
 		}
 		ended, reason, result = investigation.StatusConcluded, "", encoded
-		payload = investigation.ConcludedPayload(*conclusion, "")
+		payload = investigation.ConcludedPayload(*conclusion)
 	}
 	tag, err := tx.Exec(ctx, `
 		UPDATE investigation SET status = $3, conclusion = $4::jsonb, error = $5, concluded_at = now(),

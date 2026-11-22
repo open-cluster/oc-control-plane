@@ -30,14 +30,14 @@ type TimelineEntry struct {
 	At              time.Time                   `json:"at"`
 	Description     string                      `json:"description"`
 	InvestigationID string                      `json:"investigationId,omitempty"`
-	RunRefs         []int                       `json:"runRefs"`
+	RunRefs         []int                       `json:"runRefs,omitempty"`
 	EvidenceRefs    []investigation.EvidenceRef `json:"evidenceRefs,omitempty"`
 }
 
 type CitedStatement struct {
 	InvestigationID string                      `json:"investigationId,omitempty"`
 	Statement       string                      `json:"statement"`
-	RunRefs         []int                       `json:"runRefs"`
+	RunRefs         []int                       `json:"runRefs,omitempty"`
 	EvidenceRefs    []investigation.EvidenceRef `json:"evidenceRefs,omitempty"`
 }
 
@@ -47,7 +47,7 @@ type ActionItem struct {
 	Deadline        string                      `json:"deadline"`
 	Verification    string                      `json:"verification"`
 	InvestigationID string                      `json:"investigationId,omitempty"`
-	RunRefs         []int                       `json:"runRefs"`
+	RunRefs         []int                       `json:"runRefs,omitempty"`
 	EvidenceRefs    []investigation.EvidenceRef `json:"evidenceRefs,omitempty"`
 }
 

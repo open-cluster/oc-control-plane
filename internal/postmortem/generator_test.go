@@ -37,7 +37,7 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 		}}},
 		Messages: []Message{{Author: "On-call", Text: "the deploy may have caused this",
 			At: time.Date(2026, 8, 27, 9, 3, 0, 0, time.UTC)}},
-		Results: []InvestigationResult{{InvestigationID: uuid.New(), Conclusion: investigation.Conclusion{
+		Results: []InvestigationResult{{InvestigationID: priorID, Conclusion: investigation.Conclusion{
 			Status:  investigation.VerifiedCause,
 			Summary: "A bad pool-size deployment exhausted database connections.",
 			Impact:  investigation.Impact{Summary: "Impact is not established."},
@@ -45,11 +45,11 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 				Statement: "The pool-size deployment exhausted connections.",
 				Kind:      investigation.FindingCause,
 				Mechanism: "The larger pools exceeded the database connection limit.",
-				RunRefs:   []int{3},
+				RunRefs:   []int{2},
 			}},
 			Actions: []investigation.ActionProposal{{
 				Title:        "Restore a bounded pool size",
-				Verification: "Database utilization remains below the limit.", RunRefs: []int{3},
+				Verification: "Database utilization remains below the limit.", RunRefs: []int{2},
 			}},
 			Hypotheses: []investigation.HypothesisResult{{
 				Statement: "A traffic spike may also have contributed.",
@@ -66,8 +66,9 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 		t.Errorf("missing facts were invented: impact=%q resolution=%q",
 			draft.Impact, draft.Resolution)
 	}
-	if len(draft.RootCauses) != 1 || len(draft.RootCauses[0].RunRefs) != 1 ||
-		draft.RootCauses[0].RunRefs[0] != 3 {
+	if len(draft.RootCauses) != 1 || len(draft.RootCauses[0].EvidenceRefs) != 1 ||
+		draft.RootCauses[0].EvidenceRefs[0] != (investigation.EvidenceRef{ToolRunID: runID}) {
+		t.Errorf("retained ordinal was not converted to a canonical UUID")
 		t.Errorf("root causes = %+v", draft.RootCauses)
 	}
 	input.Results[0].Conclusion.Findings[0].RunRefs = nil
@@ -78,8 +79,14 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(cited), `"evidenceRefs":[{"investigationId":"`+priorID.String()+`","toolRunOrdinal":2}]`) {
+	if !strings.Contains(string(cited), `"evidenceRefs":[{"toolRunId":"`+runID.String()+`"}]`) {
 		t.Errorf("prior citation missing from draft: %s", cited)
+	}
+	pruned := input
+	pruned.Runs = nil
+	prunedDraft := DraftFrom(pruned)
+	if len(prunedDraft.RootCauses) != 1 || prunedDraft.RootCauses[0].Statement != NeedsHumanInput {
+		t.Errorf("a pruned historical citation established a root cause: %+v", prunedDraft.RootCauses)
 	}
 	nativeRef := investigation.EvidenceRef{ToolRunID: uuid.New()}
 	input.Results[0].Conclusion.Impact = investigation.Impact{
@@ -98,6 +105,9 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if strings.Contains(string(encoded), "runRefs") {
+		t.Errorf("new draft emitted ordinal citations: %s", encoded)
+	}
 	if strings.Contains(string(encoded), "findingId") {
 		t.Errorf("Postmortem still exposes a Finding identity: %s", encoded)
 	}
@@ -115,8 +125,7 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 	foundRun := false
 	for _, entry := range draft.Timeline {
 		if entry.Description == "Checkout failed" {
-			foundRun = len(entry.RunRefs) == 1 && entry.RunRefs[0] == 2 &&
-				len(entry.EvidenceRefs) == 1 && entry.EvidenceRefs[0].ToolRunID == runID
+			foundRun = len(entry.EvidenceRefs) == 1 && entry.EvidenceRefs[0].ToolRunID == runID
 		}
 	}
 	if !foundRun {
@@ -124,7 +133,7 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 	}
 
 	input.Results[0].Conclusion.Impact = investigation.Impact{
-		Summary: "Checkout requests failed for 12 minutes.", RunRefs: []int{3},
+		Summary: "Checkout requests failed for 12 minutes.", RunRefs: []int{2},
 	}
 	if cited := DraftFrom(input); cited.Impact != "Checkout requests failed for 12 minutes." {
 		t.Errorf("cited impact = %q", cited.Impact)

@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,14 +17,24 @@ import (
 
 func TestPrivateModelReasoningNeverCrossesTheProviderBoundary(t *testing.T) {
 	const marker = "private-reasoning-must-never-escape-4f2b"
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct{ Stream bool }
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if request.Stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			writeOpenRouterInvestigationRecap(w, marker)
+			return
+		}
 		document := map[string]any{
 			"status": "inconclusive", "summary": "No cause was established.",
-			"impact":   map[string]any{"summary": "Impact is not established.", "run_refs": []int{}},
+			"impact":   map[string]any{"summary": "Impact is not established."},
 			"findings": []any{}, "hypotheses": []any{}, "actions": []any{},
 			"limitations": []map[string]any{{
 				"type": "essential_human_input", "statement": "Operator context is required.",
-				"run_refs": []int{},
 			}},
 		}
 		arguments, err := json.Marshal(document)
@@ -39,8 +50,8 @@ func TestPrivateModelReasoningNeverCrossesTheProviderBoundary(t *testing.T) {
 				"message": map[string]any{
 					"role": "assistant", "content": "", "reasoning": marker,
 					"tool_calls": []map[string]any{{
-						"id": "call-conclude", "type": "function",
-						"function": map[string]any{"name": "conclude", "arguments": string(arguments)},
+						"id": "report", "type": "function",
+						"function": map[string]any{"name": "generate_structured_output", "arguments": string(arguments)},
 					}},
 				},
 			}},
@@ -67,6 +78,9 @@ func TestPrivateModelReasoningNeverCrossesTheProviderBoundary(t *testing.T) {
 		t.Fatal("opening the conversation did not create an Investigation")
 	}
 	final := plane.awaitInvestigation(t, turn)
+	if !strings.Contains(final, `"status":"concluded"`) {
+		t.Fatalf("the Investigation did not commit a report: %s", final)
+	}
 	status, transcript := plane.call(t, http.MethodGet,
 		plane.base(surfaceOrg)+"/conversations/"+conversation, nil)
 	if status != http.StatusOK {
@@ -103,4 +117,8 @@ func TestPrivateModelReasoningNeverCrossesTheProviderBoundary(t *testing.T) {
 	if matches != 0 {
 		t.Fatalf("private reasoning appeared in %d persisted rows", matches)
 	}
+}
+
+func writeOpenRouterInvestigationRecap(w http.ResponseWriter, marker string) {
+	_, _ = fmt.Fprintf(w, `data: {"id":"reply","model":"fixture","object":"chat.completion.chunk","created":1,"choices":[{"index":0,"delta":{"content":"No cause established.","reasoning":%q},"finish_reason":"stop"}]}`+"\n\ndata: [DONE]\n\n", marker)
 }

@@ -179,9 +179,6 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 		if missing != prune {
 			t.Fatalf("wrong evidence availability: %s", body)
 		}
-		if prune && result.Limitations[0].RunRefs == nil {
-			t.Fatalf("missing-evidence limitation has null runRefs: %s", body)
-		}
 	}
 	privateChat := uuid.New()
 	if _, err := database.Exec(ctx, `INSERT INTO conversation (org_id, conversation_id, source, subject)
@@ -206,6 +203,10 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 		if status, body := plane.call(t, http.MethodGet, path, nil); status != http.StatusNotFound {
 			t.Fatalf("a web read found private Slack evidence: %d %s", status, body)
 		}
+	}
+	privateObservation := plane.base(surfaceOrg) + "/tool-runs/" + runIDs[1].String() + "/observation"
+	if status, body := plane.call(t, http.MethodGet, privateObservation, nil); status != http.StatusNotFound {
+		t.Fatalf("the Tool Run UUID exposed a private Slack observation: %d %s", status, body)
 	}
 	derived := plane.base(surfaceOrg) + "/investigations/" + ids[2].String()
 	if status, body := plane.call(t, http.MethodGet, derived, nil); status != http.StatusNotFound {

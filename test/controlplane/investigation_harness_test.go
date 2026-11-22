@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,18 +29,42 @@ type concludingModel struct {
 	prompts chan<- []*message.Msg
 }
 
-func (m concludingModel) Chat(_ context.Context, prompt []*message.Msg, _ ...model.CallOption) (*model.ChatResponse, error) {
-	if m.prompts != nil {
-		select {
-		case m.prompts <- prompt:
-		default:
+func (m concludingModel) Chat(_ context.Context, prompt []*message.Msg, opts ...model.CallOption) (*model.ChatResponse, error) {
+	if !reportRequested(opts) {
+		if m.prompts != nil {
+			select {
+			case m.prompts <- prompt:
+			default:
+			}
+		}
+		return investigationRecap(), nil
+	}
+	status := investigation.Inconclusive
+	for _, msg := range prompt {
+		if text := msg.GetTextContent("\n"); text != nil && strings.Contains(*text, "\"messages\":[") {
+			status = investigation.AnswerOnly
 		}
 	}
 	return reportResponse(investigation.Conclusion{
-		Status:  investigation.AnswerOnly,
+		Status:  status,
 		Summary: "Investigation completed.",
 		Impact:  investigation.Impact{Summary: "Impact is not established."},
 	})
+}
+
+func reportRequested(opts []model.CallOption) bool {
+	var options model.CallOptions
+	for _, option := range opts {
+		option(&options)
+	}
+	return len(options.Tools) == 1 && options.Tools[0].Function.Name == "generate_structured_output"
+}
+
+func investigationRecap() *model.ChatResponse {
+	return &model.ChatResponse{
+		IsLast: true, StopReason: model.StopReasonStop,
+		Content: []message.ContentBlock{message.TextBlock{Type: "text", Text: "No cause established."}},
+	}
 }
 
 func reportResponse(conclusion investigation.Conclusion) (*model.ChatResponse, error) {
@@ -47,7 +72,7 @@ func reportResponse(conclusion investigation.Conclusion) (*model.ChatResponse, e
 	if err != nil {
 		return nil, err
 	}
-	return toolResponse("report", "conclude", string(document)), nil
+	return toolResponse("report", "generate_structured_output", string(document)), nil
 }
 
 func toolResponse(id, name, input string) *model.ChatResponse {

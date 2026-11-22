@@ -61,7 +61,7 @@ func TestPostmortemLifecycleIsIncidentOwnedAndTenantScoped(t *testing.T) {
 	impact := "Checkout failed for a subset of users."
 	actions := []postmortem.ActionItem{{
 		Title: "Bound database pools", Owner: "Database team", Deadline: "2026-09-15",
-		Verification: "Database utilization remains below the limit.", RunRefs: []int{3},
+		Verification: "Database utilization remains below the limit.",
 	}}
 	corrected, err := database.Correct(context.Background(), principal,
 		organization, incident, postmortem.Corrections{Impact: &impact, ActionItems: &actions})

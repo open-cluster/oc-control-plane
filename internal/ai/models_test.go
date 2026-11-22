@@ -20,7 +20,76 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/ai"
 	"github.com/open-cluster/oc-control-plane/internal/config"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
+
+func TestInvestigationStructuredReportProviderWire(t *testing.T) {
+	for _, provider := range []string{"anthropic", "openrouter"} {
+		t.Run(provider, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request struct {
+					Stream   bool
+					Messages []struct{ Role string }
+					Tools    []json.RawMessage
+					Provider struct {
+						ZDR               bool
+						AllowFallbacks    *bool  `json:"allow_fallbacks"`
+						RequireParameters bool   `json:"require_parameters"`
+						DataCollection    string `json:"data_collection"`
+						Sort              string
+					}
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				if request.Stream || len(request.Messages) == 0 || request.Messages[len(request.Messages)-1].Role != "user" ||
+					len(request.Tools) != 1 || !bytes.Contains(request.Tools[0], []byte("generate_structured_output")) ||
+					!bytes.Contains(request.Tools[0], []byte("toolRunId")) {
+					t.Error("expected a buffered request with the Conclusion schema and a trailing user message")
+				}
+				if provider == "openrouter" {
+					policy := request.Provider
+					if !policy.ZDR || policy.AllowFallbacks == nil || *policy.AllowFallbacks ||
+						!policy.RequireParameters || policy.DataCollection != "deny" || policy.Sort != "price" {
+						t.Error("OpenRouter report omitted its deployment policy")
+					}
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if calls.Add(1) == 1 {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = fmt.Fprint(w, `{"error":{"type":"invalid_request_error","code":400,"message":"tool_choice is not supported while thinking (provider-canary)"}}`)
+					return
+				}
+				if provider == "anthropic" {
+					_, _ = fmt.Fprint(w, `{"id":"answer","role":"assistant","content":[{"type":"tool_use","id":"report","name":"generate_structured_output","input":{"status":"inconclusive","summary":"Cause remains unknown."}}],"stop_reason":"tool_use","usage":{"input_tokens":12,"output_tokens":6}}`)
+					return
+				}
+				_, _ = fmt.Fprint(w, `{"id":"answer","object":"chat.completion","created":1,"model":"fixture","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"report","type":"function","function":{"name":"generate_structured_output","arguments":"{\"status\":\"inconclusive\",\"summary\":\"Cause remains unknown.\"}"}}]}}]}`)
+			}))
+			defer server.Close()
+
+			runtime := agent.NewUnifiedAgent("investigator", "Investigate", fixtureModel(t, provider, server.URL),
+				agent.WithState(&agent.AgentState{Context: []*message.Msg{
+					message.UserMsg("operator", "What happened?"),
+					message.AssistantMsg("investigator", []message.ContentBlock{message.TextBlock{Type: "text", Text: "No cause established."}}),
+				}}))
+			if err := runtime.Observe(t.Context(), []*message.Msg{message.UserMsg("operator", ai.ConclusionInstructions)}); err != nil {
+				t.Fatal(err)
+			}
+			report, err := runtime.GenerateStructuredResponseWithUsage(t.Context(), investigation.ConclusionSchema())
+			if err != nil {
+				t.Fatalf("structured generation failed after %d calls: %v", calls.Load(), err)
+			}
+			conclusion, err := investigation.ParseConclusion(report.Output)
+			if err != nil || conclusion.Summary != "Cause remains unknown." || calls.Load() != 2 {
+				t.Fatalf("got report %q after %d calls, error=%v", report.Output, calls.Load(), err)
+			}
+		})
+	}
+}
 
 func TestOpenRouterPolicyAndContinuation(t *testing.T) {
 	var requests atomic.Int32

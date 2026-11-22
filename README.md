@@ -47,14 +47,10 @@ Investigation detail remains lightweight.
 6. Follow-up questions continue through the same Conversation without changing earlier Investigations.
 7. Resolved Incidents can produce reviewed **Postmortems**.
 
-An Investigation is immutable once completed. Follow-ups create new Investigations while
-retaining bounded Conversation context and cited Findings established before the new
-Investigation opened. Earlier reply details and older Messages are loaded on demand.
-Normal requests retain their complete context. Only an actual provider context rejection triggers
-bounded recovery that omits optional prior context while preserving current Messages and completed
-Tool exchanges. Unrecoverable capacity problems are technical failures. Reads can refresh changing
-infrastructure within the execution limits.
-Accepted summaries and Action Proposals are preserved without silent truncation.
+An Investigation is immutable once completed. Follow-ups create new Investigations and restore
+the Conversation's AgentScope checkpoint. AgentScope compacts model context as it fills, while
+visible Messages and durable evidence remain available independently. New reports cite Tool Run
+UUIDs. The ordinal observation route serves retained historical records.
 
 ## Integrations
 
@@ -104,12 +100,17 @@ Organization, and operational mutations are audited.
 Investigations run on AgentScope. It handles model calls, Tool scheduling, context
 management, and reply recovery. PostgreSQL stores checkpoints and fences Tool authorization,
 evidence recording, and report acceptance. Web and Slack Investigation turns use the same runtime.
+After the investigative reply completes, AgentScope makes a separate structured report request.
+OpenCluster validates the Conclusion and commits it with the execution outcome and any linked
+Message. A crash before commit can regenerate the report from the completed checkpoint without
+resuming the investigative reply.
 When upgrading from the previous Investigation engine, stop the old control-plane instances
 before starting this version so each newly admitted Investigation gets a native execution.
 
 Findings require citations to successful reads. Failed or skipped reads can explain
-limitations but cannot establish a Finding. Startup activity describes the initial phase,
-and recorded activity remains available when a client reconnects.
+limitations. Action Proposals for obtaining missing evidence may omit citations. Startup,
+Tool activity, and terminal events remain available on reconnect. Incremental narrative
+progress is tracked in issue #234.
 Tool completion activity is published only after the Tool Run's provenance is recorded.
 Operational JSON logs correlate Investigations and Tool executions with trace identifiers.
 Routine requests and successful health probes log at DEBUG, with durations in milliseconds.

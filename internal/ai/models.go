@@ -22,6 +22,9 @@ const (
 	modelRequestTimeout = 5 * time.Minute
 )
 
+// AgentScope's structured-output fallback recognizes this sanitized provider error.
+var errModelToolChoice = errors.New("AI provider rejected tool_choice")
+
 // NewChatModel assembles a model from the deployment's AI configuration.
 // Ollama uses the host profile's context size for both requests and compaction.
 func NewChatModel(settings config.Config, baseURL string, contextSize int) (model.ChatModel, error) {
@@ -173,8 +176,13 @@ func (t modelTransport) RoundTrip(request *http.Request) (*http.Response, error)
 		var detail string
 		if response.StatusCode == http.StatusBadRequest {
 			body, readErr := io.ReadAll(response.Body)
-			if readErr == nil && model.IsContextLimitExceeded(errors.New(string(body))) {
-				detail = "context window exceeded"
+			if readErr == nil {
+				switch {
+				case model.IsContextLimitExceeded(errors.New(string(body))):
+					detail = "context window exceeded"
+				case rejectsToolChoice(string(body)):
+					detail = errModelToolChoice.Error()
+				}
 			}
 		}
 		_ = response.Body.Close()
@@ -273,12 +281,18 @@ func redactModelError(err error) error {
 		return model.ErrStreamNotSupported
 	case errors.Is(err, aserr.ErrModelContextLimit), model.IsContextLimitExceeded(err):
 		return aserr.ErrModelContextLimit
+	case strings.Contains(err.Error(), errModelToolChoice.Error()):
+		return errModelToolChoice
 	case model.IsRetryableError(err):
 		delay, _ := aserr.RetryAfterOf(err)
 		return aserr.NewThrottled(delay, "AI provider temporarily unavailable")
 	default:
 		return errors.New("AI provider request failed")
 	}
+}
+
+func rejectsToolChoice(detail string) bool {
+	return strings.Contains(strings.ToLower(detail), "tool_choice")
 }
 
 func sendModelChunk(ctx context.Context, out chan<- model.ChatResponse, chunk model.ChatResponse) bool {

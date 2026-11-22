@@ -944,8 +944,36 @@ paths:
         default:
           $ref: '#/components/responses/ErrorResponse'
       operationId: getToolRunObservation
+      summary: Inspect an observation by historical ordinal
+      deprecated: true
+      description: Editor and Admin only. This route serves stored historical ordinals. Returns the bounded text prepared for the model and current Integration display information. Legacy unavailable text is null, distinct from an empty string. Preparation does not prove remote provider delivery. Ordinary Investigation detail, lists, and events omit this text.
+      tags:
+        - Investigations
+  /api/v1/tool-runs/{toolRun}/observation:
+    parameters:
+      - $ref: '#/components/parameters/ToolRunID'
+    get:
+      security:
+        - SessionCookie: []
+      x-opencluster-access: privileged
+      x-opencluster-cookie-csrf: not-required
+      x-opencluster-idempotency: not-applicable
+      responses:
+        '200':
+          $ref: '#/components/responses/ToolRunObservation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+      operationId: getToolRunObservationByID
       summary: Inspect one retained Tool observation
-      description: Editor and Admin only. Returns the bounded text prepared for the model and current Integration display information. Legacy unavailable text is null, distinct from an empty string. Preparation does not prove remote provider delivery. Ordinary Investigation detail, lists, and events omit this text.
+      description: Editor and Admin only. The Tool Run UUID resolves its owning Investigation. Returns the bounded text prepared for the model and current Integration display information. Legacy unavailable text is null, distinct from an empty string. Preparation does not prove remote provider delivery. Ordinary Investigation detail, lists, and events omit this text.
       tags:
         - Investigations
   /api/v1/investigations/{investigation}/cancel:
@@ -1576,6 +1604,12 @@ components:
         $ref: '#/components/schemas/UUID'
     InvestigationID:
       name: investigation
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/UUID'
+    ToolRunID:
+      name: toolRun
       in: path
       required: true
       schema:
@@ -3058,7 +3092,6 @@ components:
       additionalProperties: false
       required:
         - summary
-        - runRefs
       properties:
         summary:
           type: string
@@ -3069,6 +3102,8 @@ components:
             type: integer
             minimum: 1
           uniqueItems: true
+          readOnly: true
+          description: Historical references when present.
         evidenceRefs:
           type: array
           items:
@@ -3080,10 +3115,10 @@ components:
       required:
         - statement
         - kind
-        - mechanism
-        - runRefs
       anyOf:
-        - properties:
+        - required:
+            - runRefs
+          properties:
             runRefs:
               minItems: 1
         - required:
@@ -3112,6 +3147,8 @@ components:
             type: integer
             minimum: 1
           uniqueItems: true
+          readOnly: true
+          description: Historical references when present.
         evidenceRefs:
           type: array
           uniqueItems: true
@@ -3146,7 +3183,6 @@ components:
         - statement
         - status
         - test
-        - runRefs
       properties:
         statement:
           type: string
@@ -3168,6 +3204,8 @@ components:
             type: integer
             minimum: 1
           uniqueItems: true
+          readOnly: true
+          description: Historical references when present.
         evidenceRefs:
           type: array
           items:
@@ -3180,7 +3218,6 @@ components:
         - title
         - rationale
         - verification
-        - runRefs
       properties:
         title:
           type: string
@@ -3200,6 +3237,8 @@ components:
             type: integer
             minimum: 1
           uniqueItems: true
+          readOnly: true
+          description: Historical references when present.
         evidenceRefs:
           type: array
           items:
@@ -3211,7 +3250,6 @@ components:
       required:
         - type
         - statement
-        - runRefs
       properties:
         type:
           type: string
@@ -3231,6 +3269,8 @@ components:
             type: integer
             minimum: 1
           uniqueItems: true
+          readOnly: true
+          description: Historical references when present.
         evidenceRefs:
           type: array
           items:
@@ -3290,7 +3330,7 @@ components:
             - supported_explanation
             - inconclusive
             - answer_only
-          description: Assessment outcome. verified_cause is retained on historical results.
+          description: Assessment outcome. verified_cause is historical. answer_only is reserved for transitional factual Conversation turns.
         summary:
           type: string
           minLength: 1
@@ -3451,7 +3491,6 @@ components:
       allOf:
         - required:
             - investigationId
-            - ordinal
             - observationText
       properties:
         id:
@@ -3645,12 +3684,18 @@ components:
           type: object
           additionalProperties: false
           required:
-            - ordinal
             - tool
             - integrationId
             - integration
             - purpose
+          anyOf:
+            - required:
+                - toolRunId
+            - required:
+                - ordinal
           properties:
+            toolRunId:
+              $ref: '#/components/schemas/UUID'
             ordinal:
               type: integer
               minimum: 1
@@ -3666,7 +3711,6 @@ components:
               maxLength: 512
             purpose:
               type: string
-              minLength: 1
               maxLength: 512
     ToolCompletedInvestigationEvent:
       type: object
@@ -3702,12 +3746,18 @@ components:
           type: object
           additionalProperties: false
           required:
-            - ordinal
             - outcome
             - durationMs
             - summary
             - truncated
+          anyOf:
+            - required:
+                - toolRunId
+            - required:
+                - ordinal
           properties:
+            toolRunId:
+              $ref: '#/components/schemas/UUID'
             ordinal:
               type: integer
               minimum: 1
@@ -3770,7 +3820,7 @@ components:
                 - supported_explanation
                 - inconclusive
                 - answer_only
-              description: Assessment outcome. verified_cause is retained on historical events.
+              description: Assessment outcome. verified_cause is historical. answer_only is reserved for transitional factual Conversation turns.
             summary:
               type: string
               minLength: 1
@@ -4208,7 +4258,6 @@ components:
       required:
         - at
         - description
-        - runRefs
       properties:
         at:
           $ref: '#/components/schemas/Timestamp'
@@ -4224,6 +4273,8 @@ components:
             type: integer
             minimum: 1
           uniqueItems: true
+          readOnly: true
+          description: Historical references when present.
         evidenceRefs:
           type: array
           items:
@@ -4233,7 +4284,6 @@ components:
       additionalProperties: false
       required:
         - statement
-        - runRefs
       properties:
         investigationId:
           $ref: '#/components/schemas/UUID'
@@ -4247,6 +4297,8 @@ components:
             type: integer
             minimum: 1
           uniqueItems: true
+          readOnly: true
+          description: Historical references when present.
         evidenceRefs:
           type: array
           items:
@@ -4259,7 +4311,6 @@ components:
         - owner
         - deadline
         - verification
-        - runRefs
       properties:
         title:
           type: string
@@ -4285,6 +4336,8 @@ components:
             type: integer
             minimum: 1
           uniqueItems: true
+          readOnly: true
+          description: Historical references when present.
         evidenceRefs:
           type: array
           items:
@@ -4408,24 +4461,47 @@ components:
             timeline:
               type: array
               items:
-                $ref: '#/components/schemas/TimelineEntry'
+                allOf:
+                  - $ref: '#/components/schemas/TimelineEntry'
+                  - $ref: '#/components/schemas/PostmortemCorrectionEvidence'
             rootCauses:
               type: array
               items:
-                $ref: '#/components/schemas/CitedStatement'
+                allOf:
+                  - $ref: '#/components/schemas/CitedStatement'
+                  - $ref: '#/components/schemas/PostmortemCorrectionEvidence'
             contributingFactors:
               type: array
               items:
-                $ref: '#/components/schemas/CitedStatement'
+                allOf:
+                  - $ref: '#/components/schemas/CitedStatement'
+                  - $ref: '#/components/schemas/PostmortemCorrectionEvidence'
             actionItems:
               type: array
               items:
-                $ref: '#/components/schemas/ActionItem'
+                allOf:
+                  - $ref: '#/components/schemas/ActionItem'
+                  - $ref: '#/components/schemas/PostmortemCorrectionEvidence'
             openQuestions:
               type: array
               items:
                 type: string
                 maxLength: 8192
+    PostmortemCorrectionEvidence:
+      type: object
+      properties:
+        runRefs:
+          not: {}
+        evidenceRefs:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - toolRunId
+            properties:
+              toolRunId:
+                $ref: '#/components/schemas/UUID'
     GenericWebhookRequest:
       type: object
       additionalProperties: false

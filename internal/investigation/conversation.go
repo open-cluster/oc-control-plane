@@ -36,6 +36,5 @@ func (c *Conclusion) MarkMissingEvidence() {
 	c.Limitations = append(c.Limitations, Limitation{
 		Type:      LimitationMissingTelemetry,
 		Statement: MissingEvidenceStatement,
-		RunRefs:   []int{},
 	})
 }

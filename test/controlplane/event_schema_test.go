@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -98,16 +99,19 @@ func TestLiveToolCompletionMatchesSerializedSchema(t *testing.T) {
 			}
 			var detail struct {
 				Runs []struct {
-					Ordinal int `json:"ordinal"`
+					ID string `json:"id"`
 				} `json:"runs"`
 			}
 			decodeInto(t, body, &detail)
-			ordinal := int(event["payload"].(map[string]any)["ordinal"].(float64))
-			if len(detail.Runs) < ordinal || detail.Runs[ordinal-1].Ordinal != ordinal {
+			id := event["payload"].(map[string]any)["toolRunId"].(string)
+			if !slices.ContainsFunc(detail.Runs, func(run struct {
+				ID string `json:"id"`
+			}) bool {
+				return run.ID == id
+			}) {
 				t.Fatal("live completion has no committed Tool Run detail")
 			}
-			status, body = plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/investigations/"+turn+
-				"/runs/"+fmt.Sprint(ordinal)+"/observation", nil)
+			status, body = plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/tool-runs/"+id+"/observation", nil)
 			var retained struct{ ObservationText *string }
 			decodeInto(t, body, &retained)
 			if status != http.StatusOK || retained.ObservationText == nil {

@@ -2,12 +2,23 @@ package investigation
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
 	"unicode/utf8"
 )
+
+//go:embed conclusion.schema.json
+var conclusionSchema string
+
+var ErrInvalidConclusion = errors.New("invalid Investigation Conclusion")
+
+// ConclusionSchema returns the provider-facing schema for the canonical Conclusion.
+func ConclusionSchema() json.RawMessage {
+	return json.RawMessage(conclusionSchema)
+}
 
 // ParseConclusion decodes an untrusted report into the canonical Conclusion.
 func ParseConclusion(raw []byte) (Conclusion, error) {
@@ -18,56 +29,51 @@ func ParseConclusion(raw []byte) (Conclusion, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&conclusion); err != nil {
-		return Conclusion{}, errors.New("the Conclusion does not match the Tool schema")
+		return Conclusion{}, errors.New("the Conclusion does not match the report schema")
 	}
-	if strings.TrimSpace(conclusion.Summary) == "" || utf8.RuneCountInString(conclusion.Summary) > MaxSummaryLength {
+	if !boundedText(conclusion.Summary, MaxSummaryLength) {
 		return Conclusion{}, errors.New("the Conclusion needs a bounded summary")
 	}
-	if utf8.RuneCountInString(conclusion.Impact.Summary) > MaxSummaryLength ||
-		(conclusion.Status != AnswerOnly && strings.TrimSpace(conclusion.Impact.Summary) == "") {
-		return Conclusion{}, errors.New("describe the known or unknown impact in a bounded summary")
+	if utf8.RuneCountInString(conclusion.Impact.Summary) > MaxSummaryLength {
+		return Conclusion{}, errors.New("the impact summary is too long")
 	}
-	conclusion.Impact.RunRefs = append([]int{}, conclusion.Impact.RunRefs...)
 	conclusion.Findings = append([]Finding{}, conclusion.Findings...)
-	for i, finding := range conclusion.Findings {
-		if !slices.Contains(FindingKinds, string(finding.Kind)) || strings.TrimSpace(finding.Statement) == "" || len(finding.Statement) > 2048 {
+	for _, finding := range conclusion.Findings {
+		if !slices.Contains(FindingKinds, string(finding.Kind)) ||
+			!boundedText(finding.Statement, MaxSummaryLength) || utf8.RuneCountInString(finding.Mechanism) > MaxSummaryLength {
 			return Conclusion{}, errors.New("each Finding needs a valid kind and bounded statement")
 		}
-		conclusion.Findings[i].RunRefs = append([]int{}, finding.RunRefs...)
 	}
 	conclusion.Hypotheses = append([]HypothesisResult{}, conclusion.Hypotheses...)
-	for i, hypothesis := range conclusion.Hypotheses {
-		if !slices.Contains(HypothesisStatuses, string(hypothesis.Status)) || strings.TrimSpace(hypothesis.Statement) == "" || strings.TrimSpace(hypothesis.Test) == "" {
+	for _, hypothesis := range conclusion.Hypotheses {
+		if !slices.Contains(HypothesisStatuses, string(hypothesis.Status)) ||
+			!boundedText(hypothesis.Statement, MaxSummaryLength) || !boundedText(hypothesis.Test, MaxSummaryLength) {
 			return Conclusion{}, errors.New("each hypothesis needs a valid status, statement and test")
 		}
-		conclusion.Hypotheses[i].RunRefs = append([]int{}, hypothesis.RunRefs...)
 	}
 	if len(conclusion.Actions) > MaxConclusionActions {
 		return Conclusion{}, errors.New("the Conclusion proposes too many actions")
 	}
 	conclusion.Actions = append([]ActionProposal{}, conclusion.Actions...)
-	for i, action := range conclusion.Actions {
-		if len(action.EvidenceRefs) == 0 {
-			return Conclusion{}, errors.New("each proposed action needs evidence")
-		}
+	for _, action := range conclusion.Actions {
 		for _, text := range []string{action.Title, action.Rationale, action.Verification} {
-			if strings.TrimSpace(text) == "" || len(text) > MaxActionTextLength {
+			if !boundedText(text, MaxActionTextLength) {
 				return Conclusion{}, errors.New("each proposed action needs a bounded title, rationale and verification")
 			}
 		}
-		conclusion.Actions[i].RunRefs = append([]int{}, action.RunRefs...)
 	}
 	conclusion.Limitations = append([]Limitation{}, conclusion.Limitations...)
-	for i, limitation := range conclusion.Limitations {
-		if !slices.Contains(LimitationTypes, string(limitation.Type)) || strings.TrimSpace(limitation.Statement) == "" || len(limitation.MessageSequences) != 0 {
+	for _, limitation := range conclusion.Limitations {
+		if !slices.Contains(LimitationTypes, string(limitation.Type)) ||
+			!boundedText(limitation.Statement, MaxSummaryLength) || len(limitation.MessageSequences) != 0 {
 			return Conclusion{}, errors.New("each limitation needs a valid type and statement")
 		}
-		conclusion.Limitations[i].RunRefs = append([]int{}, limitation.RunRefs...)
-	}
-	if err := ValidateConclusionStatus(conclusion); err != nil {
-		return Conclusion{}, err
 	}
 	return conclusion, nil
+}
+
+func boundedText(text string, limit int) bool {
+	return strings.TrimSpace(text) != "" && utf8.RuneCountInString(text) <= limit
 }
 
 // ValidateConclusionStatus checks that the findings support the report's status.

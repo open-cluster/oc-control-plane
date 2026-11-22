@@ -23,13 +23,16 @@ type eventContractModel struct {
 	observation chan message.ToolResultBlock
 }
 
-func (m *eventContractModel) Chat(_ context.Context, prompt []*message.Msg, _ ...model.CallOption) (*model.ChatResponse, error) {
+func (m *eventContractModel) Chat(_ context.Context, prompt []*message.Msg, opts ...model.CallOption) (*model.ChatResponse, error) {
 	m.calls++
 	if m.calls == 1 {
-		return toolResponse("channels", m.tool, `{"purpose":"Find the incident channel","input":{}}`), nil
+		return toolResponse("channels", m.tool, `{"input":{}}`), nil
+	}
+	if !reportRequested(opts) {
+		return investigationRecap(), nil
 	}
 	conclusion := investigation.Conclusion{
-		Status: investigation.AnswerOnly, Summary: "line one\n" + strings.Repeat("界", 4087),
+		Status: investigation.Inconclusive, Summary: "line one\n" + strings.Repeat("界", 4087),
 	}
 	for _, msg := range prompt {
 		for _, block := range msg.Content {
@@ -79,10 +82,17 @@ func assertModelEventSchema(t *testing.T, model *eventContractModel, want []stri
 	result := plane.awaitInvestigation(t, turn)
 	var final struct {
 		Summary string `json:"summary"`
+		Runs    []struct {
+			ID uuid.UUID
+		}
 	}
 	decodeInto(t, result, &final)
-	status, body := plane.call(t, http.MethodGet,
-		plane.base(surfaceOrg)+"/investigations/"+turn+"/runs/1/observation", nil)
+	if len(final.Runs) != 1 || final.Runs[0].ID == uuid.Nil || strings.Contains(result, "runRefs") {
+		t.Fatalf("native Investigation must expose only stable evidence references: %s", result)
+	}
+	runID := final.Runs[0].ID
+	path := plane.base(surfaceOrg) + "/tool-runs/" + runID.String() + "/observation"
+	status, body := plane.call(t, http.MethodGet, path, nil)
 	var retained struct {
 		InvestigationID                                 string
 		Ordinal                                         int
@@ -101,7 +111,7 @@ func assertModelEventSchema(t *testing.T, model *eventContractModel, want []stri
 		t.Fatalf("retained observation violates OpenAPI: %v", err)
 	}
 	observed := <-model.observation
-	if retained.InvestigationID != turn || retained.Ordinal != 1 || retained.ObservationText == nil ||
+	if retained.InvestigationID != turn || retained.Ordinal != 0 || retained.ObservationText == nil ||
 		*retained.ObservationText != observed.GetOutputText() || observed.ID != "channels" ||
 		retained.Outcome != "succeeded" ||
 		retained.WindowApplied == nil || *retained.WindowApplied {
@@ -112,14 +122,15 @@ func assertModelEventSchema(t *testing.T, model *eventContractModel, want []stri
 	if _, present := detail.Runs[0]["observationText"]; present {
 		t.Fatal("ordinary Investigation detail contains retained observation text")
 	}
-	path := plane.base(surfaceOrg) + "/investigations/" + turn + "/runs/1/observation"
-	for _, ordinal := range []string{"0", "-1", "bad", "2147483648"} {
-		if code, _ := plane.call(t, http.MethodGet, strings.Replace(path, "/runs/1/", "/runs/"+ordinal+"/", 1), nil); code != http.StatusBadRequest {
-			t.Fatalf("invalid ordinal %s returned %d", ordinal, code)
-		}
+	if code, _ := plane.call(t, http.MethodGet, strings.Replace(path, runID.String(), "bad", 1), nil); code != http.StatusBadRequest {
+		t.Fatalf("invalid Tool Run ID returned %d", code)
 	}
-	if code, _ := plane.call(t, http.MethodGet, strings.Replace(path, "/runs/1/", "/runs/2/", 1), nil); code != http.StatusNotFound {
+	if code, _ := plane.call(t, http.MethodGet, strings.Replace(path, runID.String(), uuid.NewString(), 1), nil); code != http.StatusNotFound {
 		t.Fatalf("absent run returned %d", code)
+	}
+	legacyPath := plane.base(surfaceOrg) + "/investigations/" + turn + "/runs/1/observation"
+	if code, _ := plane.call(t, http.MethodGet, legacyPath, nil); code != http.StatusNotFound {
+		t.Fatalf("native Tool Run was assigned a synthetic ordinal: %d", code)
 	}
 	restore := plane.switchOrganization(t, neighbourOrg)
 	code, _ := plane.call(t, http.MethodGet, path, nil)
@@ -170,6 +181,12 @@ func assertModelEventSchema(t *testing.T, model *eventContractModel, want []stri
 	for _, event := range assertSerializedEvents(t, body) {
 		kind := event["type"].(string)
 		seen[kind] = true
+		if kind == "tool_started" || kind == "tool_completed" {
+			payload := event["payload"].(map[string]any)
+			if payload["toolRunId"] != runID.String() || payload["ordinal"] != nil {
+				t.Fatalf("Tool event does not use its durable UUID: %v", payload)
+			}
+		}
 		if kind == "started" {
 			if event["payload"].(map[string]any)["text"] != "Reviewing this request and available evidence sources." {
 				t.Fatal("Started event does not describe the initial phase")

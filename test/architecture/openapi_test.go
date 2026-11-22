@@ -501,17 +501,20 @@ func TestOpenAPITypesEveryInvestigationResult(t *testing.T) {
 		if !present || !isBoolean || closed {
 			t.Errorf("%s must exist and reject undeclared fields", name)
 		}
+		if slices.Contains(schema.Required, "runRefs") {
+			t.Errorf("%s must not require historical integer citations", name)
+		}
 		evidence := schema.Properties["evidenceRefs"]
 		if evidence.Items == nil || evidence.Items.Ref != "#/components/schemas/EvidenceRef" || slices.Contains(schema.Required, "evidenceRefs") {
 			t.Errorf("%s must declare optional typed evidenceRefs", name)
 		}
 	}
 	for name, fields := range map[string][]string{
-		"Impact":         {"summary", "runRefs"},
-		"ActionProposal": {"title", "rationale", "verification", "runRefs"},
+		"Impact":         {"summary"},
+		"ActionProposal": {"title", "rationale", "verification"},
 	} {
 		schema := document.Components.Schemas[name]
-		if len(schema.Properties) != len(fields)+1 || len(schema.Required) != len(fields) {
+		if len(schema.Properties) != len(fields)+2 || len(schema.Required) != len(fields) {
 			t.Errorf("%s must require %v and allow optional evidenceRefs", name, fields)
 			continue
 		}
@@ -522,8 +525,8 @@ func TestOpenAPITypesEveryInvestigationResult(t *testing.T) {
 		}
 	}
 	finding := document.Components.Schemas["Finding"]
-	if len(finding.Properties) != 5 || len(finding.Required) != 4 {
-		t.Errorf("Finding fields = %v, want statement, kind, mechanism, runRefs and optional evidenceRefs", finding.Required)
+	if len(finding.Properties) != 5 || len(finding.Required) != 2 {
+		t.Errorf("Finding fields = %v, want statement and kind with optional mechanism and citation fields", finding.Required)
 	}
 	for _, field := range []string{"statement", "kind", "mechanism", "runRefs", "evidenceRefs"} {
 		if _, present := finding.Properties[field]; !present {

@@ -96,7 +96,8 @@ truncation, summary, and source identifiers.
 
 ## Action Proposal
 
-A recommendation with a title, rationale, verification procedure, and supporting Tool Runs.
+A recommendation with a title, rationale, and verification procedure. Cite supporting Tool Runs
+when available. A proposed diagnostic read can address missing evidence.
 OpenCluster does not execute it.
 
 ## Relay

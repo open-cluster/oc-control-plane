@@ -39,7 +39,7 @@ type HTTPStore interface {
 		NewInvestigation, int) (Investigation, error)
 	WebInvestigation(context.Context, uuid.UUID, uuid.UUID) (Investigation, error)
 	InvestigationToolRuns(context.Context, uuid.UUID, uuid.UUID) ([]ToolRun, error)
-	InvestigationToolRunObservation(context.Context, uuid.UUID, uuid.UUID, int) (ToolRun, error)
+	ToolRunObservation(context.Context, uuid.UUID, EvidenceRef) (ToolRun, uuid.UUID, error)
 	QueryInvestigations(context.Context, authz.Principal, uuid.UUID, Query) (List, error)
 	CancelInvestigation(context.Context, authz.Principal, uuid.UUID,
 		uuid.UUID) (Investigation, error)
@@ -71,6 +71,12 @@ func (h Handlers) Routes() []authz.Route {
 		{
 			Method:     http.MethodGet,
 			Pattern:    base + "/investigations/{investigation}/runs/{ordinal}/observation",
+			Permission: authz.InvestigationObservationRead,
+			Handler:    http.HandlerFunc(h.readObservation),
+		},
+		{
+			Method:     http.MethodGet,
+			Pattern:    base + "/tool-runs/{toolRun}/observation",
 			Permission: authz.InvestigationObservationRead,
 			Handler:    http.HandlerFunc(h.readObservation),
 		},
@@ -269,18 +275,29 @@ func (h Handlers) cancel(writer http.ResponseWriter, request *http.Request) {
 }
 
 func (h Handlers) readObservation(writer http.ResponseWriter, request *http.Request) {
-	organization, id, ok := h.addressed(writer, request)
-	if !ok {
-		return
-	}
-	ordinal, err := strconv.ParseInt(request.PathValue("ordinal"), 10, 32)
-	if err != nil || ordinal <= 0 || id == uuid.Nil {
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: "give an Investigation identity and positive Tool Run ordinal"})
-		return
+	var ref EvidenceRef
+	if selector := request.PathValue("toolRun"); selector != "" {
+		id, err := uuid.Parse(selector)
+		if err != nil || id == uuid.Nil {
+			writeJSON(writer, http.StatusBadRequest, errorView{Error: "give a valid Tool Run UUID"})
+			return
+		}
+		ref.ToolRunID = id
+	} else {
+		_, id, ok := h.addressed(writer, request)
+		if !ok {
+			return
+		}
+		ordinal, err := strconv.ParseInt(request.PathValue("ordinal"), 10, 32)
+		if err != nil || ordinal <= 0 || id == uuid.Nil {
+			writeJSON(writer, http.StatusBadRequest, errorView{Error: "give an Investigation identity and positive Tool Run ordinal"})
+			return
+		}
+		ref.InvestigationID, ref.ToolRunOrdinal = id, int(ordinal)
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
-	run, err := h.Store.InvestigationToolRunObservation(ctx, organization, id, int(ordinal))
+	run, id, err := h.Store.ToolRunObservation(ctx, h.organization(request), ref)
 	if err != nil {
 		h.fail(writer, request, err)
 		return

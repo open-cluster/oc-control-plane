@@ -56,6 +56,9 @@ func agentToolScope(
 			return window, nil, authorizeAgentActors(ctx, tx, org, authz.InvestigationOpen, []string{requester.UUID.String()})
 		}
 		origin, err := conversationOrigin(ctx, tx, org, conversationID.UUID, true)
+		if errors.Is(err, errConversationOrigin) {
+			return window, nil, ErrAgentToolRunUnavailable
+		}
 		if err != nil || origin != nil {
 			return window, origin, err
 		}
@@ -185,9 +188,6 @@ func (p *Database) BeginAgentToolRun(
 			return err
 		}
 		run.ID = id
-		if err := readToolRunDisplayOrdinal(ctx, tx, org, &run); err != nil {
-			return err
-		}
 		var name string
 		if access != nil {
 			name = access.Integration.Name
@@ -239,16 +239,8 @@ func (p *Database) CompleteAgentToolRun(
 		if execution.InvestigationID == uuid.Nil {
 			return nil
 		}
-		if err := readToolRunDisplayOrdinal(ctx, tx, org, &run); err != nil {
-			return err
-		}
 		return appendInvestigationEvent(ctx, tx, org, execution.InvestigationID, investigation.ToolCompletedPayload(run))
 	})
-}
-
-func readToolRunDisplayOrdinal(ctx context.Context, tx pgx.Tx, org uuid.UUID, run *investigation.ToolRun) error {
-	return tx.QueryRow(ctx, `SELECT `+toolRunDisplayOrdinal+` FROM investigation_tool_run r
-		WHERE r.org_id = $1 AND r.tool_run_id = $2`, org, run.ID).Scan(&run.Ordinal)
 }
 
 func interruptAgentToolRuns(ctx context.Context, tx pgx.Tx, org, executionID uuid.UUID) error {

@@ -278,7 +278,10 @@ func TestAgentRecoveryProcessFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var fixture struct{ DSN, Provider string }
+	var fixture struct {
+		DSN, Provider string
+		ContextSize   int
+	}
 	if err = json.Unmarshal(data, &fixture); err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +305,10 @@ func TestAgentRecoveryProcessFixture(t *testing.T) {
 				return string(result), err
 			})
 		probe.ReadOnly, probe.ConcurrencySafe = true, true
-		return app.ExecutionProfile{Config: ai.Config{Name: "fixture", Model: m, Toolkit: tool.NewToolkit(probe), ToolConcurrency: 2}}, nil
+		return app.ExecutionProfile{Config: ai.Config{
+			Name: "fixture", Model: m, Toolkit: tool.NewToolkit(probe), ToolConcurrency: 2,
+			Context: agent.ContextConfig{ContextSize: fixture.ContextSize},
+		}}, nil
 	}
 	cfg := config.Config{
 		DatabaseDSN: fixture.DSN, HTTPListenAddress: "127.0.0.1:0", PublicURL: "http://127.0.0.1:8081",
@@ -482,15 +488,50 @@ func TestInvestigationConclusionSurvivesProcessCrashes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var modelCalls atomic.Int32
+	var investigativeCalls, reportCalls, toolCalls atomic.Int32
 	const answer = "The cause remains unconfirmed."
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		modelCalls.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
-		writeConclusionCall(w, investigation.Conclusion{
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/probe" {
+			toolCalls.Add(1)
+			_, _ = fmt.Fprint(w, "port-result-8443")
+			return
+		}
+		var request struct {
+			Stream   bool
+			Messages json.RawMessage
+			Tools    []struct {
+				Function struct{ Name string }
+			}
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if request.Stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			if investigativeCalls.Add(1) == 1 {
+				writeAgentCall(w, "recover-report-read", "probe")
+				return
+			}
+			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"No cause established.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+			return
+		}
+		reportCalls.Add(1)
+		if !bytes.Contains(request.Messages, []byte("port-result-8443")) {
+			t.Error("report generation lost the checkpointed Tool result")
+		}
+		if len(request.Tools) != 1 || request.Tools[0].Function.Name != "generate_structured_output" {
+			t.Error("only AgentScope's report schema should be offered in the buffered request")
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		arguments, _ := json.Marshal(investigation.Conclusion{
 			Status: investigation.Inconclusive, Summary: answer,
 			Impact: investigation.Impact{Summary: "Impact remains unknown."},
 		})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"report","type":"function","function":{"name":"generate_structured_output","arguments":%s}}]},"finish_reason":"tool_calls"}]}`, strconv.Quote(string(arguments)))
 	}))
 	t.Cleanup(provider.Close)
 	path := filepath.Join(t.TempDir(), "agent-recovery.json")
@@ -529,8 +570,8 @@ func TestInvestigationConclusionSurvivesProcessCrashes(t *testing.T) {
 		case <-time.After(25 * time.Millisecond):
 		}
 	}
-	if calls := modelCalls.Load(); calls != 1 {
-		t.Fatalf("the durable pending Conclusion used %d model calls, want one", calls)
+	if investigating, reports, reads := investigativeCalls.Load(), reportCalls.Load(), toolCalls.Load(); investigating != 2 || reports != 2 || reads != 1 {
+		t.Fatalf("got %d investigative calls, %d report calls and %d reads, want 2, 2 and 1", investigating, reports, reads)
 	}
 	if _, err := database.ClaimAgentExecution(ctx, org, execution, time.Minute); !errors.Is(err, storage.ErrAgentExecutionUnavailable) {
 		t.Fatalf("execution could be claimed after commit: %v", err)
@@ -541,9 +582,91 @@ func TestInvestigationConclusionSurvivesProcessCrashes(t *testing.T) {
 	}
 }
 
+func TestCompactedConversationSurvivesProcessRestart(t *testing.T) {
+	dsn := postgresDSN(t)
+	database := openDatabaseForTest(t, dsn)
+	if _, err := database.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	org := organization(t, "recover-compacted")
+	ensureTestOrganization(t, database, org)
+	chat := openConversation(t, database, org, "Compaction")
+	pool, err := poolForTest(database, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, stop := context.WithTimeout(t.Context(), time.Minute)
+	defer stop()
+
+	const summary = "The operator selected port 8443."
+	const answer = "I retained the selected port."
+	const followUp = "Which port did we select?"
+	input := strings.Repeat("diagnostic context ", 300)
+	var generations atomic.Int32
+	var compactions atomic.Int32
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if bytes.Contains(body, []byte("generate_structured_output")) {
+			compactions.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			arguments := `{"task_overview":"` + summary + `","current_state":"","important_discoveries":"","next_steps":"","context_to_preserve":""}`
+			_, _ = fmt.Fprintf(w, `{"choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"compact","type":"function","function":{"name":"generate_structured_output","arguments":%s}}]},"finish_reason":"tool_calls"}]}`, strconv.Quote(arguments))
+			return
+		}
+		number := generations.Add(1)
+		if !bytes.Contains(body, []byte(summary)) || bytes.Contains(body, []byte(input)) ||
+			number == 2 && !bytes.Contains(body, []byte(followUp)) {
+			t.Errorf("turn %d did not use the compacted native context", number)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":%q},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", answer)
+	}))
+	defer provider.Close()
+
+	admit := func(text string) uuid.UUID {
+		t.Helper()
+		work, err := database.AdmitAgentChat(ctx, ownerOf(t, org), org, chat.ID, uuid.New(), conversation.NewMessage{Text: text})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return work.ID
+	}
+	path := filepath.Join(t.TempDir(), "agent-recovery.json")
+	data, err := json.Marshal(struct {
+		DSN, Provider string
+		ContextSize   int
+	}{DSN: dsn, Provider: provider.URL, ContextSize: 512})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	first := admit(input)
+	kill := startAgentRecoveryProcess(t, path)
+	awaitAgentResult(t, ctx, pool, org, first, answer, &generations, 1)
+	kill()
+	second := admit(followUp)
+	startAgentRecoveryProcess(t, path)
+	awaitAgentResult(t, ctx, pool, org, second, answer, &generations, 2)
+	if compactions.Load() != 1 {
+		t.Fatalf("native context was compacted %d times, want one", compactions.Load())
+	}
+	var visible string
+	if err := pool.QueryRow(ctx, `SELECT text FROM conversation_message
+		WHERE org_id = $1 AND conversation_id = $2 AND sequence = 1`, org, chat.ID).Scan(&visible); err != nil || visible != input {
+		t.Fatalf("compaction changed the visible Message: %v", err)
+	}
+}
+
 func writeConclusionCall(w http.ResponseWriter, report investigation.Conclusion) {
 	arguments, _ := json.Marshal(report)
-	_, _ = fmt.Fprintf(w, `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"report","type":"function","function":{"name":"conclude","arguments":%s}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":17,"completion_tokens":3,"total_tokens":20}}`+"\n\ndata: [DONE]\n\n", strconv.Quote(string(arguments)))
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = fmt.Fprintf(w, "{\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"report\",\"type\":\"function\",\"function\":{\"name\":\"generate_structured_output\",\"arguments\":%s}}]},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":17,\"completion_tokens\":3,\"total_tokens\":20}}", strconv.Quote(string(arguments)))
 }
 
 func startAgentRecoveryProcess(t *testing.T, path string) func() {
@@ -785,6 +908,11 @@ func TestAgentCoordinatorFinishesAndCancelsInvestigationThroughProductStorage(t 
 		conclusion, investigation.Usage{}); err == nil {
 		t.Fatal("native finalization accepted a supported explanation without an explanatory Finding")
 	}
+	conclusion.Status = investigation.AnswerOnly
+	if err := database.FinishAgentExecution(ctx, org, claim, storage.AgentExecutionCompleted, "",
+		conclusion, investigation.Usage{}); !errors.Is(err, investigation.ErrInvalidConclusion) {
+		t.Fatalf("standalone Investigation accepted answer_only: %v", err)
+	}
 	if err := database.FinishAgentExecution(ctx, org, claim, storage.AgentExecutionFailed, "", nil, investigation.Usage{}); err != nil {
 		t.Fatal(err)
 	}
@@ -798,21 +926,24 @@ func TestAgentCoordinatorFinishesAndCancelsInvestigationThroughProductStorage(t 
 			t.Error(err)
 			return
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		if strings.Contains(string(body), `"role":"tool"`) {
-			if strings.Contains(string(body), "Inspect checkout") {
-				t.Error("accepted Conclusion was followed by a second model call")
-			}
-			_, _ = fmt.Fprint(w, `data: {"choices":[{"index":0,"delta":{"content":"Unable to finish."},"finish_reason":"stop"}]}`+"\n\ndata: [DONE]\n\n")
+		if !strings.Contains(string(body), "generate_structured_output") {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"No cause established.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
 			return
 		}
 		report := investigation.Conclusion{
 			Status: investigation.Inconclusive, Summary: answer,
 			Impact: investigation.Impact{Summary: "Impact remains unknown."},
+			Actions: []investigation.ActionProposal{{
+				Title: "Collect request latency", Rationale: "Request timing is unavailable.",
+				Verification: "Confirm latency metrics cover the Incident window.",
+			}},
 		}
 		if strings.Contains(string(body), "Reject checkout evidence") {
+			report.Status = investigation.SupportedExplanation
 			report.Findings = []investigation.Finding{{
-				Kind: investigation.FindingObservation, Statement: "Unverified observation",
+				Kind: investigation.FindingCause, Statement: "The pool exhausted its connections.",
+				Mechanism:    "The queue starved requests of database connections.",
 				EvidenceRefs: []investigation.EvidenceRef{{ToolRunID: uuid.New()}},
 			}}
 		}

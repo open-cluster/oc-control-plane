@@ -1,15 +1,10 @@
 package investigation
 
 import (
-	"context"
 	"time"
 
 	"github.com/google/uuid"
 )
-
-type Agent interface {
-	Run(context.Context, uuid.UUID, Investigation) error
-}
 
 type Status int16
 
@@ -60,7 +55,7 @@ type Finding struct {
 	Statement    string        `json:"statement"`
 	Kind         FindingKind   `json:"kind"`
 	Mechanism    string        `json:"mechanism"`
-	RunRefs      []int         `json:"runRefs"`
+	RunRefs      []int         `json:"runRefs,omitempty"` // Retained historical citations.
 	EvidenceRefs []EvidenceRef `json:"evidenceRefs,omitempty"`
 }
 
@@ -92,7 +87,7 @@ var ConclusionStatuses = []string{
 
 type Impact struct {
 	Summary      string        `json:"summary"`
-	RunRefs      []int         `json:"runRefs"`
+	RunRefs      []int         `json:"runRefs,omitempty"`
 	EvidenceRefs []EvidenceRef `json:"evidenceRefs,omitempty"`
 }
 
@@ -130,7 +125,7 @@ type HypothesisResult struct {
 	Statement    string           `json:"statement"`
 	Status       HypothesisStatus `json:"status"`
 	Test         string           `json:"test"`
-	RunRefs      []int            `json:"runRefs"`
+	RunRefs      []int            `json:"runRefs,omitempty"`
 	EvidenceRefs []EvidenceRef    `json:"evidenceRefs,omitempty"`
 }
 
@@ -138,7 +133,7 @@ type ActionProposal struct {
 	Title        string        `json:"title"`
 	Rationale    string        `json:"rationale"`
 	Verification string        `json:"verification"`
-	RunRefs      []int         `json:"runRefs"`
+	RunRefs      []int         `json:"runRefs,omitempty"`
 	EvidenceRefs []EvidenceRef `json:"evidenceRefs,omitempty"`
 }
 
@@ -163,7 +158,7 @@ var LimitationTypes = []string{
 type Limitation struct {
 	Type             LimitationType `json:"type"`
 	Statement        string         `json:"statement"`
-	RunRefs          []int          `json:"runRefs"`
+	RunRefs          []int          `json:"runRefs,omitempty"`
 	EvidenceRefs     []EvidenceRef  `json:"evidenceRefs,omitempty"`
 	MessageSequences []int64        `json:"messageSequences,omitempty"`
 }

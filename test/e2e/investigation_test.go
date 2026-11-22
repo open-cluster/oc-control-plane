@@ -27,7 +27,7 @@ func startInvestigationModel(t *testing.T) *httptest.Server {
 			writer.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		run, observed, err := workloadResult(request.Body)
+		run, observed, stream, err := workloadResult(request.Body)
 		if err != nil {
 			t.Error(err)
 			http.Error(writer, "invalid workload Tool result", http.StatusBadRequest)
@@ -37,7 +37,7 @@ func startInvestigationModel(t *testing.T) *httptest.Server {
 		arguments := fmt.Sprintf(`{"purpose":"Read the affected workload's current state","input":{"namespace":%q,"workloadKind":"Deployment","workloadName":%q,"maxPods":10}}`,
 			fixtureNamespace, fixtureWorkload)
 		if observed {
-			name, callID = "conclude", "commit-report"
+			name, callID = "generate_structured_output", "report"
 			arguments = `{"status":"inconclusive","summary":"Workload evidence is unavailable.",
 				"impact":{"summary":"Unknown"},"findings":[],"hypotheses":[],"actions":[],"limitations":[]}`
 			if run != uuid.Nil {
@@ -48,12 +48,28 @@ func startInvestigationModel(t *testing.T) *httptest.Server {
 					run, "Relay observed workload "+fixtureWorkload+" in namespace "+fixtureNamespace, run)
 			}
 		}
+		if !stream {
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(writer, `{"id":"msg_report","type":"message","role":"assistant","model":"claude-sonnet-5",
+				"content":[{"type":"tool_use","id":%q,"name":%q,"input":%s}],
+				"stop_reason":"tool_use","usage":{"input_tokens":100,"output_tokens":20}}`, callID, name, arguments)
+			return
+		}
 		writer.Header().Set("Content-Type", "text/event-stream")
 		usage := `{"input_tokens":100,"output_tokens":20}`
 		_, _ = fmt.Fprintf(writer, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{"+
 			"\"id\":\"msg_e2e\",\"type\":\"message\",\"role\":\"assistant\","+
 			"\"model\":\"claude-sonnet-5\",\"content\":[],\"stop_reason\":null,"+
 			"\"stop_sequence\":null,\"usage\":%s}}\n\n", usage)
+		if observed {
+			_, _ = fmt.Fprint(writer, "event: content_block_start\ndata: {\"type\":\"content_block_start\","+
+				"\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"The workload read completed.\"}}\n\n")
+			_, _ = fmt.Fprint(writer, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
+			_, _ = fmt.Fprintf(writer, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":"+
+				"{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":%s}\n\n", usage)
+			_, _ = fmt.Fprint(writer, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+			return
+		}
 		_, _ = fmt.Fprintf(writer, "event: content_block_start\ndata: {\"type\":\"content_block_start\","+
 			"\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":%q,"+
 			"\"name\":%q,\"input\":{}}}\n\n", callID, name)
@@ -72,8 +88,9 @@ func startInvestigationModel(t *testing.T) *httptest.Server {
 	return server
 }
 
-func workloadResult(body io.Reader) (uuid.UUID, bool, error) {
+func workloadResult(body io.Reader) (uuid.UUID, bool, bool, error) {
 	var request struct {
+		Stream   bool
 		Messages []struct {
 			Content []struct {
 				Type      string `json:"type"`
@@ -84,27 +101,26 @@ func workloadResult(body io.Reader) (uuid.UUID, bool, error) {
 		} `json:"messages"`
 	}
 	if err := json.NewDecoder(body).Decode(&request); err != nil {
-		return uuid.Nil, false, fmt.Errorf("decoding the Anthropic request: %w", err)
+		return uuid.Nil, false, false, fmt.Errorf("decoding the Anthropic request: %w", err)
 	}
-	if len(request.Messages) == 0 {
-		return uuid.Nil, false, nil
+	for _, message := range request.Messages {
+		for _, block := range message.Content {
+			if block.Type != "tool_result" || block.ToolUseID != workloadCallID {
+				continue
+			}
+			if block.IsError {
+				return uuid.Nil, true, request.Stream, nil
+			}
+			observation, hasPrefix := strings.CutPrefix(block.Content, "[Tool Run ")
+			id, _, hasEnd := strings.Cut(observation, "]")
+			if !hasPrefix || !hasEnd {
+				return uuid.Nil, true, request.Stream, nil
+			}
+			run, err := uuid.Parse(id)
+			return run, true, request.Stream, err
+		}
 	}
-	for _, block := range request.Messages[len(request.Messages)-1].Content {
-		if block.Type != "tool_result" || block.ToolUseID != workloadCallID {
-			continue
-		}
-		if block.IsError {
-			return uuid.Nil, true, nil
-		}
-		observation, hasPrefix := strings.CutPrefix(block.Content, "[Tool Run ")
-		id, _, hasEnd := strings.Cut(observation, "]")
-		if !hasPrefix || !hasEnd {
-			return uuid.Nil, true, nil
-		}
-		run, err := uuid.Parse(id)
-		return run, true, err
-	}
-	return uuid.Nil, false, nil
+	return uuid.Nil, false, request.Stream, nil
 }
 
 func (h *harness) assertInvestigation(t *testing.T) {

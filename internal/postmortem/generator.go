@@ -1,6 +1,7 @@
 package postmortem
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -8,6 +9,7 @@ import (
 )
 
 func DraftFrom(input GenerationInput) Postmortem {
+	legacyRuns := make(map[historicalToolRun]uuid.UUID)
 	draft := Postmortem{
 		IncidentID: input.IncidentID, Status: StatusDraft, Revision: 1,
 		Title:            valueOr(input.Title, NeedsHumanInput),
@@ -25,7 +27,7 @@ func DraftFrom(input GenerationInput) Postmortem {
 	}
 	for _, alert := range input.AlertEvents {
 		draft.Timeline = append(draft.Timeline, TimelineEntry{
-			At: alert.At, Description: "Alert event: " + alert.Title, RunRefs: []int{},
+			At: alert.At, Description: "Alert event: " + alert.Title,
 		})
 	}
 	for _, evidence := range input.Runs {
@@ -34,13 +36,13 @@ func DraftFrom(input GenerationInput) Postmortem {
 		if description == "" {
 			description = run.Summary
 		}
+		if run.Ordinal > 0 && run.ID != uuid.Nil {
+			legacyRuns[historicalToolRun{investigation: evidence.InvestigationID, ordinal: run.Ordinal}] = run.ID
+		}
 		if description != "" {
 			entry := TimelineEntry{
 				At: run.FinishedAt, Description: description,
-				InvestigationID: evidence.InvestigationID.String(), RunRefs: []int{},
-			}
-			if run.Ordinal > 0 {
-				entry.RunRefs = []int{run.Ordinal}
+				InvestigationID: evidence.InvestigationID.String(),
 			}
 			if run.ID != uuid.Nil {
 				entry.EvidenceRefs = []investigation.EvidenceRef{{ToolRunID: run.ID}}
@@ -63,28 +65,35 @@ func DraftFrom(input GenerationInput) Postmortem {
 		if description != "" {
 			draft.Timeline = append(draft.Timeline, TimelineEntry{
 				At: evidence.Event.At, Description: description,
-				InvestigationID: evidence.InvestigationID.String(), RunRefs: []int{},
+				InvestigationID: evidence.InvestigationID.String(),
 			})
 		}
 	}
 	if !input.ResolvedAt.IsZero() {
 		draft.Timeline = append(draft.Timeline, TimelineEntry{
-			At: input.ResolvedAt, Description: "Incident alerts resolved", RunRefs: []int{},
+			At: input.ResolvedAt, Description: "Incident alerts resolved",
 		})
 	}
+	missingCausalEvidence := false
 	for _, result := range input.Results {
 		conclusion := result.Conclusion
 		if conclusion.Summary != "" {
 			draft.ExecutiveSummary = conclusion.Summary
 		}
-		if draft.Impact == NeedsHumanInput && len(conclusion.Impact.RunRefs)+len(conclusion.Impact.EvidenceRefs) > 0 {
+		if draft.Impact == NeedsHumanInput && len(reportEvidence(legacyRuns, result.InvestigationID, conclusion.Impact.RunRefs, conclusion.Impact.EvidenceRefs)) > 0 {
 			draft.Impact = valueOr(conclusion.Impact.Summary, NeedsHumanInput)
 		}
 		for _, finding := range conclusion.Findings {
+			if finding.Kind != investigation.FindingCause && finding.Kind != investigation.FindingContributingFactor {
+				continue
+			}
 			cited := CitedStatement{InvestigationID: result.InvestigationID.String(),
 				Statement:    finding.Statement,
-				RunRefs:      append([]int{}, finding.RunRefs...),
-				EvidenceRefs: append([]investigation.EvidenceRef(nil), finding.EvidenceRefs...)}
+				EvidenceRefs: reportEvidence(legacyRuns, result.InvestigationID, finding.RunRefs, finding.EvidenceRefs)}
+			if len(cited.EvidenceRefs) == 0 {
+				missingCausalEvidence = true
+				continue
+			}
 			switch finding.Kind {
 			case investigation.FindingCause:
 				draft.RootCauses = append(draft.RootCauses, cited)
@@ -99,8 +108,7 @@ func DraftFrom(input GenerationInput) Postmortem {
 				Deadline:        NeedsHumanInput,
 				Verification:    action.Verification,
 				InvestigationID: result.InvestigationID.String(),
-				RunRefs:         append([]int{}, action.RunRefs...),
-				EvidenceRefs:    append([]investigation.EvidenceRef(nil), action.EvidenceRefs...),
+				EvidenceRefs:    reportEvidence(legacyRuns, result.InvestigationID, action.RunRefs, action.EvidenceRefs),
 			})
 		}
 		for _, limitation := range conclusion.Limitations {
@@ -113,6 +121,9 @@ func DraftFrom(input GenerationInput) Postmortem {
 				draft.OpenQuestions = append(draft.OpenQuestions, hypothesis.Statement)
 			}
 		}
+	}
+	if missingCausalEvidence {
+		draft.OpenQuestions = append(draft.OpenQuestions, investigation.MissingEvidenceStatement)
 	}
 	for _, message := range input.Messages {
 		author := valueOr(message.Author, "operator")
@@ -127,22 +138,49 @@ func DraftFrom(input GenerationInput) Postmortem {
 			"Verify testimony from "+author+": "+text)
 	}
 	if len(draft.Timeline) == 0 {
-		draft.Timeline = []TimelineEntry{{Description: NeedsHumanInput, RunRefs: []int{}}}
+		draft.Timeline = []TimelineEntry{{Description: NeedsHumanInput}}
 	}
 	if len(draft.RootCauses) == 0 {
-		draft.RootCauses = []CitedStatement{{Statement: NeedsHumanInput, RunRefs: []int{}}}
+		draft.RootCauses = []CitedStatement{{Statement: NeedsHumanInput}}
 	}
 	if len(draft.ContributingFactors) == 0 {
-		draft.ContributingFactors = []CitedStatement{{Statement: NeedsHumanInput, RunRefs: []int{}}}
+		draft.ContributingFactors = []CitedStatement{{Statement: NeedsHumanInput}}
 	}
 	if len(draft.ActionItems) == 0 {
 		draft.ActionItems = []ActionItem{{Title: NeedsHumanInput, Owner: NeedsHumanInput,
-			Deadline: NeedsHumanInput, Verification: NeedsHumanInput, RunRefs: []int{}}}
+			Deadline: NeedsHumanInput, Verification: NeedsHumanInput}}
 	}
 	if len(draft.OpenQuestions) == 0 {
 		draft.OpenQuestions = []string{NeedsHumanInput}
 	}
 	return draft
+}
+
+// Historical reports may carry an ordinal in sections migration 0013 did not convert.
+type historicalToolRun struct {
+	investigation uuid.UUID
+	ordinal       int
+}
+
+func reportEvidence(legacyRuns map[historicalToolRun]uuid.UUID, owner uuid.UUID, ordinals []int, refs []investigation.EvidenceRef) []investigation.EvidenceRef {
+	var evidence []investigation.EvidenceRef
+	add := func(id uuid.UUID) {
+		ref := investigation.EvidenceRef{ToolRunID: id}
+		if id != uuid.Nil && !slices.Contains(evidence, ref) {
+			evidence = append(evidence, ref)
+		}
+	}
+	for _, ref := range refs {
+		id := ref.ToolRunID
+		if id == uuid.Nil {
+			id = legacyRuns[historicalToolRun{investigation: ref.InvestigationID, ordinal: ref.ToolRunOrdinal}]
+		}
+		add(id)
+	}
+	for _, ordinal := range ordinals {
+		add(legacyRuns[historicalToolRun{investigation: owner, ordinal: ordinal}])
+	}
+	return evidence
 }
 
 func valueOr(value, fallback string) string {

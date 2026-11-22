@@ -45,20 +45,19 @@ func TestAssignedMessageBeyondPreviewReachesModel(t *testing.T) {
 	}
 	select {
 	case prompt := <-prompts:
-		var priorRequest, pairedResult, currentRequest bool
+		var priorRequest, priorReport, currentRequest bool
 		for _, msg := range prompt {
 			if text := msg.GetTextContent("\n"); text != nil {
 				priorRequest = priorRequest || strings.Contains(*text, request)
 				currentRequest = currentRequest || strings.Contains(*text, followUp)
-			}
-			for _, block := range msg.Content {
-				if result, ok := block.(message.ToolResultBlock); ok && result.Name == "conclude" {
-					pairedResult = true
+				priorReport = priorReport || strings.Contains(*text, "Investigation completed.")
+				if strings.Contains(*text, "Produce the Investigation Conclusion") {
+					t.Fatal("the report instruction leaked into the committed Conversation checkpoint")
 				}
 			}
 		}
-		if !priorRequest || !currentRequest || !pairedResult {
-			t.Fatalf("follow-up context had prior Message=%t, current Message=%t, completed Tool result=%t", priorRequest, currentRequest, pairedResult)
+		if !priorRequest || !currentRequest || !priorReport {
+			t.Fatalf("follow-up context had prior Message=%t, current Message=%t, accepted report=%t", priorRequest, currentRequest, priorReport)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the follow-up did not invoke the model")

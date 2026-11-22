@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
@@ -83,15 +83,6 @@ func evidenceMissing(ctx context.Context, pool querier, org, conversationID uuid
 	return missing, err
 }
 
-// ValidateAgentConclusionEvidence lets an active reply correct citations before accepting a report.
-func (p *Database) ValidateAgentConclusionEvidence(ctx context.Context, org uuid.UUID, execution AgentExecution,
-	conclusion investigation.Conclusion,
-) error {
-	return p.withAgentLease(ctx, org, execution, func(tx pgx.Tx) error {
-		return validateAgentConclusionEvidence(ctx, tx, org, execution, conclusion)
-	})
-}
-
 func validateAgentConclusionEvidence(ctx context.Context, tx querier, org uuid.UUID, execution AgentExecution,
 	conclusion investigation.Conclusion,
 ) error {
@@ -124,7 +115,7 @@ func validateAgentConclusionEvidence(ctx context.Context, tx querier, org uuid.U
 		}
 		seen := make(map[uuid.UUID]bool, len(section.refs))
 		for _, ref := range section.refs {
-			if ref.ToolRunID == uuid.Nil || ref.InvestigationID != uuid.Nil || ref.ToolRunOrdinal != 0 || seen[ref.ToolRunID] {
+			if !stableToolRunRef(ref) || seen[ref.ToolRunID] {
 				return ErrAgentEvidenceUnavailable
 			}
 			seen[ref.ToolRunID] = true
@@ -156,19 +147,27 @@ func validateAgentConclusionEvidence(ctx context.Context, tx querier, org uuid.U
 	return err
 }
 
+func stableToolRunRef(ref investigation.EvidenceRef) bool {
+	return ref.ToolRunID != uuid.Nil && ref.InvestigationID == uuid.Nil && ref.ToolRunOrdinal == 0
+}
+
 func resultEvidence(id uuid.UUID, conclusion investigation.Conclusion) []investigation.EvidenceRef {
-	refs := append([]investigation.EvidenceRef(nil), conclusion.Impact.EvidenceRefs...)
-	for _, hypothesis := range conclusion.Hypotheses {
-		refs = append(refs, hypothesis.EvidenceRefs...)
-	}
-	for _, action := range conclusion.Actions {
-		refs = append(refs, action.EvidenceRefs...)
-	}
-	for _, finding := range conclusion.Findings {
-		refs = append(refs, finding.EvidenceRefs...)
-		for _, ordinal := range finding.RunRefs {
+	var refs []investigation.EvidenceRef
+	add := func(evidence []investigation.EvidenceRef, ordinals []int) {
+		refs = append(refs, evidence...)
+		for _, ordinal := range ordinals {
 			refs = append(refs, investigation.EvidenceRef{InvestigationID: id, ToolRunOrdinal: ordinal})
 		}
+	}
+	add(conclusion.Impact.EvidenceRefs, conclusion.Impact.RunRefs)
+	for _, finding := range conclusion.Findings {
+		add(finding.EvidenceRefs, finding.RunRefs)
+	}
+	for _, hypothesis := range conclusion.Hypotheses {
+		add(hypothesis.EvidenceRefs, hypothesis.RunRefs)
+	}
+	for _, action := range conclusion.Actions {
+		add(action.EvidenceRefs, action.RunRefs)
 	}
 	return refs
 }

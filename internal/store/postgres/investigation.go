@@ -19,12 +19,7 @@ import (
 
 var _ investigation.HTTPStore = (*Database)(nil)
 
-// Native Tool Runs use UUIDs for evidence. Existing Investigation views also display a run number.
-const toolRunDisplayOrdinal = `coalesce(r.ordinal, (SELECT count(*) FROM investigation_tool_run earlier
-    WHERE earlier.org_id = r.org_id AND earlier.execution_id = r.execution_id
-      AND (earlier.started_at, earlier.tool_run_id) <= (r.started_at, r.tool_run_id)))`
-
-const investigationRunColumns = `r.tool_run_id, r.integration_id, ` + toolRunDisplayOrdinal + `, r.tool, r.purpose, r.arguments,
+const investigationRunColumns = `r.tool_run_id, r.integration_id, coalesce(r.ordinal, 0), r.tool, r.purpose, r.arguments,
     r.window_from, r.window_until, r.outcome, r.truncated, r.summary, r.sources, r.error,
     r.started_at, r.finished_at, r.window_applied, r.model_clipped`
 
@@ -141,7 +136,7 @@ func (p *Database) InvestigationToolRuns(
 
 	runs := make([]investigation.ToolRun, 0, 8)
 	for runRows.Next() {
-		run, err := scanToolRun(runRows, false)
+		run, err := scanToolRun(runRows, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -153,36 +148,43 @@ func (p *Database) InvestigationToolRuns(
 	return runs, nil
 }
 
-func (p *Database) InvestigationToolRunObservation(ctx context.Context, organization, id uuid.UUID, ordinal int) (investigation.ToolRun, error) {
-	pool, err := p.poolForOrganization(organization)
+func (p *Database) ToolRunObservation(ctx context.Context, org uuid.UUID, ref investigation.EvidenceRef) (investigation.ToolRun, uuid.UUID, error) {
+	pool, err := p.poolForOrganization(org)
 	if err != nil {
-		return investigation.ToolRun{}, err
+		return investigation.ToolRun{}, uuid.Nil, err
+	}
+	match := "r.tool_run_id = $2"
+	args := []any{org, ref.ToolRunID}
+	if ref.ToolRunOrdinal > 0 {
+		match = "r.investigation_id = $2 AND r.ordinal = $3"
+		args = []any{org, ref.InvestigationID, ref.ToolRunOrdinal}
 	}
 	row := pool.QueryRow(ctx, `SELECT `+investigationRunColumns+`, r.observation_text,
-        coalesce(integration.name, ''), coalesce(integration.provider, '')
-        FROM investigation_tool_run r `+toolRunOwnerJoins+`
-        LEFT JOIN integration ON integration.org_id = r.org_id AND integration.integration_id = r.integration_id
-		WHERE r.org_id = $1 AND i.investigation_id = $2 AND r.outcome IS NOT NULL
-		  AND `+toolRunDisplayOrdinal+` = $3 AND `+webInvestigationSource, organization, id, ordinal)
-	run, err := scanToolRun(row, true)
+		coalesce(integration.name, ''), coalesce(integration.provider, ''), i.investigation_id
+		FROM investigation_tool_run r `+toolRunOwnerJoins+`
+		LEFT JOIN integration ON integration.org_id = r.org_id AND integration.integration_id = r.integration_id
+		WHERE r.org_id = $1 AND i.investigation_id IS NOT NULL AND r.outcome IS NOT NULL
+		  AND `+match+` AND `+webInvestigationSource, args...)
+	var owner uuid.UUID
+	run, err := scanToolRun(row, &owner)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return investigation.ToolRun{}, investigation.ErrUnknown
+		return investigation.ToolRun{}, uuid.Nil, investigation.ErrUnknown
 	}
 	if err != nil {
-		return investigation.ToolRun{}, fmt.Errorf("reading a Tool Run observation: %w", err)
+		return investigation.ToolRun{}, uuid.Nil, fmt.Errorf("reading a Tool Run observation: %w", err)
 	}
-	return run, nil
+	return run, owner, nil
 }
 
-func scanToolRun(row pgx.Row, observation bool) (investigation.ToolRun, error) {
+func scanToolRun(row pgx.Row, owner *uuid.UUID) (investigation.ToolRun, error) {
 	var run investigation.ToolRun
 	var integrationID *uuid.UUID
 	var arguments, sources []byte
 	fields := []any{&run.ID, &integrationID, &run.Ordinal, &run.Tool, &run.Purpose, &arguments,
 		&run.WindowFrom, &run.WindowUntil, &run.Outcome, &run.Truncated, &run.Summary,
 		&sources, &run.Error, &run.StartedAt, &run.FinishedAt, &run.WindowApplied, &run.ModelClipped}
-	if observation {
-		fields = append(fields, &run.ObservationText, &run.IntegrationName, &run.IntegrationType)
+	if owner != nil {
+		fields = append(fields, &run.ObservationText, &run.IntegrationName, &run.IntegrationType, owner)
 	}
 	if err := row.Scan(fields...); err != nil {
 		return run, fmt.Errorf("scanning a tool run: %w", err)
