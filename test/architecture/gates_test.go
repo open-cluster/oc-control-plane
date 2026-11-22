@@ -146,16 +146,11 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 			"an organization named in the provider's callback is never read",
 		"PruneChangesBefore": "age-bounded delete across the database; reads no tenant " +
 			"data and takes no caller-supplied identifier",
-		"ClaimInvestigation": "discovers which tenant has work waiting; takes no " +
-			"caller-supplied identifier, and the claimed row is the authority for the " +
-			"organization it belongs to",
 		"ClaimNextAgentExecution": "discovers runnable work without a caller-supplied tenant; the selected row supplies the Organization for the scoped claim",
 		"OpenQueuedConversationTurn": "discovers durable queued Conversation work across tenants; " +
 			"the selected row is the authority for the Organization used by the capacity lock and turn",
 		"ClaimSlackMessageWork": "discovers ready or expired Slack Message work across tenants; each " +
 			"claimed row carries the authoritative Organization used by every fenced transition",
-		"RecoverStale": "expiry-bounded recovery across the database; reads no tenant " +
-			"data and takes no caller-supplied identifier",
 		"RedeemDeploymentSignIn": "consumes an opaque OIDC transaction that carries no tenant authority",
 	}
 
@@ -338,72 +333,29 @@ func TestOnlyTheCompositionRootAssemblesProviders(t *testing.T) {
 	}
 }
 
-func TestReasoningOrchestrationDependsOnNoAdapter(t *testing.T) {
+func TestAgentScopeOwnsReasoning(t *testing.T) {
 	t.Parallel()
 
-	const surface = "internal/investigation/agent"
-
-	found := false
+	const runtime = "github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
+	native := false
 	for _, loaded := range loadPackages(t) {
-		if internalPackagePath(loaded.PkgPath) != surface {
-			continue
+		surface := internalPackagePath(loaded.PkgPath)
+		if surface == "internal/investigation/agent" || strings.HasPrefix(surface, "internal/investigation/agent/") {
+			t.Errorf("%s still contains the retired reasoning engine", loaded.PkgPath)
 		}
-		found = true
-		for imported := range loaded.Imports {
-			if strings.HasPrefix(imported, modulePath+"/internal/investigation/agent/") &&
-				!strings.HasSuffix(imported, "/providers") {
-				t.Errorf("%s must not import the adapter %s; it knows the contract and nothing "+
-					"about who implements it", surface, imported)
-			}
-			for _, vendor := range vendorModules {
-				if strings.Contains(imported, vendor) {
-					t.Errorf("%s must not import %s; a vendor's types stop at its adapter",
-						surface, imported)
+		if surface == "internal/ai" {
+			_, native = loaded.Imports[runtime]
+		}
+		if surface == "internal/investigation" {
+			for imported := range loaded.Imports {
+				if strings.HasPrefix(imported, "github.com/agentscope-ai/") || imported == modulePath+"/internal/ai" {
+					t.Errorf("the Investigation domain imports the agent runtime through %s", imported)
 				}
 			}
 		}
 	}
-	if !found {
-		t.Fatalf("%s was not found; the gate would pass vacuously", surface)
-	}
-}
-
-func TestAgentRunOwnsTheOnlyOrchestrationLoop(t *testing.T) {
-	t.Parallel()
-
-	forbiddenTypes := map[string]bool{"loop": true, "session": true}
-	forbiddenMethods := map[string]bool{"converse": true, "nextmove": true}
-	files := parseProductionFiles(t,
-		filepath.Join(moduleRoot, "internal", "investigation", "agent"))
-
-	for _, file := range files {
-		for _, declaration := range file.Decls {
-			switch declared := declaration.(type) {
-			case *ast.GenDecl:
-				for _, specification := range declared.Specs {
-					typeSpec, ok := specification.(*ast.TypeSpec)
-					if ok && forbiddenTypes[strings.ToLower(typeSpec.Name.Name)] {
-						t.Errorf("agent declares %s; Agent.Run must own the only orchestration loop",
-							typeSpec.Name.Name)
-					}
-				}
-			case *ast.FuncDecl:
-				name := strings.ToLower(declared.Name.Name)
-				receiver := strings.ToLower(receiverType(declared))
-				if forbiddenMethods[name] || name == "next" && receiver == "session" {
-					t.Errorf("agent declares %s.%s; Agent.Run must own turn advancement",
-						receiverType(declared), declared.Name.Name)
-				}
-				if receiver == "runstate" {
-					t.Errorf("agent declares behavior on runState; it must remain data-only")
-				}
-				if declared.Name.Name != "Run" && takesRunState(declared) &&
-					resultCount(declared) > 1 {
-					t.Errorf("agent declares controller-shaped helper %s over runState; "+
-						"Agent.Run must own orchestration decisions", declared.Name.Name)
-				}
-			}
-		}
+	if !native {
+		t.Fatal("the AI runtime does not use the native AgentScope agent")
 	}
 }
 
@@ -463,59 +415,3 @@ func assertNoRetiredInvestigationTerms(t *testing.T, path string, forbidden []st
 		}
 	}
 }
-
-func takesRunState(function *ast.FuncDecl) bool {
-	if function.Type.Params == nil {
-		return false
-	}
-	for _, parameter := range function.Type.Params.List {
-		if strings.EqualFold(typeExpression(parameter.Type), "runState") {
-			return true
-		}
-	}
-	return false
-}
-
-func resultCount(function *ast.FuncDecl) int {
-	if function.Type.Results == nil {
-		return 0
-	}
-	total := 0
-	for _, result := range function.Type.Results.List {
-		if len(result.Names) == 0 {
-			total++
-		} else {
-			total += len(result.Names)
-		}
-	}
-	return total
-}
-
-func TestAgentDoesNotAliasInvestigationTypes(t *testing.T) {
-	t.Parallel()
-
-	files := parseProductionFiles(t,
-		filepath.Join(moduleRoot, "internal", "investigation", "agent"))
-	for _, file := range files {
-		for _, declaration := range file.Decls {
-			declared, ok := declaration.(*ast.GenDecl)
-			if !ok {
-				continue
-			}
-			for _, specification := range declared.Specs {
-				typeSpec, ok := specification.(*ast.TypeSpec)
-				if !ok || !typeSpec.Assign.IsValid() {
-					continue
-				}
-				selector, ok := typeSpec.Type.(*ast.SelectorExpr)
-				owner, owned := selector.X.(*ast.Ident)
-				if ok && owned && owner.Name == "investigation" {
-					t.Errorf("agent aliases investigation.%s as %s; qualify the durable type at use sites",
-						selector.Sel.Name, typeSpec.Name.Name)
-				}
-			}
-		}
-	}
-}
-
-var vendorModules = []string{"anthropic-sdk-go", "openai", "generative-ai-go", "openrouter"}

@@ -42,11 +42,30 @@ func agentToolScope(
 ) (conversation.Window, *investigation.ConversationOrigin, error) {
 	var window conversation.Window
 	if execution.InvestigationID != uuid.Nil {
-		err := tx.QueryRow(ctx, `
-			SELECT window_from, window_until FROM investigation
-			 WHERE org_id = $1 AND investigation_id = $2 AND automatic_incident`,
-			org, execution.InvestigationID).Scan(&window.From, &window.Until)
-		return window, nil, err
+		var automatic bool
+		var conversationID, requester uuid.NullUUID
+		if err := tx.QueryRow(ctx, `SELECT window_from, window_until, automatic_incident, conversation_id, requested_by
+			FROM investigation WHERE org_id = $1 AND investigation_id = $2`, org, execution.InvestigationID).
+			Scan(&window.From, &window.Until, &automatic, &conversationID, &requester); err != nil {
+			return window, nil, err
+		}
+		if !conversationID.Valid {
+			if automatic {
+				return window, nil, nil
+			}
+			return window, nil, authorizeAgentActors(ctx, tx, org, authz.InvestigationOpen, []string{requester.UUID.String()})
+		}
+		origin, err := conversationOrigin(ctx, tx, org, conversationID.UUID, true)
+		if err != nil || origin != nil {
+			return window, origin, err
+		}
+		var authors []string
+		if err := tx.QueryRow(ctx, `SELECT array_agg(DISTINCT author_id) FROM conversation_message
+			WHERE org_id = $1 AND conversation_id = $2 AND investigation_id = $3 AND role = $4`,
+			org, conversationID.UUID, execution.InvestigationID, int16(conversation.RoleUser)).Scan(&authors); err != nil {
+			return window, nil, err
+		}
+		return window, nil, authorizeAgentActors(ctx, tx, org, authz.ConversationWrite, authors)
 	}
 	var author string
 	if err := tx.QueryRow(ctx, `
@@ -60,24 +79,49 @@ func agentToolScope(
 	if err != nil || origin != nil {
 		return window, origin, err
 	}
-	user, err := uuid.Parse(author)
-	if err != nil || user == uuid.Nil {
-		return window, nil, authz.ErrNotAMember
+	return window, nil, authorizeAgentActors(ctx, tx, org, authz.ConversationWrite, []string{author})
+}
+
+func authorizeAgentActors(ctx context.Context, tx pgx.Tx, org uuid.UUID, allowed authz.Permission, authors []string) error {
+	if len(authors) == 0 {
+		return authz.ErrNotAMember
 	}
-	var roleName string
-	err = tx.QueryRow(ctx, `
+	users := make([]uuid.UUID, 0, len(authors))
+	for _, author := range authors {
+		user, err := uuid.Parse(author)
+		if err != nil || user == uuid.Nil {
+			return authz.ErrNotAMember
+		}
+		users = append(users, user)
+	}
+	rows, err := tx.Query(ctx, `
 		SELECT membership.role FROM organization_membership membership
 		  JOIN app_user person ON person.user_id = membership.user_id
-		 WHERE membership.org_id = $1 AND membership.user_id = $2 AND person.disabled_at IS NULL
-		 FOR SHARE OF membership, person`, org, user).Scan(&roleName)
+		 WHERE membership.org_id = $1 AND membership.user_id = ANY($2::uuid[]) AND person.disabled_at IS NULL
+		 ORDER BY membership.user_id FOR SHARE OF membership, person`, org, users)
 	if err != nil {
-		return window, nil, err
+		return err
 	}
-	role, known := authz.ParseRole(roleName)
-	if !known || !role.Grants(authz.ConversationWrite) {
-		return window, nil, authz.ErrNotAMember
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return err
+		}
+		role, known := authz.ParseRole(name)
+		if !known || !role.Grants(allowed) {
+			return authz.ErrNotAMember
+		}
+		count++
 	}
-	return window, nil, nil
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if count != len(users) {
+		return authz.ErrNotAMember
+	}
+	return nil
 }
 
 func checkAgentToolAccess(ctx context.Context, tx pgx.Tx, org uuid.UUID, execution AgentExecution, id uuid.UUID, access *AgentToolAccess) error {
@@ -134,10 +178,22 @@ func (p *Database) BeginAgentToolRun(
 			INSERT INTO investigation_tool_run
 			    (org_id, tool_run_id, execution_id, integration_id, tool, purpose,
 			     arguments, window_from, window_until, started_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp())`,
 			org, id, execution.ID, nullableUUID(run.IntegrationID), run.Tool, run.Purpose,
-			arguments, run.WindowFrom, run.WindowUntil, run.StartedAt)
-		return err
+			arguments, run.WindowFrom, run.WindowUntil)
+		if err != nil || execution.InvestigationID == uuid.Nil {
+			return err
+		}
+		run.ID = id
+		if err := readToolRunDisplayOrdinal(ctx, tx, org, &run); err != nil {
+			return err
+		}
+		var name string
+		if access != nil {
+			name = access.Integration.Name
+		}
+		return appendInvestigationEvent(ctx, tx, org, execution.InvestigationID,
+			investigation.ToolStartedPayload(run, run.IntegrationID.String(), name))
 	})
 	if err != nil {
 		return uuid.Nil, err
@@ -162,20 +218,37 @@ func (p *Database) CompleteAgentToolRun(
 				return err
 			}
 		}
-		tag, err := tx.Exec(ctx, `
+		err := tx.QueryRow(ctx, `
 			UPDATE investigation_tool_run
 			   SET outcome = $4, truncated = $5, summary = $6, sources = $7, error = $8,
-			       finished_at = $9, observation_text = $10, model_clipped = $11, window_applied = $12,
-			       window_from = CASE WHEN $12 THEN $13 ELSE window_from END,
-			       window_until = CASE WHEN $12 THEN $14 ELSE window_until END
-			 WHERE org_id = $1 AND execution_id = $2 AND tool_run_id = $3 AND outcome IS NULL`,
+			       finished_at = greatest(clock_timestamp(), started_at), observation_text = $9,
+			       model_clipped = $10, window_applied = $11,
+			       window_from = CASE WHEN $11 THEN $12 ELSE window_from END,
+			       window_until = CASE WHEN $11 THEN $13 ELSE window_until END
+			 WHERE org_id = $1 AND execution_id = $2 AND tool_run_id = $3 AND outcome IS NULL
+			 RETURNING started_at, finished_at`,
 			org, execution.ID, run.ID, int16(run.Outcome), run.Truncated, run.Summary, sources, run.Error,
-			run.FinishedAt, run.ObservationText, run.ModelClipped, run.WindowApplied, run.WindowFrom, run.WindowUntil)
-		if err == nil && tag.RowsAffected() == 0 {
+			run.ObservationText, run.ModelClipped, run.WindowApplied, run.WindowFrom, run.WindowUntil).
+			Scan(&run.StartedAt, &run.FinishedAt)
+		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrAgentToolRunUnavailable
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		if execution.InvestigationID == uuid.Nil {
+			return nil
+		}
+		if err := readToolRunDisplayOrdinal(ctx, tx, org, &run); err != nil {
+			return err
+		}
+		return appendInvestigationEvent(ctx, tx, org, execution.InvestigationID, investigation.ToolCompletedPayload(run))
 	})
+}
+
+func readToolRunDisplayOrdinal(ctx context.Context, tx pgx.Tx, org uuid.UUID, run *investigation.ToolRun) error {
+	return tx.QueryRow(ctx, `SELECT `+toolRunDisplayOrdinal+` FROM investigation_tool_run r
+		WHERE r.org_id = $1 AND r.tool_run_id = $2`, org, run.ID).Scan(&run.Ordinal)
 }
 
 func interruptAgentToolRuns(ctx context.Context, tx pgx.Tx, org, executionID uuid.UUID) error {

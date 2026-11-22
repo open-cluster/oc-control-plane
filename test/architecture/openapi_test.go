@@ -501,14 +501,18 @@ func TestOpenAPITypesEveryInvestigationResult(t *testing.T) {
 		if !present || !isBoolean || closed {
 			t.Errorf("%s must exist and reject undeclared fields", name)
 		}
+		evidence := schema.Properties["evidenceRefs"]
+		if evidence.Items == nil || evidence.Items.Ref != "#/components/schemas/EvidenceRef" || slices.Contains(schema.Required, "evidenceRefs") {
+			t.Errorf("%s must declare optional typed evidenceRefs", name)
+		}
 	}
 	for name, fields := range map[string][]string{
 		"Impact":         {"summary", "runRefs"},
 		"ActionProposal": {"title", "rationale", "verification", "runRefs"},
 	} {
 		schema := document.Components.Schemas[name]
-		if len(schema.Properties) != len(fields) || len(schema.Required) != len(fields) {
-			t.Errorf("%s fields = %v, want %v", name, schema.Required, fields)
+		if len(schema.Properties) != len(fields)+1 || len(schema.Required) != len(fields) {
+			t.Errorf("%s must require %v and allow optional evidenceRefs", name, fields)
 			continue
 		}
 		for _, field := range fields {

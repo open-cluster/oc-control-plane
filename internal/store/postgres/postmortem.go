@@ -286,6 +286,15 @@ func (p *Database) Correct(
 					}
 				}
 			}
+			if corrections.ActionItems != nil {
+				for _, action := range *corrections.ActionItems {
+					refs = append(refs, action.EvidenceRefs...)
+					refs, err = appendOrdinalCitations(refs, action.InvestigationID, action.RunRefs)
+					if err != nil {
+						return postmortem.Postmortem{}, err
+					}
+				}
+			}
 			missing, err := evidenceMissing(ctx, tx, organization, uuid.Nil, refs, false)
 			if err != nil {
 				return postmortem.Postmortem{}, err

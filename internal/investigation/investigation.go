@@ -91,8 +91,9 @@ var ConclusionStatuses = []string{
 }
 
 type Impact struct {
-	Summary string `json:"summary"`
-	RunRefs []int  `json:"runRefs"`
+	Summary      string        `json:"summary"`
+	RunRefs      []int         `json:"runRefs"`
+	EvidenceRefs []EvidenceRef `json:"evidenceRefs,omitempty"`
 }
 
 type FindingKind string
@@ -126,17 +127,19 @@ var HypothesisStatuses = []string{
 }
 
 type HypothesisResult struct {
-	Statement string           `json:"statement"`
-	Status    HypothesisStatus `json:"status"`
-	Test      string           `json:"test"`
-	RunRefs   []int            `json:"runRefs"`
+	Statement    string           `json:"statement"`
+	Status       HypothesisStatus `json:"status"`
+	Test         string           `json:"test"`
+	RunRefs      []int            `json:"runRefs"`
+	EvidenceRefs []EvidenceRef    `json:"evidenceRefs,omitempty"`
 }
 
 type ActionProposal struct {
-	Title        string `json:"title"`
-	Rationale    string `json:"rationale"`
-	Verification string `json:"verification"`
-	RunRefs      []int  `json:"runRefs"`
+	Title        string        `json:"title"`
+	Rationale    string        `json:"rationale"`
+	Verification string        `json:"verification"`
+	RunRefs      []int         `json:"runRefs"`
+	EvidenceRefs []EvidenceRef `json:"evidenceRefs,omitempty"`
 }
 
 type LimitationType string
@@ -161,6 +164,7 @@ type Limitation struct {
 	Type             LimitationType `json:"type"`
 	Statement        string         `json:"statement"`
 	RunRefs          []int          `json:"runRefs"`
+	EvidenceRefs     []EvidenceRef  `json:"evidenceRefs,omitempty"`
 	MessageSequences []int64        `json:"messageSequences,omitempty"`
 }
 
@@ -193,7 +197,6 @@ type Investigation struct {
 	WindowUntil    time.Time
 	Status         Status
 	Claimed        bool
-	ClaimToken     uuid.UUID `json:"-"`
 	Conclusion     Conclusion
 	StoppedBy      string
 	Error          string

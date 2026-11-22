@@ -3069,6 +3069,11 @@ components:
             type: integer
             minimum: 1
           uniqueItems: true
+        evidenceRefs:
+          type: array
+          items:
+            $ref: '#/components/schemas/EvidenceRef'
+          uniqueItems: true
     Finding:
       type: object
       additionalProperties: false
@@ -3163,6 +3168,11 @@ components:
             type: integer
             minimum: 1
           uniqueItems: true
+        evidenceRefs:
+          type: array
+          items:
+            $ref: '#/components/schemas/EvidenceRef'
+          uniqueItems: true
     ActionProposal:
       type: object
       additionalProperties: false
@@ -3190,6 +3200,11 @@ components:
             type: integer
             minimum: 1
           uniqueItems: true
+        evidenceRefs:
+          type: array
+          items:
+            $ref: '#/components/schemas/EvidenceRef'
+          uniqueItems: true
     Limitation:
       type: object
       additionalProperties: false
@@ -3215,6 +3230,11 @@ components:
           items:
             type: integer
             minimum: 1
+          uniqueItems: true
+        evidenceRefs:
+          type: array
+          items:
+            $ref: '#/components/schemas/EvidenceRef'
           uniqueItems: true
         messageSequences:
           type: array
@@ -4264,6 +4284,11 @@ components:
           items:
             type: integer
             minimum: 1
+          uniqueItems: true
+        evidenceRefs:
+          type: array
+          items:
+            $ref: '#/components/schemas/EvidenceRef'
           uniqueItems: true
     Postmortem:
       type: object

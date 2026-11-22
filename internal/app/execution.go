@@ -29,16 +29,13 @@ const (
 	executionHeartbeat   = 3 * time.Second
 	executionPoll        = 500 * time.Millisecond
 	executionBudget      = 30 * time.Minute
-	executionResultLimit = 15 * time.Second
 	completedReplyMarker = "opencluster.completed_reply"
 )
 
 // ExecutionProfile supplies current authorized agent configuration for a claim.
-// Investigation result validation remains with the caller that owns the profile.
 type ExecutionProfile struct {
 	ai.Config
-	// Conclusion validates and projects a saved reply without calling the model.
-	Conclusion func(context.Context, string) (investigation.Conclusion, error)
+	Input func(context.Context) (string, error)
 }
 
 type PrepareExecution func(context.Context, uuid.UUID, storage.AgentExecution) (ExecutionProfile, error)
@@ -58,7 +55,7 @@ func runExecutionWorker(ctx context.Context, db *storage.Database, wake <-chan s
 	for ctx.Err() == nil {
 		org, execution, err := db.ClaimNextAgentExecution(ctx, executionLease)
 		if err == nil {
-			err = runClaimedExecution(ctx, db, org, execution, prepare, logger)
+			err = runClaimedExecution(ctx, db, org, execution, prepare)
 			if err == nil || errors.Is(err, storage.ErrAgentLeaseLost) {
 				continue
 			}
@@ -80,7 +77,7 @@ func runExecutionWorker(ctx context.Context, db *storage.Database, wake <-chan s
 	}
 }
 
-func runClaimedExecution(processCtx context.Context, db *storage.Database, org uuid.UUID, execution storage.AgentExecution, prepare PrepareExecution, logger *slog.Logger) error {
+func runClaimedExecution(processCtx context.Context, db *storage.Database, org uuid.UUID, execution storage.AgentExecution, prepare PrepareExecution) error {
 	ctx, revoke := context.WithCancelCause(processCtx)
 	monitored := make(chan struct{})
 	go func() {
@@ -107,10 +104,10 @@ func runClaimedExecution(processCtx context.Context, db *storage.Database, org u
 			return failAgentExecution(ctx, db, org, execution, investigation.Usage{})
 		}
 		if !recovery.Active {
-			if execution.InvestigationID != uuid.Nil && logger != nil {
-				logger.InfoContext(ctx, "agent token usage incomplete after recovery", slog.String("execution_id", execution.ID.String()))
+			if execution.InvestigationID != uuid.Nil {
+				return failAgentExecution(ctx, db, org, execution, checkpointUsage(checkpoint))
 			}
-			return finishAgentReply(ctx, db, org, execution, checkpoint, prepare, nil, investigation.Usage{})
+			return finishAgentReply(ctx, db, org, execution, checkpoint, investigation.Usage{})
 		}
 	}
 
@@ -124,7 +121,7 @@ func runClaimedExecution(processCtx context.Context, db *storage.Database, org u
 	}
 
 	profile, err := prepare(runCtx, org, execution)
-	if err != nil || execution.InvestigationID != uuid.Nil && profile.Conclusion == nil {
+	if err != nil {
 		if ctx.Err() != nil {
 			return context.Cause(ctx)
 		}
@@ -135,7 +132,32 @@ func runClaimedExecution(processCtx context.Context, db *storage.Database, org u
 	profile.StateSaver = lifecycle
 	profile.Hooks = append(slices.Clone(profile.Hooks), lifecycle)
 
-	runtime, err := ai.NewAgent(profile.Config, checkpoint)
+	var runtime *agent.UnifiedAgent
+	if execution.InvestigationID != uuid.Nil {
+		lifecycle.finish = func(ctx context.Context, conclusion *investigation.Conclusion, state *agent.AgentState) error {
+			err := db.FinishAgentExecution(ctx, org, execution, storage.AgentExecutionCompleted,
+				conclusion.Summary, conclusion, checkpointUsage(state), state)
+			if err != nil {
+				revoke(err)
+			}
+			return err
+		}
+		addConclusionTool(&profile, func(ctx context.Context, conclusion investigation.Conclusion) error {
+			err := db.ValidateAgentConclusionEvidence(ctx, org, execution, conclusion)
+			switch {
+			case err == nil:
+				lifecycle.conclusion.Store(&conclusion)
+				runtime.MarkHandedOff()
+				return nil
+			case errors.Is(err, storage.ErrAgentEvidenceUnavailable):
+				return err
+			default:
+				revoke(err)
+				return errors.New("could not validate the Conclusion's evidence")
+			}
+		})
+	}
+	runtime, err = ai.NewAgent(profile.Config, checkpoint)
 	if err != nil {
 		return failAgentExecution(ctx, db, org, execution, investigation.Usage{})
 	}
@@ -147,7 +169,13 @@ func runClaimedExecution(processCtx context.Context, db *storage.Database, org u
 		}
 		stream, err = runtime.ResumeReplyStream(runCtx)
 	} else {
-		input, inputErr := db.AgentExecutionInput(runCtx, org, execution)
+		loadInput := profile.Input
+		if loadInput == nil {
+			loadInput = func(ctx context.Context) (string, error) {
+				return db.AgentExecutionInput(ctx, org, execution)
+			}
+		}
+		input, inputErr := loadInput(runCtx)
 		if inputErr != nil {
 			return inputErr
 		}
@@ -173,6 +201,12 @@ func runClaimedExecution(processCtx context.Context, db *storage.Database, org u
 	if runErr != nil && !errors.Is(runErr, context.DeadlineExceeded) {
 		return runErr
 	}
+	if execution.InvestigationID != uuid.Nil {
+		if lifecycle.completed.Load() {
+			return nil
+		}
+		return failAgentExecution(ctx, db, org, execution, outcome.usage)
+	}
 	checkpoint, writer, err = saver.Restore(ctx)
 	if err != nil {
 		if errors.Is(err, storage.ErrAgentCheckpoint) {
@@ -189,10 +223,7 @@ func runClaimedExecution(processCtx context.Context, db *storage.Database, org u
 	if runErr == nil && !outcome.completed {
 		return failAgentExecution(ctx, db, org, execution, outcome.usage)
 	}
-	if recovering && execution.InvestigationID != uuid.Nil && logger != nil {
-		logger.InfoContext(ctx, "agent token usage incomplete after recovery", slog.String("execution_id", execution.ID.String()))
-	}
-	return finishAgentReply(ctx, db, org, execution, checkpoint, prepare, profile.Conclusion, outcome.usage)
+	return finishAgentReply(ctx, db, org, execution, checkpoint, outcome.usage)
 }
 
 func renewExecution(ctx context.Context, db *storage.Database, org uuid.UUID, execution storage.AgentExecution, revoke context.CancelCauseFunc) {
@@ -245,8 +276,7 @@ func drainExecution(ctx context.Context, stream <-chan event.Event) (executionOu
 }
 
 func finishAgentReply(ctx context.Context, db *storage.Database, org uuid.UUID, execution storage.AgentExecution,
-	checkpoint *agent.AgentState, prepare PrepareExecution,
-	validate func(context.Context, string) (investigation.Conclusion, error), usage investigation.Usage,
+	checkpoint *agent.AgentState, usage investigation.Usage,
 ) error {
 	if checkpoint.MiddlewareState[completedReplyMarker] != checkpoint.ReplyID {
 		return failAgentExecution(ctx, db, org, execution, usage)
@@ -256,34 +286,7 @@ func finishAgentReply(ctx context.Context, db *storage.Database, org uuid.UUID, 
 		execution.ConversationID != uuid.Nil && utf8.RuneCountInString(reply) > conversation.MaxMessageTextLength {
 		return failAgentExecution(ctx, db, org, execution, usage)
 	}
-	var conclusion *investigation.Conclusion
-	if execution.InvestigationID != uuid.Nil {
-		resultCtx, cancel := context.WithTimeout(ctx, executionResultLimit)
-		defer cancel()
-		if validate == nil {
-			profile, err := prepare(resultCtx, org, execution)
-			if ctx.Err() != nil {
-				return context.Cause(ctx)
-			}
-			if err != nil || profile.Conclusion == nil || resultCtx.Err() != nil {
-				return failAgentExecution(ctx, db, org, execution, usage)
-			}
-			validate = profile.Conclusion
-		}
-		validated, err := validate(resultCtx, reply)
-		if ctx.Err() != nil {
-			return context.Cause(ctx)
-		}
-		if err != nil || resultCtx.Err() != nil {
-			return failAgentExecution(ctx, db, org, execution, usage)
-		}
-		conclusion = &validated
-	}
-	err := db.FinishAgentExecution(ctx, org, execution, storage.AgentExecutionCompleted, reply, conclusion, usage)
-	if errors.Is(err, storage.ErrAgentEvidenceUnavailable) {
-		return failAgentExecution(ctx, db, org, execution, usage)
-	}
-	return err
+	return db.FinishAgentExecution(ctx, org, execution, storage.AgentExecutionCompleted, reply, nil, usage)
 }
 
 func failAgentExecution(ctx context.Context, db *storage.Database, org uuid.UUID, execution storage.AgentExecution,
@@ -319,12 +322,14 @@ func finalReplyContent(state *agent.AgentState) string {
 type executionReply struct {
 	loop.HookRunner
 	*storage.AgentStateSaver
-	completed atomic.Bool
-	done      chan struct{}
+	completed  atomic.Bool
+	conclusion atomic.Pointer[investigation.Conclusion]
+	finish     func(context.Context, *investigation.Conclusion, *agent.AgentState) error
+	done       chan struct{}
 }
 
 func (r *executionReply) OnStateTransition(from, to protocol.LoopState, _ int) {
-	if from == protocol.StateInspect && to == protocol.StateExit {
+	if r.finish == nil && from == protocol.StateInspect && to == protocol.StateExit {
 		r.completed.Store(true)
 	}
 }
@@ -332,6 +337,18 @@ func (r *executionReply) OnStateTransition(from, to protocol.LoopState, _ int) {
 func (r *executionReply) OnLoopEnd(error) { close(r.done) }
 
 func (r *executionReply) SaveState(ctx context.Context, session string, state *agent.AgentState) error {
+	if r.finish != nil && r.completed.Load() {
+		return nil
+	}
+	// AgentScope records a Tool result at the batch boundary before checking handoff.
+	// Commit that native checkpoint with the report and fence all later writes.
+	if conclusion := r.conclusion.Swap(nil); conclusion != nil {
+		if err := r.finish(ctx, conclusion, state); err != nil {
+			return err
+		}
+		r.completed.Store(true)
+		return nil
+	}
 	// The native inactive flag also covers errors and forced budget summaries.
 	if state.ReplyRecovery != nil && !state.ReplyRecovery.Active && r.completed.Load() {
 		if state.MiddlewareState == nil {
@@ -340,4 +357,18 @@ func (r *executionReply) SaveState(ctx context.Context, session string, state *a
 		state.MiddlewareState[completedReplyMarker] = state.ReplyID
 	}
 	return r.AgentStateSaver.SaveState(ctx, session, state)
+}
+
+func checkpointUsage(state *agent.AgentState) investigation.Usage {
+	if state != nil {
+		for _, msg := range slices.Backward(state.Context) {
+			if msg != nil && msg.ID == state.ReplyID && msg.Role == message.RoleAssistant && msg.Usage != nil {
+				return investigation.Usage{
+					InputTokens:  int64(msg.Usage.InputTokens),
+					OutputTokens: int64(msg.Usage.OutputTokens),
+				}
+			}
+		}
+	}
+	return investigation.Usage{}
 }

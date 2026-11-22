@@ -15,7 +15,7 @@ func TestCompletedInvestigationReplaysOneCanonicalEnding(t *testing.T) {
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = address
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "openrouter", "z-ai/glm-4.7", "scripted-model-key"
-	}, app.Options{Completer: concludingModel{}})
+	}, app.Options{Model: concludingModel{}})
 	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
 	_, turn := plane.openConversation(t, "terminal replay", "what happened?")
 	final := plane.awaitInvestigation(t, turn)

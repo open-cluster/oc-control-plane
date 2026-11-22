@@ -171,8 +171,8 @@ func waitingTurnsForTest(
 		return 0, err
 	}
 	var waiting int
-	err = pool.QueryRow(ctx, `SELECT count(*) FROM investigation
-		WHERE org_id = $1 AND status = 1 AND lease_worker = ''`, organization).Scan(&waiting)
+	err = pool.QueryRow(ctx, `SELECT count(*) FROM agent_execution
+		WHERE org_id = $1 AND investigation_id IS NOT NULL AND status = 'queued'`, organization).Scan(&waiting)
 	return waiting, err
 }
 
@@ -220,6 +220,38 @@ func organization(t *testing.T, id string) uuid.UUID {
 func ownerOf(t *testing.T, organization uuid.UUID) authz.Principal {
 	t.Helper()
 	return memberOf(t, organization, authz.Admin)
+}
+
+func executionOwner(t *testing.T, db *storage.Database, org uuid.UUID) authz.Principal {
+	t.Helper()
+	principal := ownerOf(t, org)
+	pool, err := poolForTest(db, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), `WITH person AS (
+		INSERT INTO app_user (user_id, issuer, subject, email)
+		VALUES ($2, 'execution-fixture', $3, 'operator@example.test') RETURNING user_id
+	)
+	INSERT INTO organization_membership (org_id, user_id, role)
+	SELECT $1, user_id, 'admin' FROM person`, org, principal.UserID(), principal.UserID().String()); err != nil {
+		t.Fatal(err)
+	}
+	return principal
+}
+
+func investigationExecutionID(t *testing.T, db *storage.Database, org, investigationID uuid.UUID) uuid.UUID {
+	t.Helper()
+	pool, err := poolForTest(db, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var id uuid.UUID
+	if err := pool.QueryRow(t.Context(), `SELECT execution_id FROM agent_execution WHERE org_id = $1 AND investigation_id = $2`,
+		org, investigationID).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 func memberOf(
@@ -302,31 +334,6 @@ func runProbe(t *testing.T, required string) (string, error) {
 	command.Env = append(os.Environ(), runtimeProbe+"=1", requireContainers+"="+required)
 	output, err := command.CombinedOutput()
 	return string(output), err
-}
-
-func claimToken(t *testing.T, database *storage.Database, org uuid.UUID, id uuid.UUID) uuid.UUID {
-	t.Helper()
-	pool, err := poolForTest(database, org)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.Background()
-	if _, err = pool.Exec(ctx, `UPDATE investigation
-		SET lease_worker = 'fixture', lease_token = gen_random_uuid(), lease_expires_at = now() + interval '15 minutes'
-		WHERE org_id = $1 AND investigation_id = $2 AND status = 1 AND lease_worker = ''`, org, id); err != nil {
-		t.Fatal(err)
-	}
-	var value *uuid.UUID
-	if err = pool.QueryRow(ctx, `SELECT lease_token FROM investigation WHERE org_id = $1 AND investigation_id = $2`, org, id).Scan(&value); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return uuid.Nil
-		}
-		t.Fatal(err)
-	}
-	if value == nil {
-		return uuid.Nil
-	}
-	return *value
 }
 
 type slackMessageFixture struct {

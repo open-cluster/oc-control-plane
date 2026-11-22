@@ -33,7 +33,7 @@ type slackEventPlane struct {
 func startSlackEventPlane(t *testing.T, vendor *vendorFake) *slackEventPlane {
 	t.Helper()
 	return startSlackEventPlaneWithOptions(t, vendor,
-		app.Options{Agent: &blockingAgentMain{}})
+		app.Options{Model: &blockingModel{}})
 }
 
 func startSlackEventPlaneWithOptions(

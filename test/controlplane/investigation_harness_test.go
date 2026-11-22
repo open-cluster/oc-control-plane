@@ -7,34 +7,60 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
+
 	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
-	modelagent "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 )
 
-type concludingModel struct {
-	prompts chan<- modelagent.Prompt
+type bufferedModel struct{}
+
+func (bufferedModel) ChatStream(context.Context, []*message.Msg, ...model.CallOption) (<-chan model.ChatResponse, error) {
+	return nil, model.ErrStreamNotSupported
 }
 
-func (m concludingModel) Complete(_ context.Context, prompt modelagent.Prompt) (modelagent.Completion, error) {
+func (bufferedModel) CountTokens([]*message.Msg, []model.ToolSchema) int { return 1 }
+
+type concludingModel struct {
+	bufferedModel
+	prompts chan<- []*message.Msg
+}
+
+func (m concludingModel) Chat(_ context.Context, prompt []*message.Msg, _ ...model.CallOption) (*model.ChatResponse, error) {
 	if m.prompts != nil {
 		select {
 		case m.prompts <- prompt:
 		default:
 		}
 	}
-	document, _ := json.Marshal(map[string]any{
-		"status": "answer_only", "summary": "Investigation completed.",
-		"impact":   map[string]any{"summary": "Impact is not established.", "run_refs": []int{}},
-		"findings": []any{}, "hypotheses": []any{}, "actions": []any{}, "limitations": []any{},
+	return reportResponse(investigation.Conclusion{
+		Status:  investigation.AnswerOnly,
+		Summary: "Investigation completed.",
+		Impact:  investigation.Impact{Summary: "Impact is not established."},
 	})
-	return modelagent.Completion{Stop: modelagent.StopToolUse, ToolCalls: []modelagent.CompletionCall{{
-		ID: "conclude", Name: modelagent.ConcludeToolName, Arguments: document,
-	}}}, nil
 }
 
-func agentPlane(t *testing.T, agent investigation.Agent) (*integrationPlane, *vendorFake) {
+func reportResponse(conclusion investigation.Conclusion) (*model.ChatResponse, error) {
+	document, err := json.Marshal(conclusion)
+	if err != nil {
+		return nil, err
+	}
+	return toolResponse("report", "conclude", string(document)), nil
+}
+
+func toolResponse(id, name, input string) *model.ChatResponse {
+	return &model.ChatResponse{
+		IsLast:     true,
+		StopReason: model.StopReasonToolCalls,
+		Content: []message.ContentBlock{message.ToolCallBlock{
+			Type: "tool_call", ID: id, Name: name, Input: input,
+		}},
+	}
+}
+
+func agentPlane(t *testing.T, agent model.ChatModel) (*integrationPlane, *vendorFake) {
 	t.Helper()
 	vendor := newVendorFake(t, "xoxb-good-token-1234")
 	apiAddress := freeAddress(t)
@@ -44,7 +70,7 @@ func agentPlane(t *testing.T, agent investigation.Agent) (*integrationPlane, *ve
 		cfg.HTTPListenAddress = apiAddress
 		cfg.InvestigationWorkers = 1
 		cfg.MaxPendingInvestigations = 1
-	}, app.Options{Agent: agent, SlackAPIURL: vendor.URL})
+	}, app.Options{Model: agent, SlackAPIURL: vendor.URL})
 	return &integrationPlane{controlPlane: plane, api: apiAddress, intake: apiAddress, dsn: dsn}, vendor
 }
 

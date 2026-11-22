@@ -107,7 +107,7 @@ func TestIncidentListingAppliesDocumentedCapabilities(t *testing.T) {
 }
 
 func TestConversationAndInvestigationListingsApplyDocumentedCapabilities(t *testing.T) {
-	plane := startIntegrationPlaneWithOptions(t, app.Options{Agent: &blockingAgentMain{}})
+	plane := startIntegrationPlaneWithOptions(t, app.Options{Model: &blockingModel{}})
 	firstIncident := plane.openIncident(t, "Checkout unavailable", "checkout-unavailable")
 	secondIncident := plane.openIncident(t, "Payments unavailable", "payments-unavailable")
 

@@ -1521,6 +1521,7 @@ components:
       properties:
         summary: { type: string, maxLength: 4096 }
         runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+        evidenceRefs: { type: array, items: { $ref: "#/components/schemas/EvidenceRef" }, uniqueItems: true }
     Finding:
       type: object
       additionalProperties: false
@@ -1564,6 +1565,7 @@ components:
         status: { type: string, enum: [supported, ruled_out, unresolved] }
         test: { type: string, minLength: 1, maxLength: 4096 }
         runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+        evidenceRefs: { type: array, items: { $ref: "#/components/schemas/EvidenceRef" }, uniqueItems: true }
     ActionProposal:
       type: object
       additionalProperties: false
@@ -1573,6 +1575,7 @@ components:
         rationale: { type: string, minLength: 1, maxLength: 512 }
         verification: { type: string, minLength: 1, maxLength: 512 }
         runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+        evidenceRefs: { type: array, items: { $ref: "#/components/schemas/EvidenceRef" }, uniqueItems: true }
     Limitation:
       type: object
       additionalProperties: false
@@ -1581,6 +1584,7 @@ components:
         type: { type: string, enum: [missing_telemetry, missing_access, contradiction, unresolved_assumption, essential_human_input] }
         statement: { type: string, minLength: 1, maxLength: 4096 }
         runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+        evidenceRefs: { type: array, items: { $ref: "#/components/schemas/EvidenceRef" }, uniqueItems: true }
         messageSequences:
           type: array
           minItems: 1
@@ -1946,6 +1950,7 @@ components:
         verification: { type: string, minLength: 1, maxLength: 8192 }
         investigationId: { $ref: "#/components/schemas/UUID" }
         runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+        evidenceRefs: { type: array, items: { $ref: "#/components/schemas/EvidenceRef" }, uniqueItems: true }
     Postmortem:
       type: object
       additionalProperties: false

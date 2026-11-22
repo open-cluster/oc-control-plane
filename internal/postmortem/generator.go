@@ -77,7 +77,7 @@ func DraftFrom(input GenerationInput) Postmortem {
 		if conclusion.Summary != "" {
 			draft.ExecutiveSummary = conclusion.Summary
 		}
-		if draft.Impact == NeedsHumanInput && len(conclusion.Impact.RunRefs) > 0 {
+		if draft.Impact == NeedsHumanInput && len(conclusion.Impact.RunRefs)+len(conclusion.Impact.EvidenceRefs) > 0 {
 			draft.Impact = valueOr(conclusion.Impact.Summary, NeedsHumanInput)
 		}
 		for _, finding := range conclusion.Findings {
@@ -99,7 +99,8 @@ func DraftFrom(input GenerationInput) Postmortem {
 				Deadline:        NeedsHumanInput,
 				Verification:    action.Verification,
 				InvestigationID: result.InvestigationID.String(),
-				RunRefs:         append([]int(nil), action.RunRefs...),
+				RunRefs:         append([]int{}, action.RunRefs...),
+				EvidenceRefs:    append([]investigation.EvidenceRef(nil), action.EvidenceRefs...),
 			})
 		}
 		for _, limitation := range conclusion.Limitations {

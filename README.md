@@ -101,8 +101,11 @@ or Slack.
 PostgreSQL is the durable source of truth. Customer-owned state is explicitly scoped to an
 Organization, and operational mutations are audited.
 
-Investigations use Anthropic or OpenRouter through native Tool calling. OpenCluster owns
-Tool authorization, execution budgets, evidence recording, and conclusion validation.
+Investigations run on AgentScope. It handles model calls, Tool scheduling, context
+management, and reply recovery. PostgreSQL stores checkpoints and fences Tool authorization,
+evidence recording, and report acceptance. Web and Slack Investigation turns use the same runtime.
+When upgrading from the previous Investigation engine, stop the old control-plane instances
+before starting this version so each newly admitted Investigation gets a native execution.
 
 Findings require citations to successful reads. Failed or skipped reads can explain
 limitations but cannot establish a Finding. Startup activity describes the initial phase,

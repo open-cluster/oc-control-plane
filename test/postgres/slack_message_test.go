@@ -45,7 +45,7 @@ func TestSlackAcceptanceBeforeIdentityPersistenceIsAtLeastOnce(t *testing.T) {
 				_, _ = io.WriteString(w, `{"ok":true}`)
 			}))
 			ctx := context.Background()
-			if err := database.ConcludeInvestigation(ctx, org, id, claimToken(t, database, org, id), conclusionSaying("durable answer"), "", investigation.Usage{}); err != nil {
+			if err := seedInvestigationConclusion(ctx, database, org, id, conclusionSaying("durable answer")); err != nil {
 				t.Fatal(err)
 			}
 			pool, err := poolForTest(database, org)
@@ -165,7 +165,7 @@ func TestSlackRetriesTerminalCloseAfterCursorAdvanced(t *testing.T) {
 		_, _ = io.WriteString(w, `{"ok":true,"ts":"1700000100.1"}`)
 	}))
 	ctx := context.Background()
-	if err := database.ConcludeInvestigation(ctx, org, id, claimToken(t, database, org, id), conclusionSaying("durable answer"), "", investigation.Usage{}); err != nil {
+	if err := seedInvestigationConclusion(ctx, database, org, id, conclusionSaying("durable answer")); err != nil {
 		t.Fatal(err)
 	}
 	runSlackWorker(t, worker)
@@ -224,13 +224,12 @@ func TestSlackNonterminalPassesReleaseRecoveryLease(t *testing.T) {
 				_, _ = io.WriteString(w, `{"ok":true,"ts":"1700000100.1"}`)
 			}))
 			ctx := context.Background()
-			token := claimToken(t, database, org, id)
 			if initial != "empty" {
 				event := investigation.Event{Type: investigation.EventStarted, Payload: map[string]any{}}
 				if initial == "progress" {
 					event = investigation.Event{Type: investigation.EventToolCompleted, Payload: map[string]any{"summary": "first batch"}}
 				}
-				if err := database.AppendEvent(ctx, org, id, token, event); err != nil {
+				if err := seedInvestigationEvent(ctx, database, org, id, event); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -259,7 +258,7 @@ func TestSlackNonterminalPassesReleaseRecoveryLease(t *testing.T) {
 					time.Sleep(20 * time.Millisecond)
 				}
 			}
-			if err := database.AppendEvent(ctx, org, id, token, investigation.Event{Type: investigation.EventToolCompleted, Payload: map[string]any{"summary": "next batch"}}); err != nil {
+			if err := seedInvestigationEvent(ctx, database, org, id, investigation.Event{Type: investigation.EventToolCompleted, Payload: map[string]any{"summary": "next batch"}}); err != nil {
 				t.Fatal(err)
 			}
 			awaitSlackText(t, sent, "next batch")
@@ -296,7 +295,7 @@ func TestSlackMessageCapacityDeferralDoesNotConsumeRetries(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, _, claimed, err := database.ClaimInvestigation(ctx, aClaim("investigation-worker")); err != nil || !claimed {
+	if _, _, claimed, err := claimFixtureInvestigation(ctx, database); err != nil || !claimed {
 		t.Fatalf("releasing the pending slot: %v, %v", claimed, err)
 	}
 	if worked, err := worker.ProcessOne(ctx); err != nil || !worked {
@@ -666,8 +665,7 @@ func TestSlackMessageWorkerQueuesFollowupUntilTheCurrentTurnEnds(t *testing.T) {
 		t.Fatalf("follow-up did not wait for the current turn: %+v, %v", detail, err)
 	}
 	first := detail.Turns[0].InvestigationID
-	if err := database.ConcludeInvestigation(ctx, organization, first, claimToken(t, database, organization, first),
-		conclusionSaying("first answer"), "", investigation.Usage{}); err != nil {
+	if err := seedInvestigationConclusion(ctx, database, organization, first, conclusionSaying("first answer")); err != nil {
 		t.Fatal(err)
 	}
 	if drained, err := database.OpenQueuedConversationTurn(ctx, worker.WindowLead, 0); err != nil || !drained {
@@ -697,7 +695,7 @@ func TestSlackAttemptTimeoutPreservesRetryBudget(t *testing.T) {
 				}
 			}))
 			ctx := context.Background()
-			if err := database.ConcludeInvestigation(ctx, org, id, claimToken(t, database, org, id), conclusionSaying("durable answer"), "", investigation.Usage{}); err != nil {
+			if err := seedInvestigationConclusion(ctx, database, org, id, conclusionSaying("durable answer")); err != nil {
 				t.Fatal(err)
 			}
 			pool, err := poolForTest(database, org)

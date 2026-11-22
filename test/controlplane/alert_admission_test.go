@@ -13,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-cluster/oc-control-plane/internal/app"
-	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 
 	"github.com/open-cluster/oc-control-plane/internal/config"
@@ -60,7 +59,7 @@ func TestAcceptedAlertWithoutAgentIsNotBackfilledAfterRestart(t *testing.T) {
 	restarted := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.DatabaseDSN = plane.dsn
 		cfg.MaxPendingInvestigations = 1
-	}, app.Options{Agent: &blockingAgentMain{}})
+	}, app.Options{Model: &blockingModel{}})
 	replay := &intakePlane{
 		controlPlane: restarted,
 		address:      listeningAddress(t, restarted, ""),
@@ -231,12 +230,14 @@ func TestAcceptedAlertInvestigationRemainsClaimableAfterApplicationRestart(t *te
 		t.Fatal(err)
 	}
 	defer database.Close()
-	org, claimed, found, err := database.ClaimInvestigation(context.Background(),
-		investigation.Claim{Worker: "restart-runner", LeaseFor: time.Minute})
-	if err != nil || !found || org.String() != intakeOrganization {
-		t.Fatalf("claim after restart: org=%s found=%t err=%v", org, found, err)
+	org, claimed, err := database.ClaimNextAgentExecution(context.Background(), time.Minute)
+	if err != nil || org.String() != intakeOrganization {
+		t.Fatalf("claim after restart: org=%s err=%v", org, err)
 	}
-	if _, err := database.Investigation(context.Background(), org, claimed.ID); err != nil {
+	if claimed.InvestigationID == uuid.Nil || claimed.ConversationID != uuid.Nil {
+		t.Fatalf("automatic execution owner: %+v", claimed)
+	}
+	if _, err := database.Investigation(context.Background(), org, claimed.InvestigationID); err != nil {
 		t.Fatalf("reading Investigation after restart: %v", err)
 	}
 	if _, found, err := database.ClaimSlackMessageWork(context.Background(), "restart-worker", time.Minute); err != nil || found {
@@ -246,8 +247,8 @@ func TestAcceptedAlertInvestigationRemainsClaimableAfterApplicationRestart(t *te
 
 func startAlertAdmissionIntake(t *testing.T, maximum int) *intakePlane {
 	t.Helper()
-	agent := &blockingAgentMain{started: make(chan uuid.UUID, 1)}
-	plane := startAlertAdmissionIntakeWithOptions(t, maximum, app.Options{Agent: agent})
+	agent := &blockingModel{started: make(chan uuid.UUID, 1)}
+	plane := startAlertAdmissionIntakeWithOptions(t, maximum, app.Options{Model: agent})
 
 	ctx := context.Background()
 	connection, err := pgx.Connect(ctx, plane.dsn)
@@ -255,10 +256,14 @@ func startAlertAdmissionIntake(t *testing.T, maximum int) *intakePlane {
 		t.Fatal(err)
 	}
 	if _, err = connection.Exec(ctx, `
-		INSERT INTO investigation
-			(investigation_id, org_id, subject, window_from, window_until)
-		VALUES (gen_random_uuid(), $1, 'capacity worker blocker',
-		        now() - interval '1 minute', now())`, intakeOrganization); err != nil {
+		WITH opened AS (
+			INSERT INTO investigation (investigation_id, org_id, subject, window_from, window_until, requested_by)
+			SELECT gen_random_uuid(), org_id, 'capacity worker blocker', now() - interval '1 minute', now(), user_id
+			FROM organization_membership WHERE org_id = $1 AND role = 'admin' LIMIT 1
+			RETURNING org_id, investigation_id
+		)
+		INSERT INTO agent_execution (org_id, execution_id, investigation_id)
+		SELECT org_id, gen_random_uuid(), investigation_id FROM opened`, intakeOrganization); err != nil {
 		_ = connection.Close(ctx)
 		t.Fatal(err)
 	}
@@ -279,7 +284,7 @@ func startAlertAdmissionIntakeWithOptions(
 	var dsn string
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.MaxPendingInvestigations = maximum
-		if options.Agent != nil {
+		if options.Model != nil {
 			cfg.InvestigationWorkers = 1
 		}
 		dsn = cfg.DatabaseDSN

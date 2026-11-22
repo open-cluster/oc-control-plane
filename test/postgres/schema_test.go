@@ -104,6 +104,7 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 		"0011_conversation_checkpoint",
 		"0012_agent_execution_claim",
 		"0013_tool_run_ownership",
+		"0014_investigation_requester",
 	}) {
 		t.Fatalf("applied migrations = %v", applied)
 	}
@@ -416,6 +417,7 @@ func TestCleanupMigrationValidatesAndConvertsPostmortemReviewers(t *testing.T) {
 		"0011_conversation_checkpoint",
 		"0012_agent_execution_claim",
 		"0013_tool_run_ownership",
+		"0014_investigation_requester",
 	}) {
 		t.Fatalf("repaired reviewer migration applied %v: %v", applied, err)
 	}
@@ -600,6 +602,7 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 		"0011_conversation_checkpoint",
 		"0012_agent_execution_claim",
 		"0013_tool_run_ownership",
+		"0014_investigation_requester",
 	}) {
 		t.Fatalf("fresh migration applied %v, want every schema migration", applied)
 	}

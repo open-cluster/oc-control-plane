@@ -30,7 +30,6 @@ type Handlers struct {
 	Identity                identity.Handlers
 	Catalog                 integrations.Catalog
 	WebhookTypes            map[integrations.Provider]bool
-	Investigations          *investigation.Runner
 	AgentAvailable          bool
 	StreamContext           context.Context
 	InvestigationWindowLead time.Duration
@@ -116,13 +115,13 @@ func (h Handlers) Routes() []authz.Route {
 		Logger:  h.Logger,
 	}.Routes()...)
 	routes = append(routes, investigation.Handlers{
-		Resolve:       h.Identity.Resolve,
-		Store:         h.Database,
-		Runner:        h.Investigations,
-		StreamContext: h.StreamContext,
-		Logger:        h.Logger,
-		WindowLead:    h.InvestigationWindowLead,
-		MaxPending:    h.MaxWaitingTurns,
+		Resolve:        h.Identity.Resolve,
+		Store:          h.Database,
+		AgentAvailable: h.AgentAvailable,
+		StreamContext:  h.StreamContext,
+		Logger:         h.Logger,
+		WindowLead:     h.InvestigationWindowLead,
+		MaxPending:     h.MaxWaitingTurns,
 	}.Routes()...)
 	routes = append(routes, conversation.Handlers{
 		Store:           h.Database,

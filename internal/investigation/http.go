@@ -25,13 +25,13 @@ const (
 )
 
 type Handlers struct {
-	Resolve       func(*http.Request) (authz.Principal, error)
-	Store         HTTPStore
-	Runner        *Runner
-	Logger        *slog.Logger
-	MaxPending    int
-	StreamContext context.Context
-	WindowLead    time.Duration
+	Resolve        func(*http.Request) (authz.Principal, error)
+	Store          HTTPStore
+	AgentAvailable bool
+	Logger         *slog.Logger
+	MaxPending     int
+	StreamContext  context.Context
+	WindowLead     time.Duration
 }
 
 type HTTPStore interface {
@@ -96,7 +96,7 @@ type openRequest struct {
 func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
 	organization := h.organization(request)
-	if h.Runner == nil || h.Runner.Agent == nil {
+	if !h.AgentAvailable {
 		writeJSON(writer, http.StatusServiceUnavailable, errorView{
 			Error: "this deployment has no model provider configured, so it cannot investigate"})
 		return
@@ -264,9 +264,6 @@ func (h Handlers) cancel(writer http.ResponseWriter, request *http.Request) {
 	if err != nil {
 		h.fail(writer, request, err)
 		return
-	}
-	if h.Runner != nil {
-		h.Runner.Cancel(id)
 	}
 	writeJSON(writer, http.StatusOK, investigationViewOf(ended))
 }

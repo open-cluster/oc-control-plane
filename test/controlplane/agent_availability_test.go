@@ -8,7 +8,7 @@ import (
 )
 
 func TestInjectedAgentAllowsConversationWithoutConfiguredProvider(t *testing.T) {
-	plane := startIntegrationPlaneWithOptions(t, app.Options{Agent: &blockingAgentMain{}})
+	plane := startIntegrationPlaneWithOptions(t, app.Options{Model: &blockingModel{}})
 	status, body := plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/conversations",
 		map[string]any{"subject": "injected Agent", "message": "investigate checkout"})
 	if status != http.StatusCreated {

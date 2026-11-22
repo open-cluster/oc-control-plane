@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
-	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 func TestEvidenceReferenceSchemaRequiresCompleteOrdinalPair(t *testing.T) {
@@ -244,15 +243,6 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 		VALUES ($1, $2, 1, 2, 'prior restricted summary', $3, now()-interval '1 hour', now())`,
 		surfaceOrg, webChat, ids[2]); err != nil {
 		t.Fatal(err)
-	}
-	store, err := storage.OpenDatabase(ctx, plane.dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	brief, err := store.ConversationBrief(ctx, uuid.MustParse(surfaceOrg), webChat, current, 1)
-	if err != nil || len(brief.Findings) != 0 || len(brief.Recent) != 0 {
-		t.Fatalf("a later web turn received restricted history: %+v, %v", brief, err)
 	}
 	for _, suffix := range []string{"", "/turns"} {
 		path := plane.base(surfaceOrg) + "/conversations/" + webChat.String() + suffix

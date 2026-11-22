@@ -42,12 +42,13 @@ type CitedStatement struct {
 }
 
 type ActionItem struct {
-	Title           string `json:"title"`
-	Owner           string `json:"owner"`
-	Deadline        string `json:"deadline"`
-	Verification    string `json:"verification"`
-	InvestigationID string `json:"investigationId,omitempty"`
-	RunRefs         []int  `json:"runRefs"`
+	Title           string                      `json:"title"`
+	Owner           string                      `json:"owner"`
+	Deadline        string                      `json:"deadline"`
+	Verification    string                      `json:"verification"`
+	InvestigationID string                      `json:"investigationId,omitempty"`
+	RunRefs         []int                       `json:"runRefs"`
+	EvidenceRefs    []investigation.EvidenceRef `json:"evidenceRefs,omitempty"`
 }
 
 type Postmortem struct {

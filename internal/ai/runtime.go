@@ -22,6 +22,7 @@ type Config struct {
 	Context         agent.ContextConfig
 	Permissions     *permission.Context
 	ToolConcurrency int
+	ExclusiveTools  []string
 	Hooks           []loop.Hook
 }
 
@@ -59,6 +60,7 @@ func NewAgent(config Config, checkpoint *agent.AgentState) (*agent.UnifiedAgent,
 		agent.WithState(checkpoint),
 		agent.WithContextConfig(&config.Context),
 		agent.WithToolConcurrencyLimit(config.ToolConcurrency),
+		agent.WithExclusiveTools(config.ExclusiveTools...),
 		// Legacy middleware disables native provider streaming.
 		agent.WithLoopHooks(config.Hooks...),
 	}

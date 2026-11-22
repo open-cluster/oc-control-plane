@@ -22,9 +22,9 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
-	modelagent "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 	intake "github.com/open-cluster/oc-control-plane/internal/webhooks"
 )
 
@@ -55,7 +55,7 @@ type alertmanagerGate struct {
 	secret       string
 	recorder     *intakeRecorder
 	alertmanager string
-	prompts      <-chan modelagent.Prompt
+	prompts      <-chan []*message.Msg
 }
 
 func startAlertmanagerGate(t *testing.T) *alertmanagerGate {
@@ -64,7 +64,7 @@ func startAlertmanagerGate(t *testing.T) *alertmanagerGate {
 	apiAddress := freeAddress(t)
 	intakeAddress := apiAddress
 	var dsn string
-	prompts := make(chan modelagent.Prompt, 1)
+	prompts := make(chan []*message.Msg, 1)
 	plane := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = apiAddress
 		cfg.HTTPListenAddress = intakeAddress
@@ -72,7 +72,7 @@ func startAlertmanagerGate(t *testing.T) *alertmanagerGate {
 		cfg.ModelName = "z-ai/glm-4.7"
 		cfg.ModelAPIKey = "scripted-model-key"
 		dsn = cfg.DatabaseDSN
-	}, app.Options{Completer: concludingModel{prompts: prompts}})
+	}, app.Options{Model: concludingModel{prompts: prompts}})
 
 	surface := &integrationPlane{
 		controlPlane: plane, api: apiAddress, intake: intakeAddress, dsn: dsn,

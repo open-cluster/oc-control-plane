@@ -2,18 +2,72 @@ package storage_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	conversationpkg "github.com/open-cluster/oc-control-plane/internal/conversation"
-	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
+
+func claimFixtureInvestigation(ctx context.Context, db *storage.Database) (uuid.UUID, investigation.Investigation, bool, error) {
+	org, claim, err := db.ClaimNextAgentExecution(ctx, time.Minute)
+	if errors.Is(err, storage.ErrAgentExecutionUnavailable) {
+		return uuid.Nil, investigation.Investigation{}, false, nil
+	}
+	if err != nil {
+		return uuid.Nil, investigation.Investigation{}, false, err
+	}
+	opened, err := db.Investigation(ctx, org, claim.InvestigationID)
+	return org, opened, err == nil, err
+}
+
+func seedInvestigationEvent(ctx context.Context, db *storage.Database, org, id uuid.UUID, event investigation.Event) error {
+	pool, err := poolForTest(db, org)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(event.Payload)
+	if err != nil {
+		return err
+	}
+	_, err = pool.Exec(ctx, `INSERT INTO investigation_event (org_id, investigation_id, sequence, type, payload)
+		SELECT $1, $2, coalesce(max(sequence), 0) + 1, $3, $4
+		FROM investigation_event WHERE org_id = $1 AND investigation_id = $2`, org, id, int16(event.Type), payload)
+	return err
+}
+
+// seedInvestigationConclusion prepares retained records for Conversation and delivery reads.
+func seedInvestigationConclusion(ctx context.Context, db *storage.Database, org, id uuid.UUID, conclusion investigation.Conclusion) error {
+	pool, err := poolForTest(db, org)
+	if err != nil {
+		return err
+	}
+	report, err := json.Marshal(conclusion)
+	if err != nil {
+		return err
+	}
+	_, err = pool.Exec(ctx, `WITH ended AS (
+		UPDATE investigation SET status = 2, conclusion = $3, concluded_at = now()
+		 WHERE org_id = $1 AND investigation_id = $2 RETURNING *
+	), finished AS (
+		UPDATE agent_execution SET status = 'completed', lease_expires_at = NULL, lease_token = NULL
+		 WHERE org_id = $1 AND investigation_id = $2
+	), reply AS (
+		INSERT INTO conversation_message (org_id, conversation_id, sequence, role, text, investigation_id, window_from, window_until)
+		SELECT i.org_id, i.conversation_id, (SELECT coalesce(max(m.sequence), 0) + 1 FROM conversation_message m
+			WHERE m.org_id = i.org_id AND m.conversation_id = i.conversation_id), 2, $4, i.investigation_id, i.window_from, i.window_until
+		FROM ended i WHERE i.conversation_id IS NOT NULL
+	)
+	INSERT INTO investigation_event (org_id, investigation_id, sequence, type, payload)
+	SELECT i.org_id, i.investigation_id, (SELECT coalesce(max(sequence), 0) + 1 FROM investigation_event
+		WHERE org_id = i.org_id AND investigation_id = i.investigation_id), $5,
+		jsonb_build_object('summary', $4::text, 'status', $6::text) FROM ended i`,
+		org, id, report, conclusion.Summary, int16(investigation.EventConcluded), string(conclusion.Status))
+	return err
+}
 
 func aTurn(
 	t *testing.T, database *storage.Database, organization uuid.UUID,
@@ -37,13 +91,12 @@ func appendEvents(
 	t.Helper()
 
 	for position, eventType := range types {
-		if err := database.AppendEvent(context.Background(), organization, id,
-			claimToken(t, database, organization, id), investigation.Event{
-				Sequence: int64(position + 1),
-				At:       time.Now().UTC(),
-				Type:     eventType,
-				Payload:  map[string]any{"position": position},
-			}); err != nil {
+		if err := seedInvestigationEvent(context.Background(), database, organization, id, investigation.Event{
+			Sequence: int64(position + 1),
+			At:       time.Now().UTC(),
+			Type:     eventType,
+			Payload:  map[string]any{"position": position},
+		}); err != nil {
 			t.Fatalf("appending event %d: %v", position+1, err)
 		}
 	}
@@ -110,7 +163,7 @@ func TestAnUnknownFutureEventDoesNotCorruptReadableHistory(t *testing.T) {
 		organization, id); err != nil {
 		t.Fatalf("seeding future history: %v", err)
 	}
-	if err = database.AppendEvent(ctx, organization, id, claimToken(t, database, organization, id), investigation.Event{
+	if err = seedInvestigationEvent(ctx, database, organization, id, investigation.Event{
 		Sequence: 2, At: time.Now().UTC(), Type: investigation.EventProgress,
 		Payload: map[string]any{"text": "known history remains readable"},
 	}); err != nil {
@@ -185,11 +238,10 @@ func TestAnEventPayloadSurvivesTheRoundTrip(t *testing.T) {
 		"truncated": true,
 		"arguments": map[string]any{"channel": "deploys"},
 	}
-	if err := database.AppendEvent(context.Background(), organization, id,
-		claimToken(t, database, organization, id), investigation.Event{
-			Sequence: 1, At: time.Now().UTC(),
-			Type: investigation.EventToolStarted, Payload: payload,
-		}); err != nil {
+	if err := seedInvestigationEvent(context.Background(), database, organization, id, investigation.Event{
+		Sequence: 1, At: time.Now().UTC(),
+		Type: investigation.EventToolStarted, Payload: payload,
+	}); err != nil {
 		t.Fatalf("appending: %v", err)
 	}
 
@@ -208,37 +260,6 @@ func TestAnEventPayloadSurvivesTheRoundTrip(t *testing.T) {
 	arguments, ok := read[0].Payload["arguments"].(map[string]any)
 	if !ok || arguments["channel"] != "deploys" {
 		t.Errorf("nested arguments did not survive: %+v", read[0].Payload["arguments"])
-	}
-}
-
-func TestAnotherClaimCannotAppendProgress(t *testing.T) {
-	t.Parallel()
-
-	database, organization := migratedDatabase(t)
-	id := aTurn(t, database, organization)
-
-	first := investigation.Event{
-		Sequence: 1, At: time.Now().UTC(), Type: investigation.EventStarted,
-		Payload: map[string]any{"writer": "the lease holder"},
-	}
-	if err := database.AppendEvent(
-		context.Background(), organization, id, claimToken(t, database, organization, id), first); err != nil {
-		t.Fatalf("the first write failed: %v", err)
-	}
-
-	second := first
-	second.Payload = map[string]any{"writer": "somebody who should not be here"}
-	if err := database.AppendEvent(
-		context.Background(), organization, id, uuid.New(), second); err == nil {
-		t.Fatal("another claim appended progress")
-	}
-
-	read, err := database.Events(context.Background(), organization, id, 0, 0)
-	if err != nil {
-		t.Fatalf("reading: %v", err)
-	}
-	if len(read) != 1 || read[0].Payload["writer"] != "the lease holder" {
-		t.Errorf("the refused write changed the stream: %+v", read)
 	}
 }
 
@@ -286,720 +307,5 @@ func TestAnotherOrganizationsEventsAreNotReadable(t *testing.T) {
 	}
 	if len(read) != 0 {
 		t.Errorf("%d events readable from another organization", len(read))
-	}
-}
-
-func TestExpiredWorkerCannotConclude(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	database, org := migratedDatabase(t)
-	id := aTurn(t, database, org)
-	if _, _, claimed, err := database.ClaimInvestigation(ctx, aClaim("worker")); err != nil || !claimed {
-		t.Fatalf("claiming: claimed=%v err=%v", claimed, err)
-	}
-	expireInvestigationLease(t, database, org, id)
-	if err := database.ConcludeInvestigation(ctx, org, id, claimToken(t, database, org, id), conclusionSaying("late answer"), "", investigation.Usage{}); err == nil {
-		t.Fatal("expired worker committed a conclusion")
-	}
-	found, err := database.Investigation(ctx, org, id)
-	if err != nil || found.Status != investigation.StatusRunning {
-		t.Fatalf("rejected conclusion changed state: status=%v err=%v", found.Status, err)
-	}
-}
-
-func TestEveryWorkerWriteRequiresItsOwnClaim(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	database, org := migratedDatabase(t)
-	integration, err := database.CreateIntegration(ctx, ownerOf(t, org), org, integrations.NewIntegration{Provider: "github", Name: "Historical source"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	aTurn(t, database, org)
-	aTurn(t, database, org)
-	_, first, took, err := database.ClaimInvestigation(ctx, aClaim("same-worker"))
-	if err != nil || !took {
-		t.Fatalf("first claim: %v %v", took, err)
-	}
-	_, second, took, err := database.ClaimInvestigation(ctx, aClaim("same-worker"))
-	if err != nil || !took || first.ClaimToken == uuid.Nil || first.ClaimToken == second.ClaimToken {
-		t.Fatalf("claims are not unique: %v %v", took, err)
-	}
-	now := time.Now().UTC()
-	observation, applied := "bounded prepared input", true
-	run := investigation.ToolRun{IntegrationID: integration.ID, Sources: []string{"https://github.com/controlled/repository/commit/evidence"}, Ordinal: 1, Tool: "read", Purpose: "inspect", Outcome: investigation.RunSucceeded,
-		WindowFrom: now.Add(-time.Hour), WindowUntil: now, StartedAt: now, FinishedAt: now,
-		ObservationText: &observation, WindowApplied: &applied, ModelClipped: true}
-	writes := map[string]func(uuid.UUID) error{
-		"conclusion": func(token uuid.UUID) error {
-			return database.ConcludeInvestigation(ctx, org, first.ID, token, conclusionSaying("answer"), "", investigation.Usage{})
-		},
-		"failure": func(token uuid.UUID) error {
-			return database.FailInvestigation(ctx, org, first.ID, token, "failure", investigation.Usage{})
-		},
-		"tool run": func(token uuid.UUID) error { return database.RecordToolRun(ctx, org, first.ID, token, run) },
-		"progress": func(token uuid.UUID) error {
-			return database.AppendEvent(ctx, org, first.ID, token, investigation.Event{At: now, Type: investigation.EventProgress})
-		},
-	}
-	for _, token := range []uuid.UUID{uuid.Nil, uuid.New(), second.ClaimToken} {
-		for name, write := range writes {
-			if err := write(token); err == nil {
-				t.Errorf("%s accepted another claim", name)
-			}
-		}
-		if held, err := database.Heartbeat(ctx, org, first.ID, investigation.Claim{Worker: "same-worker", LeaseFor: turnWindowLead, Token: token}); err != nil || held {
-			t.Errorf("wrong claim heartbeat: %v %v", held, err)
-		}
-	}
-	if events, err := database.Events(ctx, org, first.ID, 0, 0); err != nil || len(events) != 0 {
-		t.Fatalf("rejected writes left events: %v %v", events, err)
-	}
-	for _, name := range []string{"progress", "tool run", "conclusion"} {
-		if err := writes[name](first.ClaimToken); err != nil {
-			t.Fatalf("valid %s: %v", name, err)
-		}
-	}
-	if err := database.DisconnectIntegration(ctx, ownerOf(t, org), org, integration.ID); err != nil {
-		t.Fatal(err)
-	}
-	retained, err := database.InvestigationToolRunObservation(ctx, org, first.ID, 1)
-	if err != nil || retained.ObservationText == nil || *retained.ObservationText != observation ||
-		!retained.ModelClipped || retained.Truncated || retained.WindowApplied == nil || !*retained.WindowApplied {
-		t.Fatalf("bounded observation metadata did not round trip: %v", err)
-	}
-	runs, err := database.InvestigationToolRuns(ctx, org, first.ID)
-	if err != nil || len(runs) != 1 || runs[0].ObservationText != nil || runs[0].IntegrationID != integration.ID || len(runs[0].Sources) != 1 || runs[0].Sources[0] != run.Sources[0] {
-		t.Fatal("ordinary run reads loaded retained observation text")
-	}
-	tooLarge := strings.Repeat("x", investigation.MaxObservationBytes+1)
-	run.ObservationText = &tooLarge
-	if err := database.RecordToolRun(ctx, org, first.ID, first.ClaimToken, run); err == nil || !strings.Contains(err.Error(), "storage bound") {
-		t.Fatal("oversized observations were not rejected before storage")
-	}
-	run.ObservationText = &observation
-	for name, write := range writes {
-		if err := write(first.ClaimToken); err == nil {
-			t.Errorf("terminal claim accepted %s", name)
-		}
-	}
-	events, err := database.Events(ctx, org, first.ID, 0, 0)
-	if err != nil || len(events) != 2 || events[0].Sequence != 1 || events[1].Sequence != 2 || !events[1].Type.Terminal() {
-		t.Fatalf("canonical ending: %+v %v", events, err)
-	}
-}
-
-func TestConcurrentClaimWritesReceiveDurableSequences(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	database, org := migratedDatabase(t)
-	id := aTurn(t, database, org)
-	_, opened, claimed, err := database.ClaimInvestigation(ctx, aClaim("worker"))
-	if err != nil || !claimed {
-		t.Fatalf("claiming: claimed=%v err=%v", claimed, err)
-	}
-	var workers sync.WaitGroup
-	for range 10 {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
-			if err := database.AppendEvent(ctx, org, id, opened.ClaimToken, investigation.Event{Sequence: 1, At: time.Now(), Type: investigation.EventProgress}); err != nil {
-				t.Errorf("append: %v", err)
-			}
-		}()
-	}
-	workers.Wait()
-	events, err := database.Events(ctx, org, id, 0, 0)
-	if err != nil || len(events) != 10 {
-		t.Fatalf("events=%d err=%v", len(events), err)
-	}
-	for index, event := range events {
-		if event.Sequence != int64(index+1) {
-			t.Fatalf("position %d has sequence %d", index, event.Sequence)
-		}
-	}
-}
-
-func TestExpiredWorkerCannotRecordToolRun(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	database, org := migratedDatabase(t)
-	id := aTurn(t, database, org)
-	if _, _, claimed, err := database.ClaimInvestigation(ctx, aClaim("worker")); err != nil || !claimed {
-		t.Fatalf("claiming: claimed=%v err=%v", claimed, err)
-	}
-	expireInvestigationLease(t, database, org, id)
-	now := time.Now().UTC()
-	run := investigation.ToolRun{Ordinal: 1, Tool: "read", Purpose: "inspect", Outcome: investigation.RunSucceeded,
-		WindowFrom: now.Add(-time.Hour), WindowUntil: now, StartedAt: now, FinishedAt: now}
-	if err := database.RecordToolRun(ctx, org, id, claimToken(t, database, org, id), run); err == nil {
-		t.Fatal("expired worker persisted a Tool Run")
-	}
-}
-
-func TestExpiredWorkerCannotAppendProgress(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	database, org := migratedDatabase(t)
-	id := aTurn(t, database, org)
-	if _, _, claimed, err := database.ClaimInvestigation(ctx, aClaim("worker")); err != nil || !claimed {
-		t.Fatalf("claiming: claimed=%v err=%v", claimed, err)
-	}
-	expireInvestigationLease(t, database, org, id)
-	if err := database.AppendEvent(ctx, org, id, claimToken(t, database, org, id), investigation.Event{Sequence: 1, At: time.Now(), Type: investigation.EventProgress}); err == nil {
-		t.Fatal("expired worker appended progress")
-	}
-}
-
-func TestExpiredLeaseCannotBeRenewedBeforeRecovery(t *testing.T) {
-	t.Parallel()
-	database, organization := migratedDatabase(t)
-	ctx := context.Background()
-	conversation := openConversation(t, database, organization, "checkout is slow")
-	say(t, database, organization, conversation.ID, "what changed?")
-	turn, took, err := openTurnForTest(database, ctx, organization, conversation.ID, turnWindowLead)
-	if err != nil || !took {
-		t.Fatalf("opening turn: took=%v err=%v", took, err)
-	}
-	claim := aClaim("original-worker")
-	if _, _, took, err = database.ClaimInvestigation(ctx, claim); err != nil || !took {
-		t.Fatalf("claiming: took=%v err=%v", took, err)
-	}
-	expireInvestigationLease(t, database, organization, turn.InvestigationID)
-	claim.Token = claimToken(t, database, organization, turn.InvestigationID)
-	if held, err := database.Heartbeat(ctx, organization, turn.InvestigationID, claim); err != nil || held {
-		t.Fatalf("expired lease renewed: held=%v err=%v", held, err)
-	}
-	if recovered, err := database.RecoverStale(ctx, investigation.RecoveryReason, 10); err != nil || recovered != 1 {
-		t.Fatalf("recovering expired lease: recovered=%d err=%v", recovered, err)
-	}
-	found, err := database.Investigation(ctx, organization, turn.InvestigationID)
-	if err != nil || found.Status != investigation.StatusFailed {
-		t.Fatalf("recovered status=%v err=%v", found.Status, err)
-	}
-}
-
-func aClaim(worker string) investigation.Claim {
-	return investigation.Claim{
-		Worker: worker, LeaseFor: turnWindowLead,
-	}
-}
-
-func expireInvestigationLease(
-	t *testing.T, database *storage.Database, organization uuid.UUID,
-	id uuid.UUID,
-) {
-	t.Helper()
-
-	pool, err := poolForTest(database, organization)
-	if err != nil {
-		t.Fatalf("Pool: %v", err)
-	}
-	if _, err = pool.Exec(context.Background(), `
-		UPDATE investigation
-		   SET lease_expires_at = now() - interval '1 minute'
-		 WHERE investigation_id = $1`, id); err != nil {
-		t.Fatalf("expiring a lease: %v", err)
-	}
-}
-
-func TestEveryInvestigationIsClaimedExactlyOnce(t *testing.T) {
-	t.Parallel()
-
-	database, organization := migratedDatabase(t)
-
-	const turns = 8
-	opened := make(map[uuid.UUID]bool, turns)
-	for range turns {
-		conversation := openConversation(t, database, organization, "checkout is slow")
-		say(t, database, organization, conversation.ID, "what changed?")
-		turn, took, err := openTurnForTest(database, context.Background(), organization,
-			conversation.ID, turnWindowLead)
-		if err != nil || !took {
-			t.Fatalf("opening a turn: took=%v err=%v", took, err)
-		}
-		opened[turn.InvestigationID] = true
-	}
-
-	var (
-		mutex   sync.Mutex
-		claimed []uuid.UUID
-		wait    sync.WaitGroup
-	)
-	for worker := range 2 {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
-			name := "worker-" + string(rune('a'+worker))
-			for {
-				_, investigationRecord, took, err := database.ClaimInvestigation(
-					context.Background(), aClaim(name))
-				if err != nil {
-					t.Errorf("%s: claiming: %v", name, err)
-					return
-				}
-				if !took {
-					return
-				}
-				mutex.Lock()
-				claimed = append(claimed, investigationRecord.ID)
-				mutex.Unlock()
-			}
-		}()
-	}
-	wait.Wait()
-
-	if len(claimed) != turns {
-		t.Fatalf("%d claims for %d turns; every one is claimed and none twice",
-			len(claimed), turns)
-	}
-	seen := map[uuid.UUID]bool{}
-	for _, id := range claimed {
-		if seen[id] {
-			t.Errorf("investigation %s was claimed twice", id)
-		}
-		seen[id] = true
-		if !opened[id] {
-			t.Errorf("investigation %s was claimed and never opened", id)
-		}
-	}
-}
-
-func TestInvestigationsAreClaimedOldestFirst(t *testing.T) {
-	t.Parallel()
-	database, organization := migratedDatabase(t)
-	var opened []uuid.UUID
-	for range 3 {
-		conversation := openConversation(t, database, organization, "checkout is slow")
-		say(t, database, organization, conversation.ID, "what changed?")
-		turn, took, err := openTurnForTest(database, context.Background(), organization,
-			conversation.ID, turnWindowLead)
-		if err != nil || !took {
-			t.Fatalf("opening turn: took=%v err=%v", took, err)
-		}
-		opened = append(opened, turn.InvestigationID)
-		time.Sleep(time.Millisecond)
-	}
-	for index, want := range opened {
-		_, claimed, took, err := database.ClaimInvestigation(context.Background(), aClaim("worker"))
-		if err != nil || !took {
-			t.Fatalf("claim %d: took=%v err=%v", index, took, err)
-		}
-		if claimed.ID != want {
-			t.Fatalf("claim %d = %s, want oldest %s", index, claimed.ID, want)
-		}
-	}
-}
-
-func TestHeartbeatIsFencedByWorkerIdentity(t *testing.T) {
-	t.Parallel()
-	database, organization := migratedDatabase(t)
-	conversation := openConversation(t, database, organization, "checkout is slow")
-	say(t, database, organization, conversation.ID, "what changed?")
-	turn, took, err := openTurnForTest(database, context.Background(), organization,
-		conversation.ID, turnWindowLead)
-	if err != nil || !took {
-		t.Fatalf("opening turn: took=%v err=%v", took, err)
-	}
-	if _, _, took, err = database.ClaimInvestigation(context.Background(), aClaim("worker-a")); err != nil || !took {
-		t.Fatalf("claiming: took=%v err=%v", took, err)
-	}
-	if held, heartbeatErr := database.Heartbeat(context.Background(), organization,
-		turn.InvestigationID, aClaim("worker-b")); heartbeatErr != nil || held {
-		t.Fatalf("another worker renewed the lease: held=%v err=%v", held, heartbeatErr)
-	}
-	if held, heartbeatErr := database.Heartbeat(context.Background(), organization,
-		turn.InvestigationID, investigation.Claim{Worker: "worker-a", LeaseFor: turnWindowLead, Token: claimToken(t, database, organization, turn.InvestigationID)}); heartbeatErr != nil || !held {
-		t.Fatalf("the holder could not renew its lease: held=%v err=%v", held, heartbeatErr)
-	}
-}
-
-func TestALapsedLeaseFailsTheInvestigationAndEndsItsStream(t *testing.T) {
-	t.Parallel()
-
-	database, organization := migratedDatabase(t)
-	conversation := openConversation(t, database, organization, "checkout is slow")
-	say(t, database, organization, conversation.ID, "what changed?")
-	turn, took, err := openTurnForTest(database, context.Background(), organization,
-		conversation.ID, turnWindowLead)
-	if err != nil || !took {
-		t.Fatalf("opening a turn: took=%v err=%v", took, err)
-	}
-
-	if _, _, took, err = database.ClaimInvestigation(context.Background(),
-		aClaim("worker-that-dies")); err != nil || !took {
-		t.Fatalf("claiming: took=%v err=%v", took, err)
-	}
-	if err = database.AppendEvent(context.Background(), organization,
-		turn.InvestigationID, claimToken(t, database, organization, turn.InvestigationID), investigation.Event{
-			Sequence: 1, At: time.Now().UTC(), Type: investigation.EventStarted,
-			Payload: map[string]any{"state": "executing"},
-		}); err != nil {
-		t.Fatalf("appending: %v", err)
-	}
-	expireInvestigationLease(t, database, organization, turn.InvestigationID)
-
-	recovered, err := database.RecoverStale(context.Background(),
-		investigation.RecoveryReason, 10)
-	if err != nil {
-		t.Fatalf("recovering: %v", err)
-	}
-	if recovered != 1 {
-		t.Fatalf("%d recovered, want one", recovered)
-	}
-
-	found, err := database.Investigation(context.Background(), organization,
-		turn.InvestigationID)
-	if err != nil {
-		t.Fatalf("reading: %v", err)
-	}
-	if found.Status != investigation.StatusFailed {
-		t.Errorf("status = %v, want failed; a worker that stopped must not leave a record "+
-			"that says running forever", found.Status)
-	}
-	if found.Error != investigation.RecoveryReason {
-		t.Errorf("error = %q, want the stated recovery reason", found.Error)
-	}
-
-	events, err := database.Events(context.Background(), organization,
-		turn.InvestigationID, 0, 0)
-	if err != nil {
-		t.Fatalf("reading events: %v", err)
-	}
-	if len(events) != 2 {
-		t.Fatalf("%d events, want the started one and a terminal one: %+v", len(events),
-			events)
-	}
-	last := events[len(events)-1]
-	if last.Type != investigation.EventFailed {
-		t.Errorf("the stream ended with %s, want failed; a reader watching a recovered "+
-			"investigation must be told, not left on a spinner", last.Type)
-	}
-	if last.Sequence != 2 {
-		t.Errorf("the terminal event is at sequence %d, want 2; the sequence continues "+
-			"from the table because the process holding it in memory is gone",
-			last.Sequence)
-	}
-	if last.Payload["reason"] != investigation.RecoveryReason {
-		t.Errorf("the terminal event states %v, want the recovery reason",
-			last.Payload["reason"])
-	}
-}
-
-func TestARecoveredInvestigationIsNotClaimedAgain(t *testing.T) {
-	t.Parallel()
-
-	database, organization := migratedDatabase(t)
-	conversation := openConversation(t, database, organization, "checkout is slow")
-	say(t, database, organization, conversation.ID, "what changed?")
-	turn, took, err := openTurnForTest(database, context.Background(), organization,
-		conversation.ID, turnWindowLead)
-	if err != nil || !took {
-		t.Fatalf("opening a turn: took=%v err=%v", took, err)
-	}
-	if _, _, took, err = database.ClaimInvestigation(context.Background(),
-		aClaim("worker-that-dies")); err != nil || !took {
-		t.Fatalf("claiming: took=%v err=%v", took, err)
-	}
-	expireInvestigationLease(t, database, organization, turn.InvestigationID)
-	if _, err = database.RecoverStale(context.Background(),
-		investigation.RecoveryReason, 10); err != nil {
-		t.Fatalf("recovering: %v", err)
-	}
-
-	if _, _, took, err = database.ClaimInvestigation(context.Background(),
-		aClaim("worker-b")); err != nil || took {
-		t.Errorf("a recovered investigation was claimed again: took=%v err=%v", took, err)
-	}
-}
-
-func TestConcludingReleasesTheLease(t *testing.T) {
-	t.Parallel()
-
-	database, organization := migratedDatabase(t)
-	conversation := openConversation(t, database, organization, "checkout is slow")
-	say(t, database, organization, conversation.ID, "what changed?")
-	turn, took, err := openTurnForTest(database, context.Background(), organization,
-		conversation.ID, turnWindowLead)
-	if err != nil || !took {
-		t.Fatalf("opening a turn: took=%v err=%v", took, err)
-	}
-	if _, _, took, err = database.ClaimInvestigation(context.Background(),
-		aClaim("worker-a")); err != nil || !took {
-		t.Fatalf("claiming: took=%v err=%v", took, err)
-	}
-
-	if err = database.ConcludeInvestigation(context.Background(), organization,
-		turn.InvestigationID, claimToken(t, database, organization, turn.InvestigationID), conclusionSaying("done"), "",
-		investigation.Usage{}); err != nil {
-		t.Fatalf("concluding: %v", err)
-	}
-
-	if held, heartbeatErr := database.Heartbeat(context.Background(), organization,
-		turn.InvestigationID, aClaim("worker-a")); heartbeatErr != nil || held {
-		t.Errorf("a concluded investigation still holds a lease: held=%v err=%v",
-			held, heartbeatErr)
-	}
-	recovered, err := database.RecoverStale(context.Background(),
-		investigation.RecoveryReason, 10)
-	if err != nil {
-		t.Fatalf("recovering: %v", err)
-	}
-	if recovered != 0 {
-		t.Errorf("%d concluded investigations were 'recovered'; a terminal one is already "+
-			"recorded and re-running it is the duplicate the fence prevents", recovered)
-	}
-}
-
-func TestTerminalInvestigationUsageRoundTrips(t *testing.T) {
-	t.Parallel()
-
-	database, organization := migratedDatabase(t)
-	for _, test := range []struct {
-		name string
-		end  func(uuid.UUID, investigation.Usage) error
-	}{
-		{name: "concluded", end: func(id uuid.UUID, usage investigation.Usage) error {
-			return database.ConcludeInvestigation(context.Background(), organization, id,
-				claimToken(t, database, organization, id), conclusionSaying("done"), "", usage)
-		}},
-		{name: "failed", end: func(id uuid.UUID, usage investigation.Usage) error {
-			return database.FailInvestigation(context.Background(), organization, id,
-				claimToken(t, database, organization, id), "provider unavailable", usage)
-		}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			conversation := openConversation(t, database, organization, test.name)
-			say(t, database, organization, conversation.ID, "what happened?")
-			turn, took, err := openTurnForTest(database, context.Background(), organization,
-				conversation.ID, turnWindowLead)
-			if err != nil || !took {
-				t.Fatalf("opening a turn: took=%v err=%v", took, err)
-			}
-			want := investigation.Usage{InputTokens: 34, OutputTokens: 21}
-			if err = test.end(turn.InvestigationID, want); err != nil {
-				t.Fatal(err)
-			}
-			found, err := database.Investigation(context.Background(), organization,
-				turn.InvestigationID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if found.Usage != want {
-				t.Fatalf("usage=%+v, want %+v", found.Usage, want)
-			}
-		})
-	}
-}
-
-func TestFailedEventWritePreservesStreamStateForRetry(t *testing.T) {
-	for _, payload := range []investigation.EventPayload{investigation.ProgressPayload("reading"), investigation.FailedPayload("failed")} {
-		eventType := payload.EventType()
-		t.Run(eventType.String(), func(t *testing.T) {
-			t.Parallel()
-			ctx := context.Background()
-			database, org := migratedDatabase(t)
-			id := aTurn(t, database, org)
-			pool, err := poolForTest(database, org)
-			if err != nil {
-				t.Fatal(err)
-			}
-			token := claimToken(t, database, org, id)
-			stream := investigation.NewEventStream(func(ctx context.Context, org uuid.UUID, id uuid.UUID, event investigation.Event) error {
-				return database.AppendEvent(ctx, org, id, token, event)
-			}, nil, org, id)
-			if _, err = pool.Exec(ctx, `ALTER TABLE investigation_event ADD CONSTRAINT reject_stream_test CHECK (type NOT IN (2, 7))`); err != nil {
-				t.Fatal(err)
-			}
-			if err = stream.Emit(ctx, payload); err == nil {
-				t.Fatal("event write failure was swallowed")
-			}
-			if _, err = pool.Exec(ctx, `ALTER TABLE investigation_event DROP CONSTRAINT reject_stream_test`); err != nil {
-				t.Fatal(err)
-			}
-			if err = stream.Emit(ctx, payload); err != nil {
-				t.Fatal(err)
-			}
-			events, err := database.Events(ctx, org, id, 0, 0)
-			if err != nil || len(events) != 1 || events[0].Sequence != 1 || events[0].Type != eventType {
-				t.Fatalf("failed write consumed stream state: events=%+v err=%v", events, err)
-			}
-		})
-	}
-}
-
-func TestCancellationRacesCompletionAndStaleOwnership(t *testing.T) {
-	database, org := migratedDatabase(t)
-	ctx := context.Background()
-	for range 10 {
-		id := aTurn(t, database, org)
-		token := claimToken(t, database, org, id)
-		start := make(chan struct{})
-		finished := make(chan error, 2)
-		stale := make(chan error, 1)
-		go func() {
-			<-start
-			finished <- database.ConcludeInvestigation(ctx, org, id, token,
-				conclusionSaying("committed answer"), "", investigation.Usage{})
-		}()
-		principal := ownerOf(t, org)
-		go func() {
-			<-start
-			_, err := database.CancelInvestigation(ctx, principal, org, id)
-			finished <- err
-		}()
-		go func() {
-			<-start
-			stale <- database.FailInvestigation(ctx, org, id, uuid.New(), "stale failure", investigation.Usage{})
-		}()
-		close(start)
-		winners := 0
-		for range 2 {
-			err := <-finished
-			if err == nil {
-				winners++
-			} else if !errors.Is(err, investigation.ErrUnknown) && !errors.Is(err, investigation.ErrAlreadyEnded) {
-				t.Fatal(err)
-			}
-		}
-		if err := <-stale; !errors.Is(err, investigation.ErrUnknown) {
-			t.Fatalf("stale writer result = %v", err)
-		}
-		if winners != 1 {
-			t.Fatalf("terminal winners=%d, want one", winners)
-		}
-		events, err := database.Events(ctx, org, id, 0, 0)
-		if err != nil || len(events) != 1 {
-			t.Fatalf("events=%+v, error=%v", events, err)
-		}
-		result, err := database.Investigation(ctx, org, id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if result.Status == investigation.StatusConcluded {
-			if events[0].Type != investigation.EventConcluded || events[0].Payload["summary"] != result.Conclusion.Summary {
-				t.Fatal("conclusion and replay disagree")
-			}
-		} else if result.Status != investigation.StatusCancelled || events[0].Type != investigation.EventCancelled {
-			t.Fatal("cancellation and replay disagree")
-		}
-	}
-}
-
-func TestConclusionCommitsItsReplayEvent(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	database, org := migratedDatabase(t)
-	conversation := openConversation(t, database, org, "durable completion")
-	say(t, database, org, conversation.ID, "what happened?")
-	turn, took, err := openTurnForTest(database, ctx, org, conversation.ID, turnWindowLead)
-	if err != nil || !took {
-		t.Fatalf("opening turn: took=%v err=%v", took, err)
-	}
-	if err = database.ConcludeInvestigation(ctx, org, turn.InvestigationID,
-		claimToken(t, database, org, turn.InvestigationID), conclusionSaying("canonical answer"), "", investigation.Usage{}); err != nil {
-		t.Fatal(err)
-	}
-	events, err := database.Events(ctx, org, turn.InvestigationID, 0, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(events) != 1 || events[0].Type != investigation.EventConcluded ||
-		events[0].Payload["summary"] != "canonical answer" {
-		t.Fatalf("completion returned without its replay event: %+v", events)
-	}
-	detail, err := database.ConversationDetail(ctx, org, conversation.ID, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(detail.Messages) != 2 || detail.Messages[1].Role != conversationpkg.RoleAssistant ||
-		detail.Messages[1].Text != "canonical answer" ||
-		detail.Messages[1].InvestigationID != turn.InvestigationID {
-		t.Fatalf("completion did not commit one assistant Message: %+v", detail.Messages)
-	}
-}
-
-func TestTerminalEventFailureRollsBackOutcome(t *testing.T) {
-	for _, failure := range []bool{false, true} {
-		t.Run(map[bool]string{false: "concluded", true: "failed"}[failure], func(t *testing.T) {
-			t.Parallel()
-			ctx := context.Background()
-			database, org := migratedDatabase(t)
-			conversation := openConversation(t, database, org, "terminal rollback")
-			say(t, database, org, conversation.ID, "what happened?")
-			turn, took, err := openTurnForTest(database, ctx, org, conversation.ID, turnWindowLead)
-			if err != nil || !took {
-				t.Fatalf("opening turn: took=%v err=%v", took, err)
-			}
-			pool, err := poolForTest(database, org)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err = pool.Exec(ctx, `ALTER TABLE investigation_event ADD CONSTRAINT reject_terminal_test CHECK (type NOT IN (6, 7))`); err != nil {
-				t.Fatal(err)
-			}
-			finish := func() error {
-				if failure {
-					return database.FailInvestigation(ctx, org, turn.InvestigationID, claimToken(t, database, org, turn.InvestigationID), "provider unavailable", investigation.Usage{InputTokens: 42})
-				}
-				return database.ConcludeInvestigation(ctx, org, turn.InvestigationID, claimToken(t, database, org, turn.InvestigationID), conclusionSaying("answer"), "", investigation.Usage{InputTokens: 42})
-			}
-			if err = finish(); err == nil {
-				t.Fatal("terminal event failure was swallowed")
-			}
-			found, err := database.Investigation(ctx, org, turn.InvestigationID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if found.Status != investigation.StatusRunning || found.Usage.InputTokens != 0 || found.Conclusion.Summary != "" || !found.ConcludedAt.IsZero() {
-				t.Fatalf("terminal failure committed outcome: %+v", found)
-			}
-			detail, err := database.ConversationDetail(ctx, org, conversation.ID, 10)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(detail.Messages) != 1 {
-				t.Fatalf("terminal failure committed a Message: %+v", detail.Messages)
-			}
-			if _, err = pool.Exec(ctx, `ALTER TABLE investigation_event DROP CONSTRAINT reject_terminal_test`); err != nil {
-				t.Fatal(err)
-			}
-			if err = finish(); err != nil {
-				t.Fatal(err)
-			}
-			events, err := database.Events(ctx, org, turn.InvestigationID, 0, 0)
-			if err != nil || len(events) != 1 || events[0].Sequence != 1 || !events[0].Type.Terminal() {
-				t.Fatalf("retry lost terminal event or sequence: %+v err=%v", events, err)
-			}
-			detail, err = database.ConversationDetail(ctx, org, conversation.ID, 10)
-			if err != nil {
-				t.Fatal(err)
-			}
-			wantMessages := 2
-			if failure {
-				wantMessages = 1
-			}
-			if len(detail.Messages) != wantMessages {
-				t.Fatalf("terminal retry committed %d Messages, want %d: %+v", len(detail.Messages), wantMessages, detail.Messages)
-			}
-		})
-	}
-}
-
-func TestLateProgressCannotFollowCompletion(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	database, org := migratedDatabase(t)
-	conversation := openConversation(t, database, org, "no late progress")
-	say(t, database, org, conversation.ID, "what happened?")
-	turn, took, err := openTurnForTest(database, ctx, org, conversation.ID, turnWindowLead)
-	if err != nil || !took {
-		t.Fatalf("opening turn: took=%v err=%v", took, err)
-	}
-	if err = database.ConcludeInvestigation(ctx, org, turn.InvestigationID, claimToken(t, database, org, turn.InvestigationID), conclusionSaying("done"), "", investigation.Usage{}); err != nil {
-		t.Fatal(err)
-	}
-	if err = database.AppendEvent(ctx, org, turn.InvestigationID, claimToken(t, database, org, turn.InvestigationID), investigation.Event{Sequence: 2, Type: investigation.EventProgress}); err == nil {
-		t.Fatal("completed Investigation accepted late activity")
 	}
 }

@@ -246,7 +246,7 @@ func runIntegrationTool(
 	}
 	logger.DebugContext(ctx, "Tool execution finished", slog.String("outcome", outcome))
 	if providerFailed {
-		return nil, errors.New(run.Error)
+		return nil, errors.New(*run.ObservationText)
 	}
 	return *run.ObservationText, nil
 }

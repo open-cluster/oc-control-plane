@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
@@ -82,38 +83,53 @@ func evidenceMissing(ctx context.Context, pool querier, org, conversationID uuid
 	return missing, err
 }
 
-func validateAgentConclusionEvidence(ctx context.Context, tx querier, org, executionID uuid.UUID,
+// ValidateAgentConclusionEvidence lets an active reply correct citations before accepting a report.
+func (p *Database) ValidateAgentConclusionEvidence(ctx context.Context, org uuid.UUID, execution AgentExecution,
 	conclusion investigation.Conclusion,
 ) error {
-	// Native Tool Runs have no Investigation-local ordinals.
-	if len(conclusion.Impact.RunRefs) != 0 {
-		return ErrAgentEvidenceUnavailable
+	return p.withAgentLease(ctx, org, execution, func(tx pgx.Tx) error {
+		return validateAgentConclusionEvidence(ctx, tx, org, execution, conclusion)
+	})
+}
+
+func validateAgentConclusionEvidence(ctx context.Context, tx querier, org uuid.UUID, execution AgentExecution,
+	conclusion investigation.Conclusion,
+) error {
+	type citations struct {
+		ordinals       []int
+		refs           []investigation.EvidenceRef
+		requireSuccess bool
+	}
+	sections := []citations{{conclusion.Impact.RunRefs, conclusion.Impact.EvidenceRefs, true}}
+	for _, finding := range conclusion.Findings {
+		if len(finding.EvidenceRefs) == 0 {
+			return ErrAgentEvidenceUnavailable
+		}
+		sections = append(sections, citations{finding.RunRefs, finding.EvidenceRefs, true})
 	}
 	for _, hypothesis := range conclusion.Hypotheses {
-		if len(hypothesis.RunRefs) != 0 {
-			return ErrAgentEvidenceUnavailable
-		}
+		sections = append(sections, citations{hypothesis.RunRefs, hypothesis.EvidenceRefs, true})
 	}
 	for _, action := range conclusion.Actions {
-		if len(action.RunRefs) != 0 {
-			return ErrAgentEvidenceUnavailable
-		}
+		sections = append(sections, citations{action.RunRefs, action.EvidenceRefs, true})
 	}
 	for _, limitation := range conclusion.Limitations {
-		if len(limitation.RunRefs) != 0 {
-			return ErrAgentEvidenceUnavailable
-		}
+		sections = append(sections, citations{limitation.RunRefs, limitation.EvidenceRefs, false})
 	}
 	var ids []uuid.UUID
-	for _, finding := range conclusion.Findings {
-		if len(finding.RunRefs) != 0 || len(finding.EvidenceRefs) == 0 {
+	var requireSuccess []bool
+	for _, section := range sections {
+		if len(section.ordinals) != 0 {
 			return ErrAgentEvidenceUnavailable
 		}
-		for _, ref := range finding.EvidenceRefs {
-			if ref.ToolRunID == uuid.Nil || ref.InvestigationID != uuid.Nil || ref.ToolRunOrdinal != 0 {
+		seen := make(map[uuid.UUID]bool, len(section.refs))
+		for _, ref := range section.refs {
+			if ref.ToolRunID == uuid.Nil || ref.InvestigationID != uuid.Nil || ref.ToolRunOrdinal != 0 || seen[ref.ToolRunID] {
 				return ErrAgentEvidenceUnavailable
 			}
+			seen[ref.ToolRunID] = true
 			ids = append(ids, ref.ToolRunID)
+			requireSuccess = append(requireSuccess, section.requireSuccess)
 		}
 	}
 	if len(ids) == 0 {
@@ -121,10 +137,19 @@ func validateAgentConclusionEvidence(ctx context.Context, tx querier, org, execu
 	}
 	var missing bool
 	err := tx.QueryRow(ctx, `SELECT EXISTS (
-		SELECT 1 FROM unnest($3::uuid[]) ref(tool_run_id)
+		SELECT 1 FROM unnest($3::uuid[], $4::boolean[]) ref(tool_run_id, require_success)
 		WHERE NOT EXISTS (SELECT 1 FROM investigation_tool_run r
-			WHERE r.org_id = $1 AND r.execution_id = $2 AND r.tool_run_id = ref.tool_run_id AND r.outcome = $4))`,
-		org, executionID, ids, int16(investigation.RunSucceeded)).Scan(&missing)
+			WHERE r.org_id = $1 AND r.tool_run_id = ref.tool_run_id
+			  AND (r.execution_id = $2 OR EXISTS (
+			      SELECT 1 FROM agent_execution previous
+			      JOIN investigation prior ON prior.org_id = previous.org_id AND prior.investigation_id = previous.investigation_id
+			      JOIN investigation current ON current.org_id = prior.org_id AND current.investigation_id = $6
+			      WHERE previous.org_id = r.org_id AND previous.execution_id = r.execution_id
+			        AND previous.status = 'completed' AND prior.status = $7
+			        AND prior.conversation_id = current.conversation_id AND prior.turn < current.turn))
+			  AND r.outcome IS NOT NULL AND (NOT ref.require_success OR r.outcome = $5)))`,
+		org, execution.ID, ids, requireSuccess, int16(investigation.RunSucceeded), execution.InvestigationID,
+		int16(investigation.StatusConcluded)).Scan(&missing)
 	if err == nil && missing {
 		return ErrAgentEvidenceUnavailable
 	}
@@ -132,7 +157,13 @@ func validateAgentConclusionEvidence(ctx context.Context, tx querier, org, execu
 }
 
 func resultEvidence(id uuid.UUID, conclusion investigation.Conclusion) []investigation.EvidenceRef {
-	var refs []investigation.EvidenceRef
+	refs := append([]investigation.EvidenceRef(nil), conclusion.Impact.EvidenceRefs...)
+	for _, hypothesis := range conclusion.Hypotheses {
+		refs = append(refs, hypothesis.EvidenceRefs...)
+	}
+	for _, action := range conclusion.Actions {
+		refs = append(refs, action.EvidenceRefs...)
+	}
 	for _, finding := range conclusion.Findings {
 		refs = append(refs, finding.EvidenceRefs...)
 		for _, ordinal := range finding.RunRefs {

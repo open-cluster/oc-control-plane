@@ -19,7 +19,7 @@ func TestWebConversationExposesTrustedSourceAndUserAttribution(t *testing.T) {
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = address
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "openrouter", "z-ai/glm-4.7", "scripted-model-key"
-	}, app.Options{Completer: concludingModel{}})
+	}, app.Options{Model: concludingModel{}})
 	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
 
 	status, body := plane.call(t, http.MethodPost,

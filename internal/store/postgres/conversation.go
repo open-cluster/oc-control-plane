@@ -376,9 +376,9 @@ func (p *Database) OpenQueuedConversationTurn(
 		          AND investigation.conversation_id = conversation.conversation_id
 		          AND investigation.status = 1)
 		   AND ($1 <= 0 OR (
-		       SELECT count(*) FROM investigation waiting
-		        WHERE waiting.org_id = conversation.org_id
-		          AND waiting.status = 1 AND waiting.lease_worker = '') < $1)
+		       SELECT count(*) FROM investigation i
+		        WHERE i.org_id = conversation.org_id AND i.status = 1
+		          AND NOT `+runningAgentInvestigation+`) < $1)
 		 ORDER BY message.created_at, conversation.conversation_id
 		 LIMIT 1`, maxPending).Scan(&organization, &conversationID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -476,6 +476,9 @@ func openTurn(
 		investigationID, organization, id, lastSequence); err != nil {
 		return conversation.Turn{}, false, fmt.Errorf("attaching queued messages: %w", err)
 	}
+	if err := queueInvestigation(ctx, transaction, organization, investigationID); err != nil {
+		return conversation.Turn{}, false, err
+	}
 
 	return conversation.Turn{
 		InvestigationID: investigationID,
@@ -490,7 +493,7 @@ func queuedBatch(
 	id uuid.UUID,
 ) (int64, error) {
 	rows, err := transaction.Query(ctx, `
-		SELECT sequence
+		SELECT sequence, octet_length(text)
 		  FROM conversation_message
 		 WHERE org_id = $1 AND conversation_id = $2 AND investigation_id IS NULL AND client_message_id IS NULL
 		   AND role = 1
@@ -500,11 +503,21 @@ func queuedBatch(
 	}
 	defer rows.Close()
 
+	// Keep complete Messages in order. Later Messages remain queued for the next turn.
+	const maxBatchBytes = 64 << 10
 	var lastSequence int64
+	var totalBytes int
 	for rows.Next() {
-		if err := rows.Scan(&lastSequence); err != nil {
+		var sequence int64
+		var size int
+		if err := rows.Scan(&sequence, &size); err != nil {
 			return 0, fmt.Errorf("scanning a queued message: %w", err)
 		}
+		if totalBytes+size > maxBatchBytes && lastSequence != 0 {
+			break
+		}
+		lastSequence = sequence
+		totalBytes += size
 	}
 	if err := rows.Err(); err != nil {
 		return 0, fmt.Errorf("reading queued messages: %w", err)
@@ -559,14 +572,6 @@ func lockConversation(
 		return fmt.Errorf("locking a conversation: %w", err)
 	}
 	return nil
-}
-
-func boundedRunes(text string, limit int) string {
-	runes := []rune(text)
-	if len(runes) <= limit {
-		return text
-	}
-	return string(runes[:limit])
 }
 
 func scanConversation(row scanned) (conversation.Conversation, error) {

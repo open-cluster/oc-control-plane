@@ -25,7 +25,7 @@ func TestLiveEventStreamClosesWhenSessionAccessEnds(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			plane, _ := agentPlane(t, &blockingAgentMain{})
+			plane, _ := agentPlane(t, &blockingModel{})
 			_, turn := plane.openConversation(t, "access change", "investigate checkout")
 			response := openEventStream(t, plane, turn, "")
 			defer func() { _ = response.Body.Close() }()
@@ -82,7 +82,7 @@ func TestLiveEventStreamClosesWhenSessionAccessEnds(t *testing.T) {
 }
 
 func TestEventStreamClosesAfterTerminalCursor(t *testing.T) {
-	plane, _ := agentPlane(t, &blockingAgentMain{})
+	plane, _ := agentPlane(t, &blockingModel{})
 	_, turn := plane.openConversation(t, "replayed stream", "investigate checkout")
 	status, body := plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/investigations/"+turn+"/cancel", nil)
 	if status != http.StatusOK {
@@ -106,7 +106,7 @@ func TestEventStreamClosesAfterTerminalCursor(t *testing.T) {
 }
 
 func TestEventStreamClosesDuringGracefulShutdown(t *testing.T) {
-	plane, _ := agentPlane(t, &blockingAgentMain{})
+	plane, _ := agentPlane(t, &blockingModel{})
 	_, turn := plane.openConversation(t, "shutdown stream", "investigate checkout")
 	response := openEventStream(t, plane, turn, "")
 	defer func() { _ = response.Body.Close() }()
@@ -121,13 +121,13 @@ func TestEventStreamClosesDuringGracefulShutdown(t *testing.T) {
 
 func TestEventStreamSurvivesOrdinaryWriteTimeout(t *testing.T) {
 	t.Parallel()
-	plane, _ := agentPlane(t, &blockingAgentMain{})
+	plane, _ := agentPlane(t, &blockingModel{})
 	assertLiveEventStream(t, plane, plane)
 }
 
 func TestEventStreamThroughReverseProxy(t *testing.T) {
 	t.Parallel()
-	plane, _ := agentPlane(t, &blockingAgentMain{})
+	plane, _ := agentPlane(t, &blockingModel{})
 	proxied := *plane
 	proxied.api = startEventProxy(t, plane.api)
 	assertLiveEventStream(t, plane, &proxied)

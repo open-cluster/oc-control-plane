@@ -81,6 +81,18 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 	if !strings.Contains(string(cited), `"evidenceRefs":[{"investigationId":"`+priorID.String()+`","toolRunOrdinal":2}]`) {
 		t.Errorf("prior citation missing from draft: %s", cited)
 	}
+	nativeRef := investigation.EvidenceRef{ToolRunID: uuid.New()}
+	input.Results[0].Conclusion.Impact = investigation.Impact{
+		Summary: "Checkout requests failed for 12 minutes.", EvidenceRefs: []investigation.EvidenceRef{nativeRef},
+	}
+	input.Results[0].Conclusion.Actions[0].RunRefs = nil
+	input.Results[0].Conclusion.Actions[0].EvidenceRefs = []investigation.EvidenceRef{nativeRef}
+	native := DraftFrom(input)
+	if native.Impact != "Checkout requests failed for 12 minutes." || native.Resolution != NeedsHumanInput ||
+		native.ActionItems[0].Owner != NeedsHumanInput || native.ActionItems[0].Deadline != NeedsHumanInput ||
+		len(native.ActionItems[0].EvidenceRefs) != 1 || native.ActionItems[0].EvidenceRefs[0] != nativeRef {
+		t.Fatalf("native citations or missing facts were lost: %+v", native)
+	}
 
 	encoded, err := json.Marshal(draft)
 	if err != nil {
