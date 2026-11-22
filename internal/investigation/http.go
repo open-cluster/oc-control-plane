@@ -38,8 +38,8 @@ type HTTPStore interface {
 	CreateInvestigation(context.Context, authz.Principal, uuid.UUID,
 		NewInvestigation, int) (Investigation, error)
 	WebInvestigation(context.Context, uuid.UUID, uuid.UUID) (Investigation, error)
-	InvestigationToolRuns(context.Context, uuid.UUID, uuid.UUID) ([]ToolRun, error)
-	ToolRunObservation(context.Context, uuid.UUID, EvidenceRef) (ToolRun, uuid.UUID, error)
+	InvestigationToolRuns(context.Context, uuid.UUID, uuid.UUID) ([]ToolRunRead, error)
+	ToolRunObservation(context.Context, uuid.UUID, HistoricalEvidenceRef) (ToolRunRead, uuid.UUID, error)
 	QueryInvestigations(context.Context, authz.Principal, uuid.UUID, Query) (List, error)
 	CancelInvestigation(context.Context, authz.Principal, uuid.UUID,
 		uuid.UUID) (Investigation, error)
@@ -275,7 +275,7 @@ func (h Handlers) cancel(writer http.ResponseWriter, request *http.Request) {
 }
 
 func (h Handlers) readObservation(writer http.ResponseWriter, request *http.Request) {
-	var ref EvidenceRef
+	var ref HistoricalEvidenceRef
 	if selector := request.PathValue("toolRun"); selector != "" {
 		id, err := uuid.Parse(selector)
 		if err != nil || id == uuid.Nil {

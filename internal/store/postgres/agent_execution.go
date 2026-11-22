@@ -407,6 +407,20 @@ func (p *Database) AgentExecutionInput(ctx context.Context, org uuid.UUID, execu
 	return text, err
 }
 
+// AuthorizeInvestigationReport checks current authority and identifies legacy assigned input.
+func (p *Database) AuthorizeInvestigationReport(ctx context.Context, org uuid.UUID, execution AgentExecution) (bool, error) {
+	var assigned bool
+	err := p.withAgentLease(ctx, org, execution, func(tx pgx.Tx) error {
+		if _, _, err := agentToolScope(ctx, tx, org, execution); err != nil {
+			return err
+		}
+		var err error
+		assigned, err = investigationHasAssignedMessage(ctx, tx, org, execution)
+		return err
+	})
+	return assigned, err
+}
+
 // FinishAgentExecution commits the product result and any final native checkpoint in one fenced transaction.
 func (p *Database) FinishAgentExecution(ctx context.Context, org uuid.UUID, execution AgentExecution,
 	status AgentExecutionStatus, reply string, conclusion *investigation.Conclusion, usage investigation.Usage,
@@ -510,11 +524,16 @@ func finishAgentInvestigation(ctx context.Context, tx pgx.Tx, org uuid.UUID, exe
 		if err := validateAgentConclusionEvidence(ctx, tx, org, execution, *conclusion); err != nil {
 			return err
 		}
-		if err := investigation.ValidateConclusionStatus(*conclusion); err != nil {
-			return fmt.Errorf("%w: %s", investigation.ErrInvalidConclusion, err)
+		var assigned bool
+		if conclusion.Status == "" {
+			var err error
+			assigned, err = investigationHasAssignedMessage(ctx, tx, org, execution)
+			if err != nil {
+				return err
+			}
 		}
-		if conclusion.Status == investigation.AnswerOnly && execution.investigationConversationID == uuid.Nil {
-			return investigation.ErrInvalidConclusion
+		if err := investigation.ValidateConclusionStatus(*conclusion, assigned); err != nil {
+			return fmt.Errorf("%w: %s", investigation.ErrInvalidConclusion, err)
 		}
 		_, origin, err := agentToolScope(ctx, tx, org, execution)
 		if err != nil {

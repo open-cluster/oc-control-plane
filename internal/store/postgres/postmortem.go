@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/incident"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/postmortem"
@@ -91,6 +91,7 @@ func (p *Database) GenerationInput(
 	if err != nil {
 		return postmortem.GenerationInput{}, fmt.Errorf("reading postmortem conclusions: %w", err)
 	}
+	var retainedReports map[uuid.UUID]investigation.HistoricalCitations
 	for results.Next() {
 		var result postmortem.InvestigationResult
 		var document []byte
@@ -102,6 +103,17 @@ func (p *Database) GenerationInput(
 			if err = json.Unmarshal(document, &result.Conclusion); err != nil {
 				results.Close()
 				return postmortem.GenerationInput{}, fmt.Errorf("decoding postmortem conclusion: %w", err)
+			}
+			retained, err := investigation.ReadHistoricalCitations(document, "impact", "findings", "actions")
+			if err != nil {
+				results.Close()
+				return postmortem.GenerationInput{}, fmt.Errorf("reading historical Postmortem citations: %w", err)
+			}
+			if len(retained) > 0 {
+				if retainedReports == nil {
+					retainedReports = make(map[uuid.UUID]investigation.HistoricalCitations)
+				}
+				retainedReports[result.InvestigationID] = retained
 			}
 			input.Results = append(input.Results, result)
 		}
@@ -121,14 +133,19 @@ func (p *Database) GenerationInput(
 	if err != nil {
 		return postmortem.GenerationInput{}, fmt.Errorf("reading postmortem tool runs: %w", err)
 	}
+	legacyRuns := make(map[historicalRun]uuid.UUID)
 	for runs.Next() {
 		var evidence postmortem.RunEvidence
-		if err = runs.Scan(&evidence.InvestigationID, &evidence.Run.ID, &evidence.Run.Ordinal,
+		var ordinal int
+		if err = runs.Scan(&evidence.InvestigationID, &evidence.Run.ID, &ordinal,
 			&evidence.Run.Tool, &evidence.Run.Purpose,
 			&evidence.Run.Outcome, &evidence.Run.Summary, &evidence.Run.StartedAt,
 			&evidence.Run.FinishedAt); err != nil {
 			runs.Close()
 			return postmortem.GenerationInput{}, fmt.Errorf("scanning postmortem tool run: %w", err)
+		}
+		if ordinal > 0 && len(retainedReports) > 0 {
+			legacyRuns[historicalRun{investigation: evidence.InvestigationID, ordinal: ordinal}] = evidence.Run.ID
 		}
 		input.Runs = append(input.Runs, evidence)
 	}
@@ -136,6 +153,12 @@ func (p *Database) GenerationInput(
 	runs.Close()
 	if err != nil {
 		return postmortem.GenerationInput{}, fmt.Errorf("reading postmortem tool runs: %w", err)
+	}
+	for i := range input.Results {
+		result := &input.Results[i]
+		if retained := retainedReports[result.InvestigationID]; retained != nil {
+			resolveHistoricalPostmortemEvidence(result, retained, legacyRuns)
+		}
 	}
 
 	events, err := pool.Query(ctx, `
@@ -179,9 +202,10 @@ func (p *Database) GenerationInput(
 		    ON c.org_id = m.org_id AND c.conversation_id = m.conversation_id
 		  LEFT JOIN investigation i
 		    ON i.org_id = m.org_id AND i.investigation_id = m.investigation_id
-		 WHERE c.incident_id = $1 AND m.org_id = $2 AND c.source = 'web' AND `+webInvestigationSource+`
+		 WHERE c.incident_id = $1 AND m.org_id = $2 AND c.source = 'web'
+		   AND m.role = $3 AND btrim(m.author_id) <> '' AND btrim(m.author_name) <> '' AND `+webInvestigationSource+`
 		 ORDER BY m.created_at, m.conversation_id, m.sequence`,
-		incidentID, organization)
+		incidentID, organization, int16(conversation.RoleUser))
 	if err != nil {
 		return postmortem.GenerationInput{}, fmt.Errorf("reading postmortem messages: %w", err)
 	}
@@ -280,17 +304,11 @@ func (p *Database) Correct(
 					continue
 				}
 				for _, statement := range *statements {
-					if !newPostmortemEvidence(statement.RunRefs, statement.EvidenceRefs) {
-						return postmortem.Postmortem{}, postmortem.ErrUnavailableEvidence
-					}
 					refs = append(refs, statement.EvidenceRefs...)
 				}
 			}
 			if corrections.ActionItems != nil {
 				for _, action := range *corrections.ActionItems {
-					if !newPostmortemEvidence(action.RunRefs, action.EvidenceRefs) {
-						return postmortem.Postmortem{}, postmortem.ErrUnavailableEvidence
-					}
 					refs = append(refs, action.EvidenceRefs...)
 				}
 			}
@@ -304,9 +322,6 @@ func (p *Database) Correct(
 			if corrections.Timeline != nil {
 				var timelineRefs []investigation.EvidenceRef
 				for _, entry := range *corrections.Timeline {
-					if !newPostmortemEvidence(entry.RunRefs, entry.EvidenceRefs) {
-						return postmortem.Postmortem{}, postmortem.ErrUnavailableEvidence
-					}
 					timelineRefs = append(timelineRefs, entry.EvidenceRefs...)
 				}
 				missing, err := evidenceMissing(ctx, tx, organization, uuid.Nil, timelineRefs, true)
@@ -334,12 +349,6 @@ func (p *Database) Correct(
 			}
 			return saved, err
 		})
-}
-
-func newPostmortemEvidence(ordinals []int, refs []investigation.EvidenceRef) bool {
-	return len(ordinals) == 0 && !slices.ContainsFunc(refs, func(ref investigation.EvidenceRef) bool {
-		return !stableToolRunRef(ref)
-	})
 }
 
 func (p *Database) Review(

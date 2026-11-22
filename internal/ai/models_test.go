@@ -50,6 +50,9 @@ func TestInvestigationStructuredReportProviderWire(t *testing.T) {
 					!bytes.Contains(request.Tools[0], []byte("toolRunId")) {
 					t.Error("expected a buffered request with the Conclusion schema and a trailing user message")
 				}
+				if len(request.Tools) == 1 && bytes.Contains(request.Tools[0], []byte("answer_only")) {
+					t.Error("the report schema offered a historical-only outcome")
+				}
 				if provider == "openrouter" {
 					policy := request.Provider
 					if !policy.ZDR || policy.AllowFallbacks == nil || *policy.AllowFallbacks ||

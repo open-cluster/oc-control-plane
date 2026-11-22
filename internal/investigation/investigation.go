@@ -15,13 +15,6 @@ const (
 	StatusCancelled
 )
 
-const (
-	StoppedByToolRuns      = "tool_runs"
-	StoppedByReasonerTurns = "reasoner_turns"
-	StoppedByWallClock     = "wall_clock"
-	StoppedByContext       = "context"
-)
-
 func (s Status) String() string {
 	switch s {
 	case StatusRunning:
@@ -53,14 +46,13 @@ const (
 
 type Finding struct {
 	Statement    string        `json:"statement"`
-	Kind         FindingKind   `json:"kind"`
-	Mechanism    string        `json:"mechanism"`
-	RunRefs      []int         `json:"runRefs,omitempty"` // Retained historical citations.
+	Kind         FindingKind   `json:"kind,omitempty"`
+	Mechanism    string        `json:"mechanism,omitempty"`
 	EvidenceRefs []EvidenceRef `json:"evidenceRefs,omitempty"`
 }
 
 type Conclusion struct {
-	Status      ConclusionStatus   `json:"status"`
+	Status      ConclusionStatus   `json:"status,omitempty"`
 	Summary     string             `json:"summary"`
 	Impact      Impact             `json:"impact"`
 	Findings    []Finding          `json:"findings"`
@@ -75,19 +67,18 @@ const (
 	VerifiedCause        ConclusionStatus = "verified_cause"
 	SupportedExplanation ConclusionStatus = "supported_explanation"
 	Inconclusive         ConclusionStatus = "inconclusive"
-	AnswerOnly           ConclusionStatus = "answer_only"
+	HistoricalAnswerOnly ConclusionStatus = "answer_only"
 )
 
 var ConclusionStatuses = []string{
 	string(VerifiedCause),
 	string(SupportedExplanation),
 	string(Inconclusive),
-	string(AnswerOnly),
+	string(HistoricalAnswerOnly),
 }
 
 type Impact struct {
 	Summary      string        `json:"summary"`
-	RunRefs      []int         `json:"runRefs,omitempty"`
 	EvidenceRefs []EvidenceRef `json:"evidenceRefs,omitempty"`
 }
 
@@ -125,7 +116,6 @@ type HypothesisResult struct {
 	Statement    string           `json:"statement"`
 	Status       HypothesisStatus `json:"status"`
 	Test         string           `json:"test"`
-	RunRefs      []int            `json:"runRefs,omitempty"`
 	EvidenceRefs []EvidenceRef    `json:"evidenceRefs,omitempty"`
 }
 
@@ -133,7 +123,6 @@ type ActionProposal struct {
 	Title        string        `json:"title"`
 	Rationale    string        `json:"rationale"`
 	Verification string        `json:"verification"`
-	RunRefs      []int         `json:"runRefs,omitempty"`
 	EvidenceRefs []EvidenceRef `json:"evidenceRefs,omitempty"`
 }
 
@@ -156,11 +145,9 @@ var LimitationTypes = []string{
 }
 
 type Limitation struct {
-	Type             LimitationType `json:"type"`
-	Statement        string         `json:"statement"`
-	RunRefs          []int          `json:"runRefs,omitempty"`
-	EvidenceRefs     []EvidenceRef  `json:"evidenceRefs,omitempty"`
-	MessageSequences []int64        `json:"messageSequences,omitempty"`
+	Type         LimitationType `json:"type"`
+	Statement    string         `json:"statement"`
+	EvidenceRefs []EvidenceRef  `json:"evidenceRefs,omitempty"`
 }
 
 const (
@@ -193,6 +180,7 @@ type Investigation struct {
 	Status         Status
 	Claimed        bool
 	Conclusion     Conclusion
+	Historical     HistoricalCitations
 	StoppedBy      string
 	Error          string
 	Usage          Usage
@@ -203,7 +191,6 @@ type Investigation struct {
 type ToolRun struct {
 	ID              uuid.UUID
 	IntegrationID   uuid.UUID
-	Ordinal         int
 	Tool            string
 	Purpose         string
 	Arguments       map[string]any
@@ -222,6 +209,12 @@ type ToolRun struct {
 	ModelClipped    bool
 	IntegrationName string
 	IntegrationType string
+}
+
+// ToolRunRead includes the retained address of evidence written before UUID citations.
+type ToolRunRead struct {
+	ToolRun
+	Ordinal int
 }
 
 type NewInvestigation struct {

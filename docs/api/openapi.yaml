@@ -3285,7 +3285,8 @@ components:
             type: integer
             format: int64
             minimum: 1
-          description: Assigned Message sequences not processed because the complete request could not fit the input budget.
+          readOnly: true
+          description: Historical assigned Message sequences retained from reports that exceeded the input budget.
     Investigation:
       type: object
       additionalProperties: false
@@ -3330,7 +3331,7 @@ components:
             - supported_explanation
             - inconclusive
             - answer_only
-          description: Assessment outcome. verified_cause is historical. answer_only is reserved for transitional factual Conversation turns.
+          description: Assessment outcome. Omitted for an unassessed factual Conversation reply. verified_cause and answer_only are historical values.
         summary:
           type: string
           minLength: 1
@@ -3810,7 +3811,6 @@ components:
           type: object
           additionalProperties: false
           required:
-            - status
             - summary
           properties:
             status:
@@ -3820,7 +3820,7 @@ components:
                 - supported_explanation
                 - inconclusive
                 - answer_only
-              description: Assessment outcome. verified_cause is historical. answer_only is reserved for transitional factual Conversation turns.
+              description: Assessment outcome. Omitted for an unassessed factual Conversation reply. verified_cause and answer_only are historical values.
             summary:
               type: string
               minLength: 1

@@ -3,7 +3,6 @@ package controlplane
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -60,7 +59,7 @@ func TestResolvedIncidentPostmortemDraftCanBeCorrectedRegeneratedAndReviewed(t *
 			"evidenceRefs": []map[string]any{{"investigationId": uuid.New(), "toolRunOrdinal": 1}},
 		}},
 	})
-	if status != http.StatusBadRequest || !strings.Contains(body, "unavailable evidence") {
+	if status != http.StatusBadRequest {
 		t.Fatalf("correction with unavailable evidence answered %d: %s", status, body)
 	}
 

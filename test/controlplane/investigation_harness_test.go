@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -26,7 +25,8 @@ func (bufferedModel) CountTokens([]*message.Msg, []model.ToolSchema) int { retur
 
 type concludingModel struct {
 	bufferedModel
-	prompts chan<- []*message.Msg
+	prompts       chan<- []*message.Msg
+	factualAnswer string
 }
 
 func (m concludingModel) Chat(_ context.Context, prompt []*message.Msg, opts ...model.CallOption) (*model.ChatResponse, error) {
@@ -39,14 +39,11 @@ func (m concludingModel) Chat(_ context.Context, prompt []*message.Msg, opts ...
 		}
 		return investigationRecap(), nil
 	}
-	status := investigation.Inconclusive
-	for _, msg := range prompt {
-		if text := msg.GetTextContent("\n"); text != nil && strings.Contains(*text, "\"messages\":[") {
-			status = investigation.AnswerOnly
-		}
+	if m.factualAnswer != "" {
+		return reportResponse(investigation.Conclusion{Summary: m.factualAnswer})
 	}
 	return reportResponse(investigation.Conclusion{
-		Status:  status,
+		Status:  investigation.Inconclusive,
 		Summary: "Investigation completed.",
 		Impact:  investigation.Impact{Summary: "Impact is not established."},
 	})

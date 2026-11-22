@@ -1,18 +1,11 @@
 package investigation
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
 )
-
-type findingView struct {
-	Statement    string        `json:"statement"`
-	Kind         FindingKind   `json:"kind,omitempty"`
-	Mechanism    string        `json:"mechanism,omitempty"`
-	RunRefs      []int         `json:"runRefs,omitempty"`
-	EvidenceRefs []EvidenceRef `json:"evidenceRefs,omitempty"`
-}
 
 type usageView struct {
 	InputTokens  int64 `json:"inputTokens"`
@@ -29,7 +22,7 @@ type investigationView struct {
 	ConclusionStatus ConclusionStatus   `json:"conclusionStatus,omitempty"`
 	Summary          string             `json:"summary,omitempty"`
 	Impact           Impact             `json:"impact"`
-	Findings         []findingView      `json:"findings"`
+	Findings         []Finding          `json:"findings"`
 	Hypotheses       []HypothesisResult `json:"hypotheses"`
 	Actions          []ActionProposal   `json:"actions"`
 	Limitations      []Limitation       `json:"limitations"`
@@ -38,6 +31,7 @@ type investigationView struct {
 	Usage            usageView          `json:"usage"`
 	CreatedAt        string             `json:"createdAt"`
 	ConcludedAt      string             `json:"concludedAt,omitempty"`
+	historical       HistoricalCitations
 }
 
 type runView struct {
@@ -74,11 +68,28 @@ type detailView struct {
 	Runs []runView `json:"runs"`
 }
 
-func investigationViewOf(found Investigation) investigationView {
-	findings := make([]findingView, 0, len(found.Conclusion.Findings))
-	for _, finding := range found.Conclusion.Findings {
-		findings = append(findings, findingView(finding))
+func (view investigationView) MarshalJSON() ([]byte, error) {
+	type fields investigationView
+	document, err := json.Marshal(fields(view))
+	if err != nil {
+		return nil, err
 	}
+	return WithHistoricalCitations(document, view.historical)
+}
+
+func (view detailView) MarshalJSON() ([]byte, error) {
+	type fields investigationView
+	document, err := json.Marshal(struct {
+		fields
+		Runs []runView `json:"runs"`
+	}{fields: fields(view.investigationView), Runs: view.Runs})
+	if err != nil {
+		return nil, err
+	}
+	return WithHistoricalCitations(document, view.historical)
+}
+
+func investigationViewOf(found Investigation) investigationView {
 	view := investigationView{
 		ID:               found.ID.String(),
 		Status:           found.Status.PublicStatus(found.Claimed),
@@ -88,7 +99,8 @@ func investigationViewOf(found Investigation) investigationView {
 		ConclusionStatus: found.Conclusion.Status,
 		Summary:          found.Conclusion.Summary,
 		Impact:           found.Conclusion.Impact,
-		Findings:         findings,
+		Findings:         append([]Finding{}, found.Conclusion.Findings...),
+		historical:       found.Historical,
 		Hypotheses:       found.Conclusion.Hypotheses,
 		Actions:          found.Conclusion.Actions,
 		Limitations:      found.Conclusion.Limitations,
@@ -109,7 +121,7 @@ func investigationViewOf(found Investigation) investigationView {
 	return view
 }
 
-func detailViewOf(found Investigation, runs []ToolRun) detailView {
+func detailViewOf(found Investigation, runs []ToolRunRead) detailView {
 	view := detailView{
 		investigationView: investigationViewOf(found),
 		Runs:              make([]runView, 0, len(runs)),
@@ -120,7 +132,7 @@ func detailViewOf(found Investigation, runs []ToolRun) detailView {
 	return view
 }
 
-func runViewOf(run ToolRun) runView {
+func runViewOf(run ToolRunRead) runView {
 	rendered := runView{
 		ID:            run.ID,
 		Ordinal:       run.Ordinal,

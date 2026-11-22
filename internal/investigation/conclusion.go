@@ -20,6 +20,20 @@ func ConclusionSchema() json.RawMessage {
 	return json.RawMessage(conclusionSchema)
 }
 
+// AssignedMessageConclusionSchema allows a factual reply without an assessment.
+func AssignedMessageConclusionSchema() json.RawMessage {
+	var schema map[string]json.RawMessage
+	if err := json.Unmarshal(ConclusionSchema(), &schema); err != nil {
+		return ConclusionSchema()
+	}
+	schema["required"] = json.RawMessage(`["summary"]`)
+	assigned, err := json.Marshal(schema)
+	if err != nil {
+		return ConclusionSchema()
+	}
+	return assigned
+}
+
 // ParseConclusion decodes an untrusted report into the canonical Conclusion.
 func ParseConclusion(raw []byte) (Conclusion, error) {
 	var conclusion Conclusion
@@ -30,6 +44,14 @@ func ParseConclusion(raw []byte) (Conclusion, error) {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&conclusion); err != nil {
 		return Conclusion{}, errors.New("the Conclusion does not match the report schema")
+	}
+	if conclusion.Status == "" {
+		var fields struct {
+			Status json.RawMessage `json:"status"`
+		}
+		if err := json.Unmarshal(raw, &fields); err != nil || fields.Status != nil {
+			return Conclusion{}, errors.New("the Conclusion assessment must be valid or omitted")
+		}
 	}
 	if !boundedText(conclusion.Summary, MaxSummaryLength) {
 		return Conclusion{}, errors.New("the Conclusion needs a bounded summary")
@@ -65,7 +87,7 @@ func ParseConclusion(raw []byte) (Conclusion, error) {
 	conclusion.Limitations = append([]Limitation{}, conclusion.Limitations...)
 	for _, limitation := range conclusion.Limitations {
 		if !slices.Contains(LimitationTypes, string(limitation.Type)) ||
-			!boundedText(limitation.Statement, MaxSummaryLength) || len(limitation.MessageSequences) != 0 {
+			!boundedText(limitation.Statement, MaxSummaryLength) {
 			return Conclusion{}, errors.New("each limitation needs a valid type and statement")
 		}
 	}
@@ -78,7 +100,7 @@ func boundedText(text string, limit int) bool {
 
 // ValidateConclusionStatus checks that the findings support the report's status.
 // Durable evidence must also be validated by the store that commits the report.
-func ValidateConclusionStatus(conclusion Conclusion) error {
+func ValidateConclusionStatus(conclusion Conclusion, assignedMessage bool) error {
 	var hasCause, hasExplanation bool
 	for _, finding := range conclusion.Findings {
 		causal := finding.Kind == FindingCause || finding.Kind == FindingContributingFactor
@@ -97,9 +119,9 @@ func ValidateConclusionStatus(conclusion Conclusion) error {
 		if hasCause {
 			return errors.New("inconclusive cannot carry a cause")
 		}
-	case AnswerOnly:
-		if hasExplanation {
-			return errors.New("answer_only cannot carry causal Findings")
+	case "":
+		if !assignedMessage || hasExplanation {
+			return errors.New("only a factual reply to an assigned Message can omit an assessment")
 		}
 	default:
 		return errors.New("unknown Conclusion status")

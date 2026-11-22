@@ -48,12 +48,13 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 	}
 	defer func() { _ = database.Close(ctx) }()
 	ids := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
-	refs := []investigation.EvidenceRef{{InvestigationID: ids[0], ToolRunOrdinal: 1}, {InvestigationID: ids[1], ToolRunOrdinal: 1}}
+	refs := []investigation.HistoricalEvidenceRef{{InvestigationID: ids[0], ToolRunOrdinal: 1}, {InvestigationID: ids[1], ToolRunOrdinal: 1}}
 	for index, id := range ids {
-		conclusion := investigation.Conclusion{Status: investigation.AnswerOnly, Summary: "Prior observations."}
+		conclusion := map[string]any{"status": "answer_only", "summary": "Prior observations."}
 		if index == 2 {
-			conclusion.Findings = []investigation.Finding{{Statement: "Two prior observations.", Kind: investigation.FindingObservation,
-				RunRefs: []int{}, EvidenceRefs: refs}}
+			conclusion["findings"] = []map[string]any{{
+				"statement": "Two prior observations.", "kind": "observation", "evidenceRefs": refs,
+			}}
 		}
 		encoded, err := json.Marshal(conclusion)
 		if err != nil {
@@ -150,7 +151,7 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 	if runIDs[0] == runIDs[1] {
 		t.Fatal("two Investigations' first runs shared an evidence identity")
 	}
-	refs[0] = investigation.EvidenceRef{ToolRunID: runIDs[0]}
+	refs[0] = investigation.HistoricalEvidenceRef{ToolRunID: runIDs[0]}
 	encodedRefs, err := json.Marshal(refs)
 	if err != nil {
 		t.Fatal(err)
@@ -168,7 +169,9 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 		}
 		status, body := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/investigations/"+ids[2].String(), nil)
 		var result struct {
-			Findings    []investigation.Finding
+			Findings []struct {
+				EvidenceRefs []investigation.HistoricalEvidenceRef
+			}
 			Limitations []investigation.Limitation
 		}
 		decodeInto(t, body, &result)
@@ -212,7 +215,7 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 	if status, body := plane.call(t, http.MethodGet, derived, nil); status != http.StatusNotFound {
 		t.Fatalf("a retained web report exposed a restricted Slack citation: %d %s", status, body)
 	}
-	refs[1] = investigation.EvidenceRef{ToolRunID: runIDs[1]}
+	refs[1] = investigation.HistoricalEvidenceRef{ToolRunID: runIDs[1]}
 	encodedRefs, err = json.Marshal(refs)
 	if err != nil {
 		t.Fatal(err)

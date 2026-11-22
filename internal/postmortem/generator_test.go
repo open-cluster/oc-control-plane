@@ -27,7 +27,7 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 		Runs: []RunEvidence{{
 			InvestigationID: priorID,
 			Run: investigation.ToolRun{
-				ID: runID, Ordinal: 2, Summary: "Checkout failed",
+				ID: runID, Summary: "Checkout failed", Outcome: investigation.RunSucceeded,
 				FinishedAt: time.Date(2026, 8, 27, 9, 4, 0, 0, time.UTC),
 			},
 		}},
@@ -42,14 +42,15 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 			Summary: "A bad pool-size deployment exhausted database connections.",
 			Impact:  investigation.Impact{Summary: "Impact is not established."},
 			Findings: []investigation.Finding{{
-				Statement: "The pool-size deployment exhausted connections.",
-				Kind:      investigation.FindingCause,
-				Mechanism: "The larger pools exceeded the database connection limit.",
-				RunRefs:   []int{2},
+				Statement:    "The pool-size deployment exhausted connections.",
+				Kind:         investigation.FindingCause,
+				Mechanism:    "The larger pools exceeded the database connection limit.",
+				EvidenceRefs: []investigation.EvidenceRef{{ToolRunID: runID}},
 			}},
 			Actions: []investigation.ActionProposal{{
 				Title:        "Restore a bounded pool size",
-				Verification: "Database utilization remains below the limit.", RunRefs: []int{2},
+				Verification: "Database utilization remains below the limit.",
+				EvidenceRefs: []investigation.EvidenceRef{{ToolRunID: runID}},
 			}},
 			Hypotheses: []investigation.HypothesisResult{{
 				Statement: "A traffic spike may also have contributed.",
@@ -68,19 +69,8 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 	}
 	if len(draft.RootCauses) != 1 || len(draft.RootCauses[0].EvidenceRefs) != 1 ||
 		draft.RootCauses[0].EvidenceRefs[0] != (investigation.EvidenceRef{ToolRunID: runID}) {
-		t.Errorf("retained ordinal was not converted to a canonical UUID")
+		t.Errorf("the successful Tool Run UUID was not retained")
 		t.Errorf("root causes = %+v", draft.RootCauses)
-	}
-	input.Results[0].Conclusion.Findings[0].RunRefs = nil
-	input.Results[0].Conclusion.Findings[0].EvidenceRefs = []investigation.EvidenceRef{
-		{InvestigationID: priorID, ToolRunOrdinal: 2},
-	}
-	cited, err := json.Marshal(DraftFrom(input).RootCauses)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(cited), `"evidenceRefs":[{"toolRunId":"`+runID.String()+`"}]`) {
-		t.Errorf("prior citation missing from draft: %s", cited)
 	}
 	pruned := input
 	pruned.Runs = nil
@@ -88,11 +78,16 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 	if len(prunedDraft.RootCauses) != 1 || prunedDraft.RootCauses[0].Statement != NeedsHumanInput {
 		t.Errorf("a pruned historical citation established a root cause: %+v", prunedDraft.RootCauses)
 	}
-	nativeRef := investigation.EvidenceRef{ToolRunID: uuid.New()}
+	failed := input
+	failed.Runs = append([]RunEvidence(nil), input.Runs...)
+	failed.Runs[0].Run.Outcome = investigation.RunFailed
+	if draft := DraftFrom(failed); draft.RootCauses[0].Statement != NeedsHumanInput || draft.ExecutiveSummary != NeedsHumanInput {
+		t.Fatalf("a failed run established a cause: %+v", draft)
+	}
+	nativeRef := investigation.EvidenceRef{ToolRunID: runID}
 	input.Results[0].Conclusion.Impact = investigation.Impact{
 		Summary: "Checkout requests failed for 12 minutes.", EvidenceRefs: []investigation.EvidenceRef{nativeRef},
 	}
-	input.Results[0].Conclusion.Actions[0].RunRefs = nil
 	input.Results[0].Conclusion.Actions[0].EvidenceRefs = []investigation.EvidenceRef{nativeRef}
 	native := DraftFrom(input)
 	if native.Impact != "Checkout requests failed for 12 minutes." || native.Resolution != NeedsHumanInput ||
@@ -133,7 +128,7 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 	}
 
 	input.Results[0].Conclusion.Impact = investigation.Impact{
-		Summary: "Checkout requests failed for 12 minutes.", RunRefs: []int{2},
+		Summary: "Checkout requests failed for 12 minutes.", EvidenceRefs: []investigation.EvidenceRef{nativeRef},
 	}
 	if cited := DraftFrom(input); cited.Impact != "Checkout requests failed for 12 minutes." {
 		t.Errorf("cited impact = %q", cited.Impact)

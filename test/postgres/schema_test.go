@@ -114,24 +114,24 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 		t.Fatalf("retained Tool Runs did not gain distinct identities: %+v, %v", runs, err)
 	}
 	refs := []investigation.EvidenceRef{
-		{InvestigationID: investigationID, ToolRunOrdinal: 1},
+		{ToolRunID: runs[0].ID},
 		{ToolRunID: runs[1].ID},
-		{ToolRunID: runs[0].ID, InvestigationID: investigationID, ToolRunOrdinal: 1},
 	}
 	if missing, err := database.EvidenceMissing(ctx, org, uuid.Nil, refs); err != nil || missing {
 		t.Fatalf("retained citations did not resolve after migration: missing=%t, %v", missing, err)
 	}
-	refs[2].ToolRunID = runs[1].ID
+	refs[1].ToolRunID = uuid.New()
 	if missing, err := database.EvidenceMissing(ctx, org, uuid.Nil, refs); err != nil || !missing {
-		t.Fatalf("a combined citation resolved to two different runs: missing=%t, %v", missing, err)
+		t.Fatalf("an unavailable UUID resolved: missing=%t, %v", missing, err)
 	}
 	report, err := database.WebInvestigation(ctx, org, investigationID)
 	if err != nil || len(report.Conclusion.Findings) != 1 {
 		t.Fatalf("retained Finding = %+v, %v", report.Conclusion.Findings, err)
 	}
 	finding := report.Conclusion.Findings[0]
-	if finding.Statement != "Checkout was unavailable" || !reflect.DeepEqual(finding.RunRefs, []int{1, 9}) ||
-		!reflect.DeepEqual(finding.EvidenceRefs, []investigation.EvidenceRef{{
+	anchors := report.Historical["findings"]
+	if len(anchors) != 1 || finding.Statement != "Checkout was unavailable" || !reflect.DeepEqual(anchors[0].RunRefs, []int{1, 9}) ||
+		!reflect.DeepEqual(anchors[0].EvidenceRefs, []investigation.HistoricalEvidenceRef{{
 			ToolRunID: runs[0].ID, InvestigationID: investigationID, ToolRunOrdinal: 1,
 		}}) || len(report.Conclusion.Limitations) != 1 ||
 		report.Conclusion.Limitations[0].Statement != investigation.MissingEvidenceStatement {
@@ -442,15 +442,19 @@ func TestCleanupMigrationValidatesAndConvertsPostmortemReviewers(t *testing.T) {
 	}
 	reviewed, err := database.Postmortem(ctx, org, reviewedIncident)
 	want := []investigation.EvidenceRef{{
-		ToolRunID: runs[0].ID, InvestigationID: investigationID, ToolRunOrdinal: 1,
+		ToolRunID: runs[0].ID,
 	}}
 	if err != nil || reviewed.Status != postmortem.StatusReviewed || reviewed.Revision != 1 ||
 		len(reviewed.Timeline) != 1 || reviewed.Timeline[0].Description != "Checkout stopped" ||
 		!reflect.DeepEqual(reviewed.Timeline[0].EvidenceRefs, want) ||
-		!reflect.DeepEqual(reviewed.Timeline[0].RunRefs, []int{1}) ||
 		len(reviewed.RootCauses) != 1 || reviewed.RootCauses[0].Statement != "Pool exhausted" ||
 		!reflect.DeepEqual(reviewed.RootCauses[0].EvidenceRefs, want) {
 		t.Fatalf("the reviewed Postmortem was not preserved with stable citations: %+v, %v", reviewed, err)
+	}
+	encoded, err := json.Marshal(reviewed)
+	if err != nil || !strings.Contains(string(encoded), `"runRefs":[1]`) ||
+		!strings.Contains(string(encoded), `"toolRunOrdinal":1`) {
+		t.Fatalf("historical Postmortem anchors were lost: %s, %v", encoded, err)
 	}
 	if _, err := database.Postmortem(ctx, org, draftIncident); !errors.Is(err, postmortem.ErrUnknown) {
 		t.Fatalf("a legacy Postmortem derived from Slack was visible to a web reader: %v", err)

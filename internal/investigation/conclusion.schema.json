@@ -16,7 +16,7 @@
     }
   },
   "properties": {
-    "status": { "enum": ["supported_explanation", "inconclusive", "answer_only"], "type": "string" },
+    "status": { "enum": ["supported_explanation", "inconclusive"], "type": "string" },
     "summary": { "type": "string", "minLength": 1, "maxLength": 4096 },
     "impact": {
       "type": "object",

@@ -3,11 +3,13 @@ package storage_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	"github.com/open-cluster/oc-control-plane/internal/postmortem"
 )
 
@@ -38,12 +40,55 @@ func TestPostmortemLifecycleIsIncidentOwnedAndTenantScoped(t *testing.T) {
 		 WHERE incident_id = $1 AND org_id = $2`, incident, organization); err != nil {
 		t.Fatal(err)
 	}
+	legacyRun, legacyReport := uuid.New(), uuid.New()
+	if _, err = pool.Exec(t.Context(), `
+		INSERT INTO investigation (org_id, investigation_id, incident_id, subject, window_from,
+		    window_until, status, concluded_at, conclusion)
+		VALUES ($1, $2, $3, 'legacy report', now()-interval '1 hour', now(), 2, now(),
+		    '{"status":"supported_explanation","summary":"Checkout pooled too many connections.",
+		      "findings":[{"kind":"cause","statement":"The pool exhausted connections.","runRefs":[1]}],
+		      "actions":[{"title":"Bound the connection pool","runRefs":[1]}]}'::jsonb);`,
+		organization, legacyReport, incident); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(t.Context(), `
+		INSERT INTO investigation_tool_run (org_id, tool_run_id, investigation_id, ordinal, tool,
+		    window_from, window_until, outcome, started_at, finished_at)
+		VALUES ($1, $2, $3, 1, 'read', now()-interval '1 hour', now(), 1, now(), now());`,
+		organization, legacyRun, legacyReport); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(t.Context(), `
+		WITH chat AS (
+		    INSERT INTO conversation (org_id, conversation_id, incident_id, source, subject)
+		    VALUES ($1, gen_random_uuid(), $2, 'web', 'checkout discussion') RETURNING conversation_id
+		)
+		INSERT INTO conversation_message (org_id, conversation_id, sequence, role, author_id, author_name,
+		    text, window_from, window_until)
+		SELECT $1, conversation_id, message.sequence, message.role, message.author_id, message.author_name,
+		    message.text, now()-interval '1 hour', now() FROM chat
+		CROSS JOIN (VALUES (1, 1, $3::text, 'On call', 'I observed the rollback.'),
+		    (2, 2, $3::text, 'Assistant', 'Generated recap.'),
+		    (3, 1, '', '', 'Unattributed comment.')) message(sequence, role, author_id, author_name, text);`,
+		organization, incident, principal.UserID().String()); err != nil {
+		t.Fatal(err)
+	}
 
 	input, err := database.GenerationInput(context.Background(), organization, incident)
 	if err != nil || input.IncidentID != incident || input.Title == "" || input.ResolvedAt.IsZero() {
 		t.Fatalf("generation input = %+v err=%v", input, err)
 	}
 	draft := postmortem.DraftFrom(input)
+	if len(draft.RootCauses) != 1 || len(draft.RootCauses[0].EvidenceRefs) != 1 ||
+		draft.RootCauses[0].EvidenceRefs[0].ToolRunID != legacyRun ||
+		len(draft.ActionItems) != 1 || len(draft.ActionItems[0].EvidenceRefs) != 1 ||
+		draft.ActionItems[0].EvidenceRefs[0].ToolRunID != legacyRun {
+		t.Fatalf("legacy report provenance did not resolve to its UUID: %+v", draft)
+	}
+	if testimony := strings.Join(draft.OpenQuestions, " "); !strings.Contains(testimony, "Verify testimony from On call: I observed the rollback.") ||
+		strings.Contains(testimony, "Generated recap") || strings.Contains(testimony, "Unattributed comment") {
+		t.Fatalf("wrong testimony in Postmortem: %s", testimony)
+	}
 	created, err := database.CreateDraft(context.Background(), principal,
 		organization, draft)
 	if err != nil || created.Revision != 1 || created.Status != postmortem.StatusDraft ||
@@ -99,10 +144,10 @@ func TestPostmortemLifecycleIsIncidentOwnedAndTenantScoped(t *testing.T) {
 	}
 
 	timeline := []postmortem.TimelineEntry{{
-		Description: "Unrecorded read", InvestigationID: uuid.NewString(), RunRefs: []int{1},
+		Description: "Unrecorded read", EvidenceRefs: []investigation.EvidenceRef{{ToolRunID: uuid.New()}},
 	}}
 	if _, err := database.Correct(ctx, principal, organization, incident, postmortem.Corrections{Timeline: &timeline}); !errors.Is(err, postmortem.ErrUnavailableEvidence) {
-		t.Errorf("correction accepted a dangling timeline ordinal: %v", err)
+		t.Errorf("correction accepted a dangling timeline UUID: %v", err)
 	}
 	restricted := []postmortem.ActionItem{{
 		Title: "Review private source", InvestigationID: reportID.String(),

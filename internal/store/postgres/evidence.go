@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
+	"github.com/open-cluster/oc-control-plane/internal/postmortem"
 )
 
 const toolRunOwnerJoins = `
@@ -57,6 +58,29 @@ func evidenceMissing(ctx context.Context, pool querier, org, conversationID uuid
 	if len(refs) == 0 {
 		return false, nil
 	}
+	ids := make([]uuid.UUID, 0, len(refs))
+	for _, ref := range refs {
+		ids = append(ids, ref.ToolRunID)
+	}
+	var missing bool
+	err := pool.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM unnest($2::uuid[]) AS reference(tool_run_id)
+		WHERE NOT EXISTS (SELECT 1 FROM investigation_tool_run r `+toolRunOwnerJoins+`
+			 WHERE r.org_id = $1 AND r.tool_run_id = reference.tool_run_id
+			   AND r.outcome IS NOT NULL AND (r.outcome = $3 OR $5)
+			   AND (`+webToolRunSource+` OR source.conversation_id = $4)
+			   AND NOT EXISTS (`+privateInvestigationSources+`
+			       AND private.conversation_id IS DISTINCT FROM $4)))`,
+		org, ids, int16(investigation.RunSucceeded), nullableUUID(conversationID), allowFailed).Scan(&missing)
+	return missing, err
+}
+
+func historicalEvidenceMissing(ctx context.Context, pool querier, org, conversationID uuid.UUID,
+	refs []investigation.HistoricalEvidenceRef,
+) (bool, error) {
+	if len(refs) == 0 {
+		return false, nil
+	}
 	runIDs := make([]*uuid.UUID, 0, len(refs))
 	investigationIDs := make([]*uuid.UUID, 0, len(refs))
 	ordinals := make([]int64, 0, len(refs))
@@ -70,7 +94,7 @@ func evidenceMissing(ctx context.Context, pool querier, org, conversationID uuid
 		SELECT 1 FROM unnest($2::uuid[], $3::uuid[], $4::bigint[]) AS reference(tool_run_id, investigation_id, ordinal)
 		WHERE NOT EXISTS (
 			SELECT 1 FROM investigation_tool_run r `+toolRunOwnerJoins+`
-			 WHERE r.org_id = $1 AND r.outcome IS NOT NULL AND (r.outcome = $5 OR $7)
+			 WHERE r.org_id = $1 AND r.outcome = $5
 			   AND (reference.tool_run_id IS NULL OR r.tool_run_id = reference.tool_run_id)
 			   AND CASE WHEN reference.investigation_id IS NULL
 			            THEN reference.tool_run_id IS NOT NULL AND reference.ordinal = 0
@@ -79,7 +103,7 @@ func evidenceMissing(ctx context.Context, pool querier, org, conversationID uuid
 			   AND NOT EXISTS (`+privateInvestigationSources+`
 			       AND private.conversation_id IS DISTINCT FROM $6)))`,
 		org, runIDs, investigationIDs, ordinals, int16(investigation.RunSucceeded),
-		nullableUUID(conversationID), allowFailed).Scan(&missing)
+		nullableUUID(conversationID)).Scan(&missing)
 	return missing, err
 }
 
@@ -87,35 +111,31 @@ func validateAgentConclusionEvidence(ctx context.Context, tx querier, org uuid.U
 	conclusion investigation.Conclusion,
 ) error {
 	type citations struct {
-		ordinals       []int
 		refs           []investigation.EvidenceRef
 		requireSuccess bool
 	}
-	sections := []citations{{conclusion.Impact.RunRefs, conclusion.Impact.EvidenceRefs, true}}
+	sections := []citations{{conclusion.Impact.EvidenceRefs, true}}
 	for _, finding := range conclusion.Findings {
 		if len(finding.EvidenceRefs) == 0 {
 			return ErrAgentEvidenceUnavailable
 		}
-		sections = append(sections, citations{finding.RunRefs, finding.EvidenceRefs, true})
+		sections = append(sections, citations{finding.EvidenceRefs, true})
 	}
 	for _, hypothesis := range conclusion.Hypotheses {
-		sections = append(sections, citations{hypothesis.RunRefs, hypothesis.EvidenceRefs, true})
+		sections = append(sections, citations{hypothesis.EvidenceRefs, true})
 	}
 	for _, action := range conclusion.Actions {
-		sections = append(sections, citations{action.RunRefs, action.EvidenceRefs, true})
+		sections = append(sections, citations{action.EvidenceRefs, true})
 	}
 	for _, limitation := range conclusion.Limitations {
-		sections = append(sections, citations{limitation.RunRefs, limitation.EvidenceRefs, false})
+		sections = append(sections, citations{limitation.EvidenceRefs, false})
 	}
 	var ids []uuid.UUID
 	var requireSuccess []bool
 	for _, section := range sections {
-		if len(section.ordinals) != 0 {
-			return ErrAgentEvidenceUnavailable
-		}
 		seen := make(map[uuid.UUID]bool, len(section.refs))
 		for _, ref := range section.refs {
-			if !stableToolRunRef(ref) || seen[ref.ToolRunID] {
+			if ref.ToolRunID == uuid.Nil || seen[ref.ToolRunID] {
 				return ErrAgentEvidenceUnavailable
 			}
 			seen[ref.ToolRunID] = true
@@ -147,27 +167,70 @@ func validateAgentConclusionEvidence(ctx context.Context, tx querier, org uuid.U
 	return err
 }
 
-func stableToolRunRef(ref investigation.EvidenceRef) bool {
-	return ref.ToolRunID != uuid.Nil && ref.InvestigationID == uuid.Nil && ref.ToolRunOrdinal == 0
+func resultEvidence(found investigation.Investigation) ([]investigation.EvidenceRef, []investigation.HistoricalEvidenceRef) {
+	var refs []investigation.EvidenceRef
+	var historical []investigation.HistoricalEvidenceRef
+	add := func(section string, index int, evidence []investigation.EvidenceRef) {
+		entries := found.Historical[section]
+		if index < len(entries) {
+			historical = append(historical, entries[index].EvidenceRefs...)
+			for _, ordinal := range entries[index].RunRefs {
+				historical = append(historical, investigation.HistoricalEvidenceRef{InvestigationID: found.ID, ToolRunOrdinal: ordinal})
+			}
+			return
+		}
+		refs = append(refs, evidence...)
+	}
+	add("impact", 0, found.Conclusion.Impact.EvidenceRefs)
+	for index, finding := range found.Conclusion.Findings {
+		add("findings", index, finding.EvidenceRefs)
+	}
+	for index, hypothesis := range found.Conclusion.Hypotheses {
+		add("hypotheses", index, hypothesis.EvidenceRefs)
+	}
+	for index, action := range found.Conclusion.Actions {
+		add("actions", index, action.EvidenceRefs)
+	}
+	return refs, historical
 }
 
-func resultEvidence(id uuid.UUID, conclusion investigation.Conclusion) []investigation.EvidenceRef {
-	var refs []investigation.EvidenceRef
-	add := func(evidence []investigation.EvidenceRef, ordinals []int) {
-		refs = append(refs, evidence...)
-		for _, ordinal := range ordinals {
-			refs = append(refs, investigation.EvidenceRef{InvestigationID: id, ToolRunOrdinal: ordinal})
+type historicalRun struct {
+	investigation uuid.UUID
+	ordinal       int
+}
+
+func resolveHistoricalPostmortemEvidence(result *postmortem.InvestigationResult,
+	retained investigation.HistoricalCitations, runs map[historicalRun]uuid.UUID,
+) {
+	resolve := func(section string, index int, refs *[]investigation.EvidenceRef) {
+		entries := retained[section]
+		if index >= len(entries) {
+			return
+		}
+		entry := entries[index]
+		*refs = make([]investigation.EvidenceRef, 0, len(entry.EvidenceRefs)+len(entry.RunRefs))
+		for _, ref := range entry.EvidenceRefs {
+			id := ref.ToolRunID
+			if ref.ToolRunOrdinal != 0 {
+				resolved := runs[historicalRun{investigation: ref.InvestigationID, ordinal: ref.ToolRunOrdinal}]
+				if id == uuid.Nil {
+					id = resolved
+				} else if id != resolved {
+					id = uuid.Nil
+				}
+			}
+			*refs = append(*refs, investigation.EvidenceRef{ToolRunID: id})
+		}
+		for _, ordinal := range entry.RunRefs {
+			id := runs[historicalRun{investigation: result.InvestigationID, ordinal: ordinal}]
+			*refs = append(*refs, investigation.EvidenceRef{ToolRunID: id})
 		}
 	}
-	add(conclusion.Impact.EvidenceRefs, conclusion.Impact.RunRefs)
-	for _, finding := range conclusion.Findings {
-		add(finding.EvidenceRefs, finding.RunRefs)
+	resolve("impact", 0, &result.Conclusion.Impact.EvidenceRefs)
+	for i := range result.Conclusion.Findings {
+		resolve("findings", i, &result.Conclusion.Findings[i].EvidenceRefs)
 	}
-	for _, hypothesis := range conclusion.Hypotheses {
-		add(hypothesis.EvidenceRefs, hypothesis.RunRefs)
+	for i := range result.Conclusion.Actions {
+		resolve("actions", i, &result.Conclusion.Actions[i].EvidenceRefs)
 	}
-	for _, action := range conclusion.Actions {
-		add(action.EvidenceRefs, action.RunRefs)
-	}
-	return refs
 }

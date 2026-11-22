@@ -54,6 +54,20 @@ func conversationOrigin(ctx context.Context, on querier, organization, id uuid.U
 	}, nil
 }
 
+func investigationHasAssignedMessage(ctx context.Context, tx pgx.Tx, org uuid.UUID, execution AgentExecution) (bool, error) {
+	if execution.investigationConversationID == uuid.Nil {
+		return false, nil
+	}
+	var assigned bool
+	err := tx.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM conversation_message m
+		JOIN conversation c ON c.org_id = m.org_id AND c.conversation_id = m.conversation_id
+		WHERE m.org_id = $1 AND m.conversation_id = $2 AND m.investigation_id = $3
+		  AND m.role = $4 AND btrim(m.author_id) <> '' AND c.source IN ('web', 'slack'))`,
+		org, execution.investigationConversationID, execution.InvestigationID, int16(conversation.RoleUser)).Scan(&assigned)
+	return assigned, err
+}
+
 func (p *Database) InvestigationMessages(ctx context.Context, org uuid.UUID, conversationID, id uuid.UUID) ([]investigation.AssignedMessage, error) {
 	pool, err := p.poolForOrganization(org)
 	if err != nil {

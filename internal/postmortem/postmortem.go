@@ -1,7 +1,9 @@
 package postmortem
 
 import (
+	"encoding/json"
 	"errors"
+	"maps"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,14 +32,12 @@ type TimelineEntry struct {
 	At              time.Time                   `json:"at"`
 	Description     string                      `json:"description"`
 	InvestigationID string                      `json:"investigationId,omitempty"`
-	RunRefs         []int                       `json:"runRefs,omitempty"`
 	EvidenceRefs    []investigation.EvidenceRef `json:"evidenceRefs,omitempty"`
 }
 
 type CitedStatement struct {
 	InvestigationID string                      `json:"investigationId,omitempty"`
 	Statement       string                      `json:"statement"`
-	RunRefs         []int                       `json:"runRefs,omitempty"`
 	EvidenceRefs    []investigation.EvidenceRef `json:"evidenceRefs,omitempty"`
 }
 
@@ -47,7 +47,6 @@ type ActionItem struct {
 	Deadline        string                      `json:"deadline"`
 	Verification    string                      `json:"verification"`
 	InvestigationID string                      `json:"investigationId,omitempty"`
-	RunRefs         []int                       `json:"runRefs,omitempty"`
 	EvidenceRefs    []investigation.EvidenceRef `json:"evidenceRefs,omitempty"`
 }
 
@@ -72,6 +71,31 @@ type Postmortem struct {
 	UpdatedAt           time.Time        `json:"updatedAt"`
 	ReviewedAt          time.Time        `json:"reviewedAt,omitempty"`
 	ReviewedByUserID    *uuid.UUID       `json:"reviewedByUserId,omitempty"`
+	historical          investigation.HistoricalCitations
+}
+
+func (document Postmortem) MarshalJSON() ([]byte, error) {
+	type fields Postmortem
+	encoded, err := json.Marshal(fields(document))
+	if err != nil {
+		return nil, err
+	}
+	return investigation.WithHistoricalCitations(encoded, document.historical)
+}
+
+func (document *Postmortem) UnmarshalJSON(encoded []byte) error {
+	type fields Postmortem
+	var decoded fields
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		return err
+	}
+	historical, err := investigation.ReadHistoricalCitations(encoded, "timeline", "rootCauses", "contributingFactors", "actionItems")
+	if err != nil {
+		return err
+	}
+	*document = Postmortem(decoded)
+	document.historical = historical
+	return nil
 }
 
 type AlertEvent struct {
@@ -123,6 +147,7 @@ type InvestigationResult struct {
 }
 
 func ApplyCorrections(document Postmortem, corrections Corrections) Postmortem {
+	document.historical = maps.Clone(document.historical)
 	if corrections.Title != nil {
 		document.Title = *corrections.Title
 	}
@@ -137,12 +162,15 @@ func ApplyCorrections(document Postmortem, corrections Corrections) Postmortem {
 	}
 	if corrections.Timeline != nil {
 		document.Timeline = append([]TimelineEntry(nil), (*corrections.Timeline)...)
+		delete(document.historical, "timeline")
 	}
 	if corrections.RootCauses != nil {
 		document.RootCauses = append([]CitedStatement(nil), (*corrections.RootCauses)...)
+		delete(document.historical, "rootCauses")
 	}
 	if corrections.ContributingFactors != nil {
 		document.ContributingFactors = append([]CitedStatement(nil), (*corrections.ContributingFactors)...)
+		delete(document.historical, "contributingFactors")
 	}
 	if corrections.Resolution != nil {
 		document.Resolution = *corrections.Resolution
@@ -158,6 +186,7 @@ func ApplyCorrections(document Postmortem, corrections Corrections) Postmortem {
 	}
 	if corrections.ActionItems != nil {
 		document.ActionItems = append([]ActionItem(nil), (*corrections.ActionItems)...)
+		delete(document.historical, "actionItems")
 	}
 	if corrections.OpenQuestions != nil {
 		document.OpenQuestions = append([]string(nil), (*corrections.OpenQuestions)...)

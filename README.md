@@ -102,8 +102,11 @@ management, and reply recovery. PostgreSQL stores checkpoints and fences Tool au
 evidence recording, and report acceptance. Web and Slack Investigation turns use the same runtime.
 After the investigative reply completes, AgentScope makes a separate structured report request.
 OpenCluster validates the Conclusion and commits it with the execution outcome and any linked
-Message. A crash before commit can regenerate the report from the completed checkpoint without
-resuming the investigative reply.
+Message. A factual reply to an assigned web or Slack Message can finish without a causal assessment.
+An autonomous Incident Investigation always records an assessment when it concludes. Conversation
+checkpoint promotion preserves native Tool results and compaction along with the accepted reply.
+A crash before commit can regenerate the report from the completed checkpoint without resuming
+the investigative reply.
 When upgrading from the previous Investigation engine, stop the old control-plane instances
 before starting this version so each newly admitted Investigation gets a native execution.
 

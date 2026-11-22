@@ -1610,7 +1610,8 @@ components:
           maxItems: 100
           uniqueItems: true
           items: { type: integer, format: int64, minimum: 1 }
-          description: Assigned Message sequences not processed because the complete request could not fit the input budget.
+          readOnly: true
+          description: Historical assigned Message sequences retained from reports that exceeded the input budget.
     Investigation:
       type: object
       additionalProperties: false
@@ -1622,7 +1623,7 @@ components:
         incidentId: { $ref: "#/components/schemas/UUID" }
         windowFrom: { $ref: "#/components/schemas/Timestamp" }
         windowUntil: { $ref: "#/components/schemas/Timestamp" }
-        conclusionStatus: { type: string, enum: [verified_cause, supported_explanation, inconclusive, answer_only], description: "Assessment outcome. verified_cause is historical. answer_only is reserved for transitional factual Conversation turns." }
+        conclusionStatus: { type: string, enum: [verified_cause, supported_explanation, inconclusive, answer_only], description: "Assessment outcome. Omitted for an unassessed factual Conversation reply. verified_cause and answer_only are historical values." }
         summary: { type: string, minLength: 1, maxLength: 4096 }
         impact: { $ref: "#/components/schemas/Impact" }
         findings: { type: array, items: { $ref: "#/components/schemas/Finding" } }
@@ -1770,9 +1771,9 @@ components:
         payload:
           type: object
           additionalProperties: false
-          required: [status, summary]
+          required: [summary]
           properties:
-            status: { type: string, enum: [verified_cause, supported_explanation, inconclusive, answer_only], description: "Assessment outcome. verified_cause is historical. answer_only is reserved for transitional factual Conversation turns." }
+            status: { type: string, enum: [verified_cause, supported_explanation, inconclusive, answer_only], description: "Assessment outcome. Omitted for an unassessed factual Conversation reply. verified_cause and answer_only are historical values." }
             summary: { type: string, minLength: 1, maxLength: 4096 }
     FailedInvestigationEvent:
       type: object

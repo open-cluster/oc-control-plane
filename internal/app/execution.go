@@ -216,18 +216,26 @@ func completedReply(state *agent.AgentState) bool {
 func finishInvestigation(runCtx, leaseCtx context.Context, db *storage.Database, org uuid.UUID,
 	execution storage.AgentExecution, runtime *agent.UnifiedAgent, checkpoint *agent.AgentState, usage investigation.Usage,
 ) error {
-	if _, _, err := db.AgentToolScope(runCtx, org, execution); err != nil {
+	assigned, err := db.AuthorizeInvestigationReport(runCtx, org, execution)
+	if err != nil {
 		if errors.Is(err, authz.ErrNotAMember) || errors.Is(err, conversation.ErrUnknown) ||
 			errors.Is(err, storage.ErrAgentToolRunUnavailable) || errors.Is(err, context.DeadlineExceeded) {
 			return failAgentExecution(leaseCtx, db, org, execution, usage)
 		}
 		return err
 	}
-	instruction := message.UserMsg("operator", ai.ConclusionInstructions)
+	instructions := ai.ConclusionInstructions
+	schema := investigation.ConclusionSchema()
+	if assigned {
+		instructions += "\nFor a factual question without a causal assessment, put the direct answer in the summary and omit status."
+		schema = investigation.AssignedMessageConclusionSchema()
+	}
+	// Observe only affects the live agent. The detached checkpoint is the source for promotion.
+	instruction := message.UserMsg("operator", instructions)
 	if err := runtime.Observe(runCtx, []*message.Msg{instruction}); err != nil {
 		return failAgentExecution(leaseCtx, db, org, execution, usage)
 	}
-	report, err := runtime.GenerateStructuredResponseWithUsage(runCtx, investigation.ConclusionSchema())
+	report, err := runtime.GenerateStructuredResponseWithUsage(runCtx, schema)
 	if leaseCtx.Err() != nil {
 		return context.Cause(leaseCtx)
 	}
@@ -244,9 +252,9 @@ func finishInvestigation(runCtx, leaseCtx context.Context, db *storage.Database,
 	}
 
 	// Publish only the accepted visible reply with Conversation context.
-	checkpoint.Context = append(checkpoint.Context, message.AssistantMsg(runtime.Name(), []message.ContentBlock{
-		message.TextBlock{Type: "text", Text: conclusion.Summary},
-	}))
+	if assigned {
+		replaceFinalReply(checkpoint, runtime.Name(), conclusion.Summary)
+	}
 	err = db.FinishAgentExecution(leaseCtx, org, execution, storage.AgentExecutionCompleted,
 		conclusion.Summary, &conclusion, usage, checkpoint)
 	if errors.Is(err, storage.ErrAgentEvidenceUnavailable) || errors.Is(err, investigation.ErrInvalidConclusion) ||
@@ -322,8 +330,8 @@ func failAgentExecution(ctx context.Context, db *storage.Database, org uuid.UUID
 	return db.FinishAgentExecution(ctx, org, execution, storage.AgentExecutionFailed, "", nil, usage)
 }
 
-func finalReplyContent(state *agent.AgentState) string {
-	for _, msg := range slices.Backward(state.Context) {
+func terminalReply(state *agent.AgentState) (int, int) {
+	for index, msg := range slices.Backward(state.Context) {
 		if msg == nil || msg.Role != message.RoleAssistant || msg.ID != state.ReplyID {
 			continue
 		}
@@ -335,15 +343,42 @@ func finalReplyContent(state *agent.AgentState) string {
 				start = i + 1
 			}
 		}
-		var text strings.Builder
-		for _, block := range msg.Content[start:] {
-			if part, ok := block.(message.TextBlock); ok {
-				text.WriteString(part.Text)
-			}
-		}
-		return text.String()
+		return index, start
 	}
-	return ""
+	return -1, 0
+}
+
+func finalReplyContent(state *agent.AgentState) string {
+	index, start := terminalReply(state)
+	if index < 0 {
+		return ""
+	}
+	var text strings.Builder
+	for _, block := range state.Context[index].Content[start:] {
+		if part, ok := block.(message.TextBlock); ok {
+			text.WriteString(part.Text)
+		}
+	}
+	return text.String()
+}
+
+func replaceFinalReply(state *agent.AgentState, name, answer string) {
+	text := message.TextBlock{Type: "text", Text: answer}
+	index, start := terminalReply(state)
+	if index < 0 {
+		state.Context = append(state.Context, message.AssistantMsg(name, []message.ContentBlock{text}))
+		return
+	}
+	// Keep the native message identity and provider continuation data.
+	msg := *state.Context[index]
+	content := slices.Clone(msg.Content[:start])
+	for _, block := range msg.Content[start:] {
+		if _, ok := block.(message.TextBlock); !ok {
+			content = append(content, block)
+		}
+	}
+	msg.Content = append(content, text)
+	state.Context[index] = &msg
 }
 
 type executionReply struct {

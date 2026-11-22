@@ -23,8 +23,10 @@ The following path is the primary product walkthrough.
    creates the Incident and, when an Agent is available, its automatic Investigation.
    Alert intake does not create a Conversation. Resolution occurs when no grouped Alert
    Event remains firing.
-4. **Conversation and Investigation** separate continuity from execution. A Conversation
-   keeps messages and prior cited Findings; each turn opens a new immutable Investigation.
+4. **Conversation and Investigation** separate continuity from execution. Web and Slack
+   Messages still open Investigation turns during their Chat cutovers. Native checkpoints
+   carry Tool results, compacted context, and the accepted visible reply across those turns.
+   Independent Investigations own their execution checkpoints.
 5. **Offered tools** derive from enabled Integrations and their verified grants. There is
    no provider switch inside the investigation loop. Every external call uses a common
      envelope containing provider-specific input and an optional explanatory purpose.

@@ -9,7 +9,7 @@ import (
 )
 
 func DraftFrom(input GenerationInput) Postmortem {
-	legacyRuns := make(map[historicalToolRun]uuid.UUID)
+	successful := make(map[uuid.UUID]bool)
 	draft := Postmortem{
 		IncidentID: input.IncidentID, Status: StatusDraft, Revision: 1,
 		Title:            valueOr(input.Title, NeedsHumanInput),
@@ -36,8 +36,8 @@ func DraftFrom(input GenerationInput) Postmortem {
 		if description == "" {
 			description = run.Summary
 		}
-		if run.Ordinal > 0 && run.ID != uuid.Nil {
-			legacyRuns[historicalToolRun{investigation: evidence.InvestigationID, ordinal: run.Ordinal}] = run.ID
+		if run.Outcome == investigation.RunSucceeded && run.ID != uuid.Nil {
+			successful[run.ID] = true
 		}
 		if description != "" {
 			entry := TimelineEntry{
@@ -77,22 +77,28 @@ func DraftFrom(input GenerationInput) Postmortem {
 	missingCausalEvidence := false
 	for _, result := range input.Results {
 		conclusion := result.Conclusion
-		if conclusion.Summary != "" {
-			draft.ExecutiveSummary = conclusion.Summary
+		if conclusion.Status == "" || conclusion.Status == investigation.HistoricalAnswerOnly {
+			continue
 		}
-		if draft.Impact == NeedsHumanInput && len(reportEvidence(legacyRuns, result.InvestigationID, conclusion.Impact.RunRefs, conclusion.Impact.EvidenceRefs)) > 0 {
+		impact, incomplete := reportEvidence(successful, conclusion.Impact.EvidenceRefs)
+		if draft.Impact == NeedsHumanInput && len(impact) > 0 && !incomplete {
 			draft.Impact = valueOr(conclusion.Impact.Summary, NeedsHumanInput)
 		}
+		var missingCause, citedCause bool
 		for _, finding := range conclusion.Findings {
 			if finding.Kind != investigation.FindingCause && finding.Kind != investigation.FindingContributingFactor {
 				continue
 			}
-			cited := CitedStatement{InvestigationID: result.InvestigationID.String(),
-				Statement:    finding.Statement,
-				EvidenceRefs: reportEvidence(legacyRuns, result.InvestigationID, finding.RunRefs, finding.EvidenceRefs)}
-			if len(cited.EvidenceRefs) == 0 {
-				missingCausalEvidence = true
+			refs, incomplete := reportEvidence(successful, finding.EvidenceRefs)
+			if len(refs) == 0 || incomplete {
+				missingCause = true
 				continue
+			}
+			citedCause = true
+			cited := CitedStatement{
+				InvestigationID: result.InvestigationID.String(),
+				Statement:       finding.Statement,
+				EvidenceRefs:    refs,
 			}
 			switch finding.Kind {
 			case investigation.FindingCause:
@@ -101,14 +107,22 @@ func DraftFrom(input GenerationInput) Postmortem {
 				draft.ContributingFactors = append(draft.ContributingFactors, cited)
 			}
 		}
+		if conclusion.Status != investigation.Inconclusive && !citedCause {
+			missingCause = true
+		}
+		missingCausalEvidence = missingCausalEvidence || missingCause
+		if !missingCause && conclusion.Summary != "" {
+			draft.ExecutiveSummary = conclusion.Summary
+		}
 		for _, action := range conclusion.Actions {
+			refs, _ := reportEvidence(successful, action.EvidenceRefs)
 			draft.ActionItems = append(draft.ActionItems, ActionItem{
 				Title:           action.Title,
 				Owner:           NeedsHumanInput,
 				Deadline:        NeedsHumanInput,
 				Verification:    action.Verification,
 				InvestigationID: result.InvestigationID.String(),
-				EvidenceRefs:    reportEvidence(legacyRuns, result.InvestigationID, action.RunRefs, action.EvidenceRefs),
+				EvidenceRefs:    refs,
 			})
 		}
 		for _, limitation := range conclusion.Limitations {
@@ -156,31 +170,19 @@ func DraftFrom(input GenerationInput) Postmortem {
 	return draft
 }
 
-// Historical reports may carry an ordinal in sections migration 0013 did not convert.
-type historicalToolRun struct {
-	investigation uuid.UUID
-	ordinal       int
-}
-
-func reportEvidence(legacyRuns map[historicalToolRun]uuid.UUID, owner uuid.UUID, ordinals []int, refs []investigation.EvidenceRef) []investigation.EvidenceRef {
+func reportEvidence(successful map[uuid.UUID]bool, refs []investigation.EvidenceRef) ([]investigation.EvidenceRef, bool) {
 	var evidence []investigation.EvidenceRef
-	add := func(id uuid.UUID) {
-		ref := investigation.EvidenceRef{ToolRunID: id}
-		if id != uuid.Nil && !slices.Contains(evidence, ref) {
+	var incomplete bool
+	for _, ref := range refs {
+		if !successful[ref.ToolRunID] {
+			incomplete = true
+			continue
+		}
+		if !slices.Contains(evidence, ref) {
 			evidence = append(evidence, ref)
 		}
 	}
-	for _, ref := range refs {
-		id := ref.ToolRunID
-		if id == uuid.Nil {
-			id = legacyRuns[historicalToolRun{investigation: ref.InvestigationID, ordinal: ref.ToolRunOrdinal}]
-		}
-		add(id)
-	}
-	for _, ordinal := range ordinals {
-		add(legacyRuns[historicalToolRun{investigation: owner, ordinal: ordinal}])
-	}
-	return evidence
+	return evidence, incomplete
 }
 
 func valueOr(value, fallback string) string {

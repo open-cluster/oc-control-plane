@@ -103,8 +103,11 @@ func (p *Database) investigation(
 	if err != nil {
 		return investigation.Investigation{}, fmt.Errorf("reading an investigation: %w", err)
 	}
-	missing, err := evidenceMissing(ctx, pool, organization, found.ConversationID,
-		resultEvidence(found.ID, found.Conclusion), false)
+	refs, historical := resultEvidence(found)
+	missing, err := evidenceMissing(ctx, pool, organization, found.ConversationID, refs, false)
+	if err == nil && !missing && len(historical) > 0 {
+		missing, err = historicalEvidenceMissing(ctx, pool, organization, found.ConversationID, historical)
+	}
 	if err != nil {
 		return investigation.Investigation{}, fmt.Errorf("checking cited evidence: %w", err)
 	}
@@ -116,7 +119,7 @@ func (p *Database) investigation(
 
 func (p *Database) InvestigationToolRuns(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
-) ([]investigation.ToolRun, error) {
+) ([]investigation.ToolRunRead, error) {
 	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return nil, err
@@ -134,7 +137,7 @@ func (p *Database) InvestigationToolRuns(
 	}
 	defer runRows.Close()
 
-	runs := make([]investigation.ToolRun, 0, 8)
+	runs := make([]investigation.ToolRunRead, 0, 8)
 	for runRows.Next() {
 		run, err := scanToolRun(runRows, nil)
 		if err != nil {
@@ -148,10 +151,10 @@ func (p *Database) InvestigationToolRuns(
 	return runs, nil
 }
 
-func (p *Database) ToolRunObservation(ctx context.Context, org uuid.UUID, ref investigation.EvidenceRef) (investigation.ToolRun, uuid.UUID, error) {
+func (p *Database) ToolRunObservation(ctx context.Context, org uuid.UUID, ref investigation.HistoricalEvidenceRef) (investigation.ToolRunRead, uuid.UUID, error) {
 	pool, err := p.poolForOrganization(org)
 	if err != nil {
-		return investigation.ToolRun{}, uuid.Nil, err
+		return investigation.ToolRunRead{}, uuid.Nil, err
 	}
 	match := "r.tool_run_id = $2"
 	args := []any{org, ref.ToolRunID}
@@ -168,16 +171,16 @@ func (p *Database) ToolRunObservation(ctx context.Context, org uuid.UUID, ref in
 	var owner uuid.UUID
 	run, err := scanToolRun(row, &owner)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return investigation.ToolRun{}, uuid.Nil, investigation.ErrUnknown
+		return investigation.ToolRunRead{}, uuid.Nil, investigation.ErrUnknown
 	}
 	if err != nil {
-		return investigation.ToolRun{}, uuid.Nil, fmt.Errorf("reading a Tool Run observation: %w", err)
+		return investigation.ToolRunRead{}, uuid.Nil, fmt.Errorf("reading a Tool Run observation: %w", err)
 	}
 	return run, owner, nil
 }
 
-func scanToolRun(row pgx.Row, owner *uuid.UUID) (investigation.ToolRun, error) {
-	var run investigation.ToolRun
+func scanToolRun(row pgx.Row, owner *uuid.UUID) (investigation.ToolRunRead, error) {
+	var run investigation.ToolRunRead
 	var integrationID *uuid.UUID
 	var arguments, sources []byte
 	fields := []any{&run.ID, &integrationID, &run.Ordinal, &run.Tool, &run.Purpose, &arguments,
@@ -463,6 +466,11 @@ func scanInvestigation(row scanned) (investigation.Investigation, error) {
 	if len(conclusion) > 0 && string(conclusion) != "{}" {
 		if err := json.Unmarshal(conclusion, &found.Conclusion); err != nil {
 			return investigation.Investigation{}, fmt.Errorf("decoding conclusion: %w", err)
+		}
+		var err error
+		found.Historical, err = investigation.ReadHistoricalCitations(conclusion, "impact", "findings", "hypotheses", "actions", "limitations")
+		if err != nil {
+			return investigation.Investigation{}, fmt.Errorf("reading historical Conclusion citations: %w", err)
 		}
 	}
 	return found, nil

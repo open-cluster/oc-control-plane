@@ -10,18 +10,6 @@ type EventPayload interface {
 	EventType() EventType
 }
 
-type StartedEventPayload struct {
-	Text string `json:"text,omitempty"`
-}
-
-func (StartedEventPayload) EventType() EventType { return EventStarted }
-
-func StartedPayload(text string) StartedEventPayload {
-	return StartedEventPayload{
-		Text: bounded(text, eventTextBound),
-	}
-}
-
 type ToolStartedEventPayload struct {
 	ToolRunID     uuid.UUID `json:"toolRunId"`
 	Tool          string    `json:"tool"`
@@ -87,7 +75,7 @@ func safeToolRunError(reason string) string {
 }
 
 type ConcludedEventPayload struct {
-	Status  ConclusionStatus `json:"status"`
+	Status  ConclusionStatus `json:"status,omitempty"`
 	Summary string           `json:"summary"`
 }
 

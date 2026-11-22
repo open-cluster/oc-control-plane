@@ -15,14 +15,24 @@ import (
 func TestAssignedMessageBeyondPreviewReachesModel(t *testing.T) {
 	address := freeAddress(t)
 	prompts := make(chan []*message.Msg, 4)
+	const answer = "Use eu-west-2."
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = address
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "openrouter", "z-ai/glm-4.7", "scripted-model-key"
-	}, app.Options{Model: concludingModel{prompts: prompts}})
+	}, app.Options{Model: concludingModel{prompts: prompts, factualAnswer: answer}})
 	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
-	request := strings.Repeat("context ", 300) + "Use the corrected region eu-west-2 and exclude eu-central-1."
+	request := strings.Repeat("context ", 300) + "Which region should we use? The corrected region is eu-west-2."
 	conversationID, turn := plane.openConversation(t, "complete request", request)
-	plane.awaitInvestigation(t, turn)
+	final := plane.awaitInvestigation(t, turn)
+	var result struct {
+		Status           string `json:"status"`
+		ConclusionStatus string `json:"conclusionStatus"`
+		Summary          string `json:"summary"`
+	}
+	decodeInto(t, final, &result)
+	if result.Status != "concluded" || result.ConclusionStatus != "" || result.Summary != answer {
+		t.Fatalf("expected a visible factual reply without a causal assessment: %s", final)
+	}
 	select {
 	case prompt := <-prompts:
 		var rendered strings.Builder
@@ -45,19 +55,23 @@ func TestAssignedMessageBeyondPreviewReachesModel(t *testing.T) {
 	}
 	select {
 	case prompt := <-prompts:
-		var priorRequest, priorReport, currentRequest bool
+		var priorRequest, currentRequest bool
+		var acceptedAnswers int
 		for _, msg := range prompt {
 			if text := msg.GetTextContent("\n"); text != nil {
 				priorRequest = priorRequest || strings.Contains(*text, request)
 				currentRequest = currentRequest || strings.Contains(*text, followUp)
-				priorReport = priorReport || strings.Contains(*text, "Investigation completed.")
+				acceptedAnswers += strings.Count(*text, answer)
 				if strings.Contains(*text, "Produce the Investigation Conclusion") {
 					t.Fatal("the report instruction leaked into the committed Conversation checkpoint")
 				}
+				if strings.Contains(*text, "No cause established.") {
+					t.Fatal("the exploratory recap duplicated the accepted reply")
+				}
 			}
 		}
-		if !priorRequest || !currentRequest || !priorReport {
-			t.Fatalf("follow-up context had prior Message=%t, current Message=%t, accepted report=%t", priorRequest, currentRequest, priorReport)
+		if !priorRequest || !currentRequest || acceptedAnswers != 1 {
+			t.Fatalf("follow-up context had prior Message=%t, current Message=%t, accepted answers=%d", priorRequest, currentRequest, acceptedAnswers)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the follow-up did not invoke the model")

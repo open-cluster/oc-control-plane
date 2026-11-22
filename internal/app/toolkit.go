@@ -189,7 +189,6 @@ func runIntegrationTool(
 		Purpose:       purpose,
 		WindowFrom:    window.From,
 		WindowUntil:   window.Until,
-		StartedAt:     time.Now().UTC(),
 	}
 	investigation.RedactToolInput(&run, credential)
 	access := &storage.AgentToolAccess{
@@ -224,7 +223,6 @@ func runIntegrationTool(
 	result, providerErr := declared.Run(toolContext, request)
 	providerFailed := providerErr != nil || toolContext.Err() != nil
 	cancel()
-	run.FinishedAt = time.Now().UTC()
 	outcome := "succeeded"
 	if providerFailed {
 		outcome = "failed"
