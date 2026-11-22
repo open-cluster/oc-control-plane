@@ -33,7 +33,7 @@ func TestAgentToolRunsSurviveLeaseTakeover(t *testing.T) {
 		t.Helper()
 		id, err := database.BeginAgentToolRun(ctx, org, claim, investigation.ToolRun{
 			Tool: "query_metrics", WindowFrom: now.Add(-time.Hour), WindowUntil: now, StartedAt: now,
-		})
+		}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -48,7 +48,7 @@ func TestAgentToolRunsSurviveLeaseTakeover(t *testing.T) {
 		return database.CompleteAgentToolRun(ctx, org, execution, investigation.ToolRun{
 			ID: id, Outcome: investigation.RunSucceeded, FinishedAt: now.Add(time.Second),
 			ObservationText: &observation,
-		})
+		}, nil)
 	}
 	for _, id := range []uuid.UUID{second, first} {
 		if err := complete(claim, id); err != nil {

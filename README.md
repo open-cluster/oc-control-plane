@@ -191,6 +191,8 @@ shared test-container lifetimes. Race detection remains enabled.
 
 Run `go test -race ./internal/ai` to verify the AgentScope foundation against
 local provider fixtures. The tests require no model credentials.
+Run `go test -race ./test/postgres -run '^TestNativeToolkit'` to verify native
+Tool dispatch, current authorization, and evidence persistence with PostgreSQL.
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) before submitting changes.
 

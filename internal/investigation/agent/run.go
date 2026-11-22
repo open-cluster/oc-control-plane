@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -519,7 +520,7 @@ func (r *Agent) Run(
 				run.IntegrationID = source.Integration.ID
 			}
 			run.Purpose = call.Purpose
-			prepareObservation(&run, state.credentials)
+			investigation.PrepareToolObservation(&run, state.credentials.knownCredentials...)
 			if recordErr := r.recordToolRun(ctx, state, run); recordErr != nil {
 				terminalErr := failRun(failureReason(recordErr), state.usage)
 				r.RuntimeTelemetry.Ended(time.Since(startedAt),
@@ -647,40 +648,19 @@ func offeredSourcesForConversation(
 		return nil
 	}
 
-	var originProvider integrations.Provider
-	found := false
-	for _, candidate := range candidates {
-		if candidate.ID == origin.IntegrationID {
-			originProvider = candidate.Provider
-			found = true
-			break
-		}
-	}
-	if !found {
+	binding := slices.IndexFunc(candidates, func(candidate integrations.Integration) bool {
+		return candidate.ID == origin.IntegrationID
+	})
+	if binding < 0 {
 		return nil
 	}
 
-	allowed := make([]integrations.Integration, 0, len(candidates))
-	for _, candidate := range candidates {
-		if candidate.Provider != originProvider || candidate.ID == origin.IntegrationID {
-			allowed = append(allowed, candidate)
-		}
-	}
-
 	var scoped []offeredSource
-	for _, source := range offeredSources(catalog, allowed) {
-		if source.Integration.Provider != originProvider {
-			scoped = append(scoped, source)
-			continue
-		}
-		var threadScopedTools []integrations.Tool
-		for _, tool := range source.Tools {
-			if tool.SupportsThreadScope {
-				threadScopedTools = append(threadScopedTools, tool)
-			}
-		}
-		if len(threadScopedTools) > 0 {
-			source.Tools = threadScopedTools
+	for _, source := range offeredSources(catalog, candidates) {
+		source.Tools = slices.DeleteFunc(source.Tools, func(tool integrations.Tool) bool {
+			return !tool.AllowedForOrigin(source.Integration, &candidates[binding])
+		})
+		if len(source.Tools) > 0 {
 			scoped = append(scoped, source)
 		}
 	}

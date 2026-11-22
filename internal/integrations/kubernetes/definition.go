@@ -78,7 +78,9 @@ func tools(executor Executor) []integrations.Tool {
 	}
 	return []integrations.Tool{
 		{
-			Name: "kubernetes_workload_runtime",
+			Name:            "kubernetes_workload_runtime",
+			ReadOnly:        true,
+			ConcurrencySafe: true,
 			Description: "Read the current runtime state of one named workload and the pods " +
 				"serving it. Use to check present availability and pod state. Do not use for " +
 				"namespace discovery, logs, or historical state; current state does not prove " +
@@ -88,7 +90,9 @@ func tools(executor Executor) []integrations.Tool {
 			Run:            run(capability.KubernetesWorkloadRuntime, workloadArguments),
 		},
 		{
-			Name: "kubernetes_namespace_events",
+			Name:            "kubernetes_namespace_events",
+			ReadOnly:        true,
+			ConcurrencySafe: true,
 			Description: "Read bounded Kubernetes events from one namespace in the " +
 				"Investigation window. Use to check what Kubernetes reported about scheduling, " +
 				"health, and lifecycle changes. Do not use for application logs. Results retain " +
@@ -98,7 +102,9 @@ func tools(executor Executor) []integrations.Tool {
 			Run:            run(capability.KubernetesNamespaceEvents, eventArguments),
 		},
 		{
-			Name: "kubernetes_container_logs",
+			Name:            "kubernetes_container_logs",
+			ReadOnly:        true,
+			ConcurrencySafe: true,
 			Description: "Read a bounded log tail from one named container in a known pod. " +
 				"Use after workload state identifies the pod and container relevant to the " +
 				"Investigation. Do not scan every pod or use this outside the Investigation " +
