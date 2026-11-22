@@ -4,15 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
 const workloadToolName = "kubernetes_workload_runtime"
@@ -28,10 +32,20 @@ func startInvestigationModel(t *testing.T) *httptest.Server {
 		name := workloadToolName
 		arguments := fmt.Sprintf(`{"purpose":"Read the affected workload's current state","input":{"namespace":%q,"workloadKind":"Deployment","workloadName":%q,"maxPods":10}}`,
 			fixtureNamespace, fixtureWorkload)
-		if calls.Add(1) > 1 {
+		call := calls.Add(1)
+		if call > 1 {
+			run, err := observedToolRun(request.Body)
+			if err != nil {
+				t.Error(err)
+				http.Error(writer, "missing Tool observation", http.StatusBadRequest)
+				return
+			}
 			name = "conclude"
-			arguments = fmt.Sprintf(`{"status":"supported_explanation","summary":"Relay observed the failing workload.","impact":{"summary":"The workload is unhealthy.","run_refs":[1]},"findings":[{"statement":"Relay observed workload %s in namespace %s","kind":"cause","mechanism":"the unhealthy workload serves the affected requests","run_refs":[1],"evidence_refs":[]}],"hypotheses":[],"actions":[],"limitations":[]}`,
-				fixtureWorkload, fixtureNamespace)
+			arguments = fmt.Sprintf(`{"status":"supported_explanation","summary":"Relay observed the failing workload.",
+				"impact":{"summary":"The workload is unhealthy.","evidenceRefs":[{"toolRunId":%q}]},
+				"findings":[{"statement":%q,"kind":"cause","mechanism":"the unhealthy workload serves the affected requests",
+				"evidenceRefs":[{"toolRunId":%q}]}],"hypotheses":[],"actions":[],"limitations":[]}`,
+				run, "Relay observed workload "+fixtureWorkload+" in namespace "+fixtureNamespace, run)
 		}
 		writer.Header().Set("Content-Type", "text/event-stream")
 		usage := `{"input_tokens":100,"output_tokens":20}`
@@ -41,7 +55,7 @@ func startInvestigationModel(t *testing.T) *httptest.Server {
 			"\"stop_sequence\":null,\"usage\":%s}}\n\n", usage)
 		_, _ = fmt.Fprintf(writer, "event: content_block_start\ndata: {\"type\":\"content_block_start\","+
 			"\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":%q,"+
-			"\"name\":%q,\"input\":{}}}\n\n", fmt.Sprintf("call-%d", calls.Load()), name)
+			"\"name\":%q,\"input\":{}}}\n\n", fmt.Sprintf("call-%d", call), name)
 		encoded, err := json.Marshal(arguments)
 		if err != nil {
 			return
@@ -55,6 +69,34 @@ func startInvestigationModel(t *testing.T) *httptest.Server {
 	}))
 	t.Cleanup(server.Close)
 	return server
+}
+
+func observedToolRun(body io.Reader) (uuid.UUID, error) {
+	var request struct {
+		Messages []struct {
+			Content []struct {
+				Type      string `json:"type"`
+				ToolUseID string `json:"tool_use_id"`
+				Content   string `json:"content"`
+			} `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.NewDecoder(body).Decode(&request); err != nil {
+		return uuid.Nil, fmt.Errorf("decoding the Anthropic request: %w", err)
+	}
+	for _, message := range request.Messages {
+		for _, block := range message.Content {
+			if block.Type != "tool_result" || block.ToolUseID != "call-1" {
+				continue
+			}
+			observation, hasPrefix := strings.CutPrefix(block.Content, "[Tool Run ")
+			id, _, hasEnd := strings.Cut(observation, "]")
+			if hasPrefix && hasEnd {
+				return uuid.Parse(id)
+			}
+		}
+	}
+	return uuid.Nil, errors.New("the scripted model did not receive a workload Tool Run citation")
 }
 
 func (h *harness) assertInvestigation(t *testing.T) {
@@ -107,38 +149,50 @@ func (h *harness) assertInvestigation(t *testing.T) {
 		t.Fatalf("decoding the opened investigation: %v %s", err, body)
 	}
 
+	var report investigation.Conclusion
 	h.await(t, "an investigation to cite its real Relay read", jobTimeout,
 		func(ctx context.Context) (bool, error) {
-			var status int16
+			var status investigation.Status
 			var conclusion []byte
 			var runs int
 			err := h.truth.pool.QueryRow(ctx, `
 				SELECT investigation.status, investigation.conclusion,
-				       count(tool.ordinal)
+				       count(tool.tool_run_id)
 				  FROM investigation
+				  JOIN agent_execution execution
+				    ON execution.org_id = investigation.org_id
+				   AND execution.investigation_id = investigation.investigation_id
 				  LEFT JOIN investigation_tool_run tool
-				    ON tool.investigation_id = investigation.investigation_id
-				   AND tool.org_id = investigation.org_id
+				    ON tool.org_id = execution.org_id AND tool.execution_id = execution.execution_id
 				 WHERE investigation.investigation_id = $1 AND investigation.org_id = $2
 				 GROUP BY investigation.investigation_id`, opened.ID, organization).
 				Scan(&status, &conclusion, &runs)
 			if err != nil {
 				return false, err
 			}
-			if status == 3 {
-				return false, fmt.Errorf("investigation failed; model calls=%d logs=%s",
-					runs, h.plane.logsSinceStart())
+			if status == investigation.StatusFailed || status == investigation.StatusCancelled {
+				t.Fatalf("Investigation ended %s after %d Tool Runs\n%s", status, runs, h.diagnostics())
 			}
-			return status == 2 && runs == 1 &&
-				bytes.Contains(conclusion, []byte(fixtureWorkload)) &&
-				bytes.Contains(conclusion, []byte(`"runRefs": [1]`)), nil
+			if status != investigation.StatusConcluded {
+				return false, nil
+			}
+			if err := json.Unmarshal(conclusion, &report); err != nil || runs != 1 {
+				t.Fatalf("decoding Conclusion with one Tool Run: runs=%d err=%v", runs, err)
+			}
+			return true, nil
 		})
+	if len(report.Findings) != 1 || len(report.Findings[0].EvidenceRefs) != 1 ||
+		!strings.Contains(report.Findings[0].Statement, fixtureWorkload) {
+		t.Fatalf("Conclusion must cite one Tool Run for the workload: findings=%+v", report.Findings)
+	}
+	cited := report.Findings[0].EvidenceRefs[0].ToolRunID
 	var successfulRuns int
 	err = h.truth.pool.QueryRow(context.Background(), `
-		SELECT count(*) FROM investigation_tool_run
-		WHERE org_id = $1 AND investigation_id = $2 AND integration_id = $3
-		  AND ordinal = 1 AND tool = $4 AND outcome = 1`,
-		organization, opened.ID, h.integration, workloadToolName).Scan(&successfulRuns)
+		SELECT count(*) FROM investigation_tool_run tool
+		JOIN agent_execution execution ON execution.org_id = tool.org_id AND execution.execution_id = tool.execution_id
+		WHERE tool.org_id = $1 AND execution.investigation_id = $2 AND tool.integration_id = $3
+		  AND tool.tool = $4 AND tool.outcome = $5 AND tool.tool_run_id = $6`,
+		organization, opened.ID, h.integration, workloadToolName, investigation.RunSucceeded, cited).Scan(&successfulRuns)
 	if err != nil || successfulRuns != 1 {
 		t.Fatalf("Investigation must record one successful Relay read: runs=%d err=%v", successfulRuns, err)
 	}
@@ -146,8 +200,8 @@ func (h *harness) assertInvestigation(t *testing.T) {
 	var job jobRecord
 	err = h.truth.pool.QueryRow(context.Background(), `
 		SELECT count(*), max(status), (array_agg(result))[1] FROM relay_job
-		WHERE org_id = $1 AND investigation_id = $2 AND integration_id = $3 AND capability_id = $4`,
-		organization, opened.ID, h.integration, capabilityID).Scan(&jobs, &job.Status, &job.Result)
+		WHERE org_id = $1 AND tool_run_id = $2 AND integration_id = $3 AND capability_id = $4`,
+		organization, cited, h.integration, capabilityID).Scan(&jobs, &job.Status, &job.Result)
 	if err != nil || jobs != 1 || job.Status != jobSucceeded {
 		t.Fatalf("Investigation must have one succeeded Relay Job: jobs=%d status=%s err=%v", jobs, job.Status, err)
 	}
