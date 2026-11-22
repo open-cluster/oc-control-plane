@@ -319,15 +319,16 @@ func TestNativeToolkitRevalidatesAuthorityAndFailsClosed(t *testing.T) {
 		integrations.Verification{Status: integrations.StatusVerified, Grants: []string{"prometheus:query"}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	checkFailure(call("failed"), "did not complete")
+	failure := call("failed")
+	checkFailure(failure, "did not complete")
 	if got := <-credentials; got != "Bearer "+rotated {
 		t.Fatal("the existing Toolkit did not use the rotated credential")
 	}
-	var failed int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM investigation_tool_run
+	var failed uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT tool_run_id FROM investigation_tool_run
 		WHERE org_id = $1 AND execution_id = $2 AND outcome = 2 AND arguments ->> 'query' = 'failed'`,
-		org, claim.ID).Scan(&failed); err != nil || failed != 1 {
-		t.Fatalf("provider failure did not persist as a failed Tool Run: %d, %v", failed, err)
+		org, claim.ID).Scan(&failed); err != nil || !strings.Contains(failure.body, failed.String()) {
+		t.Fatalf("provider failure did not return the durable failed Tool Run ID: %s, %v", failed, err)
 	}
 	exec(`ALTER TABLE investigation_tool_run ADD CONSTRAINT toolkit_test_persistence CHECK (outcome <> 1) NOT VALID`)
 	checkFailure(call("persistence"), "observation could not be recorded")
