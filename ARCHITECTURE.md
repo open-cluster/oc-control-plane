@@ -35,15 +35,16 @@ The following path is the primary product walkthrough.
 7. **Relay or provider read** dispatches the selected Tool. Slack and GitHub reads leave
    from the control plane. Kubernetes reads become a Relay Job executed through the
    customer’s outbound session.
-8. **Tool Run** records the attempt before it can support a conclusion: Integration,
-   ordinal, purpose, stripped provider input, applied window, outcome,
-   truncation, summary, and source identifiers. Results count against investigation
-   budgets and may be cited.
+8. **Tool Run** receives a stable UUID before dispatch and records the Integration,
+   purpose, stripped provider input, applied window, outcome, truncation, summary, and
+   source identifiers. Agent execution work links Relay Jobs through their Tool Runs.
+   The execution lease fences completion of those observations and scopes cancellation.
 9. **Operational events** describe the read in flight using seven small versioned payloads.
    Completion activity follows a committed Tool Run; unrecorded results never become evidence.
    Hypotheses are model-local during reasoning and appear only in the final structured
    conclusion.
-10. **Cited Finding** names supporting Tool Run ordinals. A verified cause requires a
+10. **Cited Finding** references supporting Tool Runs. Existing Investigation ordinals
+    continue to resolve. A verified cause requires a
     confirmed causal Finding with a mechanism. Contradictions, missing telemetry, missing
     access, and unresolved assumptions remain explicit limitations.
 11. **Action Proposal** distinguishes mitigation, rollback, verification, permanent fix,

@@ -54,6 +54,18 @@ func (p *Database) Events(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 	after int64, limit int,
 ) ([]investigation.Event, error) {
+	return p.events(ctx, organization, id, after, limit, false)
+}
+
+func (p *Database) WebEvents(
+	ctx context.Context, organization, id uuid.UUID, after int64, limit int,
+) ([]investigation.Event, error) {
+	return p.events(ctx, organization, id, after, limit, true)
+}
+
+func (p *Database) events(
+	ctx context.Context, organization, id uuid.UUID, after int64, limit int, webOnly bool,
+) ([]investigation.Event, error) {
 	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return nil, err
@@ -62,12 +74,13 @@ func (p *Database) Events(
 		limit = maxEventPage
 	}
 	rows, err := pool.Query(ctx, `
-		SELECT sequence, at, type, payload
-		  FROM investigation_event
-		 WHERE org_id = $1 AND investigation_id = $2 AND sequence > $3
-		   AND type NOT IN (5, 8, 10)
-		 ORDER BY sequence
-		 LIMIT $4`, organization, id, after, limit)
+		SELECT v.sequence, v.at, v.type, v.payload
+		  FROM investigation_event v
+		  JOIN investigation i ON i.org_id = v.org_id AND i.investigation_id = v.investigation_id
+		 WHERE v.org_id = $1 AND v.investigation_id = $2 AND v.sequence > $3
+		   AND v.type NOT IN (5, 8, 10) AND (NOT $5 OR `+webInvestigationSource+`)
+		 ORDER BY v.sequence
+		 LIMIT $4`, organization, id, after, limit, webOnly)
 	if err != nil {
 		return nil, fmt.Errorf("reading investigation events: %w", err)
 	}

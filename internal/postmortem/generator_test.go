@@ -16,6 +16,7 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 
 	incidentID := uuid.New()
 	priorID := uuid.New()
+	runID := uuid.New()
 	input := GenerationInput{
 		IncidentID:  incidentID,
 		Title:       "Checkout unavailable",
@@ -23,6 +24,13 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 		ResolvedAt:  time.Date(2026, 8, 27, 9, 30, 0, 0, time.UTC),
 		AlertEvents: []AlertEvent{{Title: "CheckoutUnavailable",
 			At: time.Date(2026, 8, 27, 9, 0, 0, 0, time.UTC)}},
+		Runs: []RunEvidence{{
+			InvestigationID: priorID,
+			Run: investigation.ToolRun{
+				ID: runID, Ordinal: 2, Summary: "Checkout failed",
+				FinishedAt: time.Date(2026, 8, 27, 9, 4, 0, 0, time.UTC),
+			},
+		}},
 		Events: []EventEvidence{{InvestigationID: uuid.New(), Event: investigation.Event{
 			At:   time.Date(2026, 8, 27, 9, 2, 0, 0, time.UTC),
 			Type: investigation.EventStarted,
@@ -90,6 +98,17 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 		!strings.Contains(strings.Join(draft.OpenQuestions, " "), "traffic spike") {
 		t.Errorf("events/messages were not consumed safely: timeline=%+v questions=%+v",
 			draft.Timeline, draft.OpenQuestions)
+	}
+
+	foundRun := false
+	for _, entry := range draft.Timeline {
+		if entry.Description == "Checkout failed" {
+			foundRun = len(entry.RunRefs) == 1 && entry.RunRefs[0] == 2 &&
+				len(entry.EvidenceRefs) == 1 && entry.EvidenceRefs[0].ToolRunID == runID
+		}
+	}
+	if !foundRun {
+		t.Errorf("timeline omitted the retained Tool Run identity: %+v", draft.Timeline)
 	}
 
 	input.Results[0].Conclusion.Impact = investigation.Impact{

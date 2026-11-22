@@ -1545,8 +1545,14 @@ components:
     EvidenceRef:
       type: object
       additionalProperties: false
-      required: [investigationId, toolRunOrdinal]
+      dependentRequired:
+        investigationId: [toolRunOrdinal]
+        toolRunOrdinal: [investigationId]
+      anyOf:
+        - required: [toolRunId]
+        - required: [investigationId, toolRunOrdinal]
       properties:
+        toolRunId: { $ref: "#/components/schemas/UUID" }
         investigationId: { $ref: "#/components/schemas/UUID" }
         toolRunOrdinal: { type: integer, minimum: 1 }
     Hypothesis:
@@ -1615,8 +1621,9 @@ components:
     ToolRun:
       type: object
       additionalProperties: false
-      required: &tool-run-required [ordinal, tool, windowFrom, windowUntil, outcome, startedAt, finishedAt, durationMs, windowApplied, modelClipped]
+      required: &tool-run-required [id, tool, windowFrom, windowUntil, outcome, startedAt, finishedAt, durationMs, windowApplied, modelClipped]
       properties: &tool-run-properties
+        id: { $ref: "#/components/schemas/UUID" }
         ordinal: { type: integer, minimum: 1 }
         integrationId: { $ref: "#/components/schemas/UUID" }
         tool: { type: string, minLength: 1, maxLength: 128 }
@@ -1642,7 +1649,7 @@ components:
       additionalProperties: false
       required: *tool-run-required
       allOf:
-        - required: [investigationId, observationText]
+        - required: [investigationId, ordinal, observationText]
       properties:
         <<: *tool-run-properties
         investigationId: { $ref: "#/components/schemas/UUID" }
@@ -1918,6 +1925,7 @@ components:
         description: { type: string, minLength: 1, maxLength: 8192 }
         investigationId: { $ref: "#/components/schemas/UUID" }
         runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+        evidenceRefs: { type: array, items: { $ref: "#/components/schemas/EvidenceRef" } }
     CitedStatement:
       type: object
       additionalProperties: false

@@ -28,8 +28,9 @@ type ConversationOrigin struct {
 }
 
 type EvidenceRef struct {
-	InvestigationID uuid.UUID `json:"investigationId"`
-	ToolRunOrdinal  int       `json:"toolRunOrdinal"`
+	ToolRunID       uuid.UUID `json:"toolRunId,omitzero"`
+	InvestigationID uuid.UUID `json:"investigationId,omitzero"`
+	ToolRunOrdinal  int       `json:"toolRunOrdinal,omitempty"`
 }
 
 const MissingEvidenceStatement = "Some cited Tool Runs are no longer available. Retained Findings have not been reverified."

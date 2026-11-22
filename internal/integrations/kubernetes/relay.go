@@ -39,10 +39,17 @@ func (e RelayExecutor) Execute(ctx context.Context, request integrations.ToolReq
 		return integrations.ToolResult{}, err
 	}
 	jobID := uuid.New()
-	err = e.Database.EnqueueVerifiedJob(ctx, organization, storage.RelayJob{
+	job := storage.RelayJob{
 		ID: jobID, InvestigationID: request.InvestigationID,
+		ToolRunID:     request.ToolRunID,
 		IntegrationID: request.Integration.ID, RegistrationID: request.Integration.RelayID,
-		CapabilityID: id, CapabilityVersion: capability.SchemaVersion1, Arguments: encoded})
+		CapabilityID: id, CapabilityVersion: capability.SchemaVersion1, Arguments: encoded,
+	}
+	if request.ExecutionID != uuid.Nil || request.ToolRunID != uuid.Nil || request.ExecutionLeaseToken != uuid.Nil {
+		err = e.Database.EnqueueAgentToolJob(ctx, organization, request.ExecutionID, request.ExecutionLeaseToken, job)
+	} else {
+		err = e.Database.EnqueueVerifiedJob(ctx, organization, job)
+	}
 	if err != nil {
 		return integrations.ToolResult{}, err
 	}

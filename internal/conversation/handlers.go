@@ -294,6 +294,10 @@ func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
 		h.fail(writer, request, err)
 		return
 	}
+	if detail.Conversation.Source != SourceWeb {
+		h.fail(writer, request, ErrUnknown)
+		return
+	}
 	writeJSON(writer, http.StatusOK, detailViewOf(detail))
 }
 
