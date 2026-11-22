@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,32 +18,35 @@ import (
 )
 
 const workloadToolName = "kubernetes_workload_runtime"
+const workloadCallID = "read-workload"
 
 func startInvestigationModel(t *testing.T) *httptest.Server {
 	t.Helper()
-	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodPost {
 			writer.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		name := workloadToolName
+		run, observed, err := workloadResult(request.Body)
+		if err != nil {
+			t.Error(err)
+			http.Error(writer, "invalid workload Tool result", http.StatusBadRequest)
+			return
+		}
+		name, callID := workloadToolName, workloadCallID
 		arguments := fmt.Sprintf(`{"purpose":"Read the affected workload's current state","input":{"namespace":%q,"workloadKind":"Deployment","workloadName":%q,"maxPods":10}}`,
 			fixtureNamespace, fixtureWorkload)
-		call := calls.Add(1)
-		if call > 1 {
-			run, err := observedToolRun(request.Body)
-			if err != nil {
-				t.Error(err)
-				http.Error(writer, "missing Tool observation", http.StatusBadRequest)
-				return
+		if observed {
+			name, callID = "conclude", "commit-report"
+			arguments = `{"status":"inconclusive","summary":"Workload evidence is unavailable.",
+				"impact":{"summary":"Unknown"},"findings":[],"hypotheses":[],"actions":[],"limitations":[]}`
+			if run != uuid.Nil {
+				arguments = fmt.Sprintf(`{"status":"supported_explanation","summary":"Relay observed the failing workload.",
+					"impact":{"summary":"The workload is unhealthy.","evidenceRefs":[{"toolRunId":%q}]},
+					"findings":[{"statement":%q,"kind":"cause","mechanism":"the unhealthy workload serves the affected requests",
+					"evidenceRefs":[{"toolRunId":%q}]}],"hypotheses":[],"actions":[],"limitations":[]}`,
+					run, "Relay observed workload "+fixtureWorkload+" in namespace "+fixtureNamespace, run)
 			}
-			name = "conclude"
-			arguments = fmt.Sprintf(`{"status":"supported_explanation","summary":"Relay observed the failing workload.",
-				"impact":{"summary":"The workload is unhealthy.","evidenceRefs":[{"toolRunId":%q}]},
-				"findings":[{"statement":%q,"kind":"cause","mechanism":"the unhealthy workload serves the affected requests",
-				"evidenceRefs":[{"toolRunId":%q}]}],"hypotheses":[],"actions":[],"limitations":[]}`,
-				run, "Relay observed workload "+fixtureWorkload+" in namespace "+fixtureNamespace, run)
 		}
 		writer.Header().Set("Content-Type", "text/event-stream")
 		usage := `{"input_tokens":100,"output_tokens":20}`
@@ -55,7 +56,7 @@ func startInvestigationModel(t *testing.T) *httptest.Server {
 			"\"stop_sequence\":null,\"usage\":%s}}\n\n", usage)
 		_, _ = fmt.Fprintf(writer, "event: content_block_start\ndata: {\"type\":\"content_block_start\","+
 			"\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":%q,"+
-			"\"name\":%q,\"input\":{}}}\n\n", fmt.Sprintf("call-%d", call), name)
+			"\"name\":%q,\"input\":{}}}\n\n", callID, name)
 		encoded, err := json.Marshal(arguments)
 		if err != nil {
 			return
@@ -71,32 +72,39 @@ func startInvestigationModel(t *testing.T) *httptest.Server {
 	return server
 }
 
-func observedToolRun(body io.Reader) (uuid.UUID, error) {
+func workloadResult(body io.Reader) (uuid.UUID, bool, error) {
 	var request struct {
 		Messages []struct {
 			Content []struct {
 				Type      string `json:"type"`
 				ToolUseID string `json:"tool_use_id"`
 				Content   string `json:"content"`
+				IsError   bool   `json:"is_error"`
 			} `json:"content"`
 		} `json:"messages"`
 	}
 	if err := json.NewDecoder(body).Decode(&request); err != nil {
-		return uuid.Nil, fmt.Errorf("decoding the Anthropic request: %w", err)
+		return uuid.Nil, false, fmt.Errorf("decoding the Anthropic request: %w", err)
 	}
-	for _, message := range request.Messages {
-		for _, block := range message.Content {
-			if block.Type != "tool_result" || block.ToolUseID != "call-1" {
-				continue
-			}
-			observation, hasPrefix := strings.CutPrefix(block.Content, "[Tool Run ")
-			id, _, hasEnd := strings.Cut(observation, "]")
-			if hasPrefix && hasEnd {
-				return uuid.Parse(id)
-			}
+	if len(request.Messages) == 0 {
+		return uuid.Nil, false, nil
+	}
+	for _, block := range request.Messages[len(request.Messages)-1].Content {
+		if block.Type != "tool_result" || block.ToolUseID != workloadCallID {
+			continue
 		}
+		if block.IsError {
+			return uuid.Nil, true, nil
+		}
+		observation, hasPrefix := strings.CutPrefix(block.Content, "[Tool Run ")
+		id, _, hasEnd := strings.Cut(observation, "]")
+		if !hasPrefix || !hasEnd {
+			return uuid.Nil, true, nil
+		}
+		run, err := uuid.Parse(id)
+		return run, true, err
 	}
-	return uuid.Nil, errors.New("the scripted model did not receive a workload Tool Run citation")
+	return uuid.Nil, false, nil
 }
 
 func (h *harness) assertInvestigation(t *testing.T) {
