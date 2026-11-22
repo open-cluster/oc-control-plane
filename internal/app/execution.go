@@ -377,7 +377,8 @@ func replaceFinalReply(state *agent.AgentState, name, answer string) {
 			content = append(content, block)
 		}
 	}
-	msg.Content = append(content, text)
+	content = append(content, text)
+	msg.Content = content
 	state.Context[index] = &msg
 }
 
