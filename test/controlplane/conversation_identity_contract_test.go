@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-cluster/oc-control-plane/internal/app"
@@ -24,7 +25,7 @@ func TestWebConversationExposesTrustedSourceAndUserAttribution(t *testing.T) {
 
 	status, body := plane.call(t, http.MethodPost,
 		plane.base(surfaceOrg)+"/conversations",
-		map[string]any{"subject": "trusted attribution", "message": "what changed?"})
+		map[string]any{"title": "trusted attribution"})
 	if status != http.StatusCreated {
 		t.Fatalf("opening Conversation = %d: %s", status, body)
 	}
@@ -40,9 +41,30 @@ func TestWebConversationExposesTrustedSourceAndUserAttribution(t *testing.T) {
 	if _, present := opened["surface"]; present {
 		t.Errorf("retired surface was exposed: %s", body)
 	}
-	var message map[string]json.RawMessage
-	if err := json.Unmarshal(opened["message"], &message); err != nil {
+	path := plane.base(surfaceOrg) + "/conversations/" + id + "/messages"
+	submission := map[string]any{"clientMessageId": uuid.NewString(), "text": "what changed?"}
+	status, body = plane.call(t, http.MethodPost, path, submission)
+	if status != http.StatusAccepted {
+		t.Fatalf("admitting Message = %d: %s", status, body)
+	}
+	var accepted struct {
+		Message     map[string]json.RawMessage `json:"message"`
+		ExecutionID string                     `json:"executionId"`
+	}
+	decodeInto(t, body, &accepted)
+	if _, err := uuid.Parse(accepted.ExecutionID); err != nil {
 		t.Fatal(err)
+	}
+	message := accepted.Message
+	status, retry := plane.call(t, http.MethodPost, path, submission)
+	var repeated = accepted
+	decodeInto(t, retry, &repeated)
+	if status != http.StatusAccepted || repeated.ExecutionID != accepted.ExecutionID {
+		t.Fatalf("Message retry = %d: %s", status, retry)
+	}
+	submission["text"] = "different question"
+	if status, body := plane.call(t, http.MethodPost, path, submission); status != http.StatusConflict {
+		t.Fatalf("Message conflict = %d: %s", status, body)
 	}
 	if string(message["role"]) != `"user"` {
 		t.Errorf("role = %s, want user", message["role"])
@@ -85,12 +107,19 @@ func TestWebConversationExposesTrustedSourceAndUserAttribution(t *testing.T) {
 		t.Fatalf("reading Conversation = %d: %s", status, body)
 	}
 	var detail struct {
-		Source   string                       `json:"source"`
-		Messages []map[string]json.RawMessage `json:"messages"`
+		Source string `json:"source"`
 	}
 	decodeInto(t, body, &detail)
-	if detail.Source != "web" || len(detail.Messages) != 1 || string(detail.Messages[0]["role"]) != `"user"` {
+	if detail.Source != "web" || strings.Contains(body, `"messages"`) {
 		t.Fatalf("Conversation detail identity = %s", body)
+	}
+	status, body = plane.call(t, http.MethodGet, path, nil)
+	decodeInto(t, body, &listed)
+	if status != http.StatusOK || len(listed.Items) == 0 || string(listed.Items[0]["role"]) != `"user"` {
+		t.Fatalf("Conversation Message history = %d: %s", status, body)
+	}
+	if status, body := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/investigations", nil); status != http.StatusOK || !strings.Contains(body, `"items":[]`) {
+		t.Fatalf("ordinary Chat created an Investigation = %d: %s", status, body)
 	}
 }
 
@@ -106,9 +135,8 @@ func TestConversationAIAdmissionRequiresAnAgentBeforeDurableMutation(t *testing.
 	status, body := plane.call(t, http.MethodPost,
 		plane.base(surfaceOrg)+"/conversations",
 		map[string]any{"subject": "unavailable execution", "message": "what happened?"})
-	if status != http.StatusServiceUnavailable ||
-		!strings.Contains(body, "no model provider configured") {
-		t.Fatalf("opening Conversation without an Agent = %d: %s", status, body)
+	if status != http.StatusBadRequest {
+		t.Fatalf("opening Conversation with an initial Message = %d: %s", status, body)
 	}
 
 	database, err := pgx.Connect(context.Background(), dsn)
@@ -135,15 +163,19 @@ func TestConversationAIAdmissionRequiresAnAgentBeforeDurableMutation(t *testing.
 	base := plane.base(surfaceOrg) + "/conversations"
 
 	status, body = plane.call(t, http.MethodPost, base,
-		map[string]any{"subject": "retained operational history"})
+		map[string]any{})
 	if status != http.StatusCreated {
 		t.Fatalf("opening empty Conversation without an Agent = %d: %s", status, body)
 	}
 	var opened struct {
-		ID string `json:"id"`
+		ID    string `json:"id"`
+		Title string `json:"title"`
 	}
 	if err := json.Unmarshal([]byte(body), &opened); err != nil || opened.ID == "" {
 		t.Fatalf("decoding opened Conversation: %v: %s", err, body)
+	}
+	if opened.Title != "" {
+		t.Fatalf("empty Conversation has title %q", opened.Title)
 	}
 	for _, path := range []string{base, base + "/" + opened.ID, base + "/" + opened.ID + "/turns"} {
 		if status, body = plane.call(t, http.MethodGet, path, nil); status != http.StatusOK {
@@ -161,9 +193,12 @@ func TestConversationAIAdmissionRequiresAnAgentBeforeDurableMutation(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	if beforeMessages != 0 || beforeInvestigations != 0 {
+		t.Fatalf("empty Conversation created %d Messages and %d Investigations", beforeMessages, beforeInvestigations)
+	}
 
 	status, body = plane.call(t, http.MethodPost, base+"/"+opened.ID+"/messages",
-		map[string]any{"message": "do not strand this"})
+		map[string]any{"clientMessageId": uuid.NewString(), "text": "do not strand this"})
 	if status != http.StatusServiceUnavailable ||
 		!strings.Contains(body, "no model provider configured") {
 		t.Fatalf("following up without an Agent = %d: %s", status, body)

@@ -10,6 +10,7 @@ import (
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
 	"github.com/google/uuid"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
@@ -102,9 +103,110 @@ func TestAgentToolRunsSurviveLeaseTakeover(t *testing.T) {
 	}
 }
 
+func TestDeleteChatFencesExecutionAndRetainsToolRunIdentity(t *testing.T) {
+	db, org := migratedDatabase(t)
+	ctx := t.Context()
+	principal := executionOwner(t, db, org)
+	chat := openConversation(t, db, org, "Operational notes")
+	first, err := db.AdmitAgentChat(ctx, principal, org, chat.ID, uuid.New(),
+		conversation.NewMessage{Text: "Private question"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := db.ClaimAgentExecution(ctx, org, first.ID, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waiting, err := db.AdmitAgentChat(ctx, principal, org, chat.ID, uuid.New(),
+		conversation.NewMessage{Text: "Still pending"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := poolForTest(db, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE agent_execution SET status = 'needs_input'
+		WHERE org_id = $1 AND execution_id = $2`, org, waiting.ID); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	run, err := db.BeginAgentToolRun(ctx, org, active, investigation.ToolRun{
+		Tool: "query_metrics", WindowFrom: now.Add(-time.Hour), WindowUntil: now, StartedAt: now,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saver := db.AgentStateSaver(org, active)
+	state := &agent.AgentState{SchemaVersion: 1, SessionID: active.SessionID(), Summary: "private context"}
+	if err := saver.SaveState(ctx, active.SessionID(), state); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DeleteConversation(ctx, principal, org, chat.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := saver.SaveState(ctx, active.SessionID(), state); !errors.Is(err, storage.ErrAgentLeaseLost) {
+		t.Fatalf("late checkpoint write = %v", err)
+	}
+	if err := db.FinishAgentExecution(ctx, org, active, storage.AgentExecutionCompleted,
+		"late reply", nil, investigation.Usage{}); !errors.Is(err, storage.ErrAgentLeaseLost) {
+		t.Fatalf("late reply = %v", err)
+	}
+	if err := db.CompleteAgentToolRun(ctx, org, active, investigation.ToolRun{
+		ID: run, Outcome: investigation.RunSucceeded, FinishedAt: now.Add(time.Second),
+	}, nil); !errors.Is(err, storage.ErrAgentLeaseLost) {
+		t.Fatalf("late Tool Run = %v", err)
+	}
+	var messages, checkpoints, executions, runs, auditEvents int
+	err = pool.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM conversation_message WHERE org_id = $1 AND conversation_id = $2 AND text <> ''),
+		(SELECT count(*) FROM agent_checkpoint WHERE org_id = $1 AND conversation_id = $2),
+		(SELECT count(*) FROM agent_execution WHERE org_id = $1 AND conversation_id = $2 AND status = 'cancelled'),
+		(SELECT count(*) FROM investigation_tool_run WHERE org_id = $1 AND tool_run_id = $3 AND outcome = $4),
+		(SELECT count(*) FROM audit_event WHERE org_id = $1 AND target_id = $2::text AND action = 'conversation.deleted')`,
+		org, chat.ID, run, int16(investigation.RunFailed)).Scan(&messages, &checkpoints, &executions, &runs, &auditEvents)
+	if err != nil || messages != 0 || checkpoints != 0 || executions != 2 || runs != 1 || auditEvents != 1 {
+		t.Fatalf("after deletion Messages=%d checkpoints=%d cancellations=%d Tool Runs=%d audits=%d: %v",
+			messages, checkpoints, executions, runs, auditEvents, err)
+	}
+}
+
+func TestLinkedInvestigationRechecksItsRequester(t *testing.T) {
+	db, org := migratedDatabase(t)
+	ctx := t.Context()
+	principal := executionOwner(t, db, org)
+	chat := openConversation(t, db, org, "Checkout")
+	now := time.Now()
+	opened, err := db.CreateInvestigation(ctx, principal, org, investigation.NewInvestigation{
+		ConversationID: chat.ID, Subject: "Investigate latency",
+		WindowFrom: now.Add(-time.Hour), WindowUntil: now,
+	}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := db.ClaimAgentExecution(ctx, org, opened.ExecutionID, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, origin, err := db.AgentToolScope(ctx, org, claimed); err != nil || origin != nil {
+		t.Fatalf("linked Investigation could not use requester's authority: %v, %v", origin, err)
+	}
+	pool, err := poolForTest(db, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE organization_membership SET role = 'viewer'
+		WHERE org_id = $1 AND user_id = $2`, org, principal.UserID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := db.AgentToolScope(ctx, org, claimed); !errors.Is(err, authz.ErrNotAMember) {
+		t.Fatalf("revoked requester still has Tool access: %v", err)
+	}
+}
+
 func TestAgentExecution(t *testing.T) {
 	database, organization, foreignOrg := twoOrganizationsInOneDatabase(t)
-	principal := ownerOf(t, organization)
+	principal := executionOwner(t, database, organization)
 
 	t.Run("new Chat turn restores the prior turn's checkpoint", func(t *testing.T) {
 		ctx := t.Context()
@@ -348,7 +450,7 @@ func TestAgentExecution(t *testing.T) {
 			t.Fatalf("different input reused the client ID: %v", err)
 		}
 
-		opened, err := database.OpenQueuedConversationTurn(ctx, time.Hour, 8)
+		opened, err := database.OpenQueuedSlackTurn(ctx, time.Hour, 8)
 		if err != nil || opened {
 			t.Fatalf("legacy worker admitted a Message owned by AgentScope: opened=%v, error=%v", opened, err)
 		}

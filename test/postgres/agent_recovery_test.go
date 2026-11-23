@@ -35,7 +35,7 @@ import (
 
 func TestAgentRecoveryKeepsLastCompletedConversation(t *testing.T) {
 	database, org, _ := twoOrganizationsInOneDatabase(t)
-	principal := ownerOf(t, org)
+	principal := executionOwner(t, database, org)
 	chat := openConversation(t, database, org, "Recover interrupted work")
 	ctx := t.Context()
 	admitAndClaim := func(input string) storage.AgentExecution {
@@ -470,9 +470,13 @@ func TestInvestigationConclusionSurvivesProcessCrashes(t *testing.T) {
 	chat := openConversation(t, database, org, "Checkout latency")
 	admit := func(text string) uuid.UUID {
 		t.Helper()
-		_, turn, opened, err := database.AppendMessageAndOpenTurn(ctx, owner, org, chat.ID, conversation.NewMessage{
+		_, err := appendMessageForTest(database, ctx, owner, org, chat.ID, conversation.NewMessage{
 			Role: conversation.RoleUser, AuthorID: owner.UserID().String(), AuthorName: "On-call", Text: text,
-		}, time.Hour, 8)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		turn, opened, err := openTurnForTest(database, ctx, org, chat.ID, time.Hour)
 		if err != nil || !opened {
 			t.Fatalf("open Investigation turn: %t, %v", opened, err)
 		}

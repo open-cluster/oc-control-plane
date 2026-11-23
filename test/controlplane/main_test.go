@@ -47,6 +47,7 @@ type controlPlane struct {
 	waitOnce      sync.Once
 	exitErr       error
 	database      *tcpGate
+	databaseDSN   string
 }
 
 type gateMode int
@@ -288,11 +289,12 @@ func startControlPlaneRunning(
 	}
 
 	plane := &controlPlane{
-		baseURL:  "http://" + address.String(),
-		logs:     logs,
-		stop:     stop,
-		exited:   exited,
-		database: gate,
+		baseURL:     "http://" + address.String(),
+		logs:        logs,
+		stop:        stop,
+		exited:      exited,
+		database:    gate,
+		databaseDSN: cfg.DatabaseDSN,
 	}
 	t.Cleanup(plane.shutdown)
 	if cfg.DatabaseDSN == gatedDSN && (len(initialize) == 0 || initialize[0]) {

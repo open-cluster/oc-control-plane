@@ -147,7 +147,7 @@ func TestExportedStorageFunctionsTakeAnOrganization(t *testing.T) {
 		"PruneChangesBefore": "age-bounded delete across the database; reads no tenant " +
 			"data and takes no caller-supplied identifier",
 		"ClaimNextAgentExecution": "discovers runnable work without a caller-supplied tenant; the selected row supplies the Organization for the scoped claim",
-		"OpenQueuedConversationTurn": "discovers durable queued Conversation work across tenants; " +
+		"OpenQueuedSlackTurn": "discovers durable queued Slack Messages across tenants; " +
 			"the selected row is the authority for the Organization used by the capacity lock and turn",
 		"ClaimSlackMessageWork": "discovers ready or expired Slack Message work across tenants; each " +
 			"claimed row carries the authoritative Organization used by every fenced transition",

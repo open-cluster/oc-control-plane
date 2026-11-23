@@ -21,12 +21,13 @@ type blockingModel struct {
 func (b *blockingModel) Chat(ctx context.Context, prompt []*message.Msg, _ ...model.CallOption) (*model.ChatResponse, error) {
 	if b.started != nil {
 		text := prompt[len(prompt)-1].GetTextContent("\n")
-		_, raw, _ := strings.Cut(*text, "\n")
 		var input struct {
 			ID uuid.UUID `json:"investigationId"`
 		}
-		if err := json.Unmarshal([]byte(raw), &input); err != nil {
-			return nil, err
+		if raw, investigation := strings.CutPrefix(*text, "Untrusted Investigation task data:\n"); investigation {
+			if err := json.Unmarshal([]byte(raw), &input); err != nil {
+				return nil, err
+			}
 		}
 		select {
 		case b.started <- input.ID:

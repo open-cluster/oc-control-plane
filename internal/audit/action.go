@@ -37,6 +37,8 @@ const (
 
 	ActionConversationOpened    Action = "conversation.opened"
 	ActionConversationMessage   Action = "conversation.message-sent"
+	ActionConversationRenamed   Action = "conversation.renamed"
+	ActionConversationDeleted   Action = "conversation.deleted"
 	ActionSlackMessageRecovered Action = "slack-message.recovered"
 
 	ActionAuthorizationRefused Action = "authorization.refused"

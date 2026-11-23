@@ -9,7 +9,7 @@ Use an operational question or an existing Incident as your starting point. Conn
 
 Start a Conversation with a specific question, such as “Is the checkout Deployment healthy in the payments namespace?” or “What errors appeared in checkout logs in the last 15 minutes?” Name the source or service when several could apply.
 
-The shipping deployment uses the [Conversation API example](/api-reference/conversations/open-conversation). An installed [Slack app](/integrations/collaboration/slack) can also answer direct mentions in an authorized channel thread.
+Use [Open conversation](/api-reference/conversations/open-conversation), then [Append conversation message](/api-reference/conversations/append-conversation-message). Include a new UUID in `clientMessageId` and reuse it if you retry the same submission. Read the reply with [List conversation messages](/api-reference/conversations/list-conversation-messages). An installed [Slack app](/integrations/collaboration/slack) can also answer direct mentions in an authorized channel thread.
 
 ## Investigate an Incident
 
@@ -19,8 +19,8 @@ An accepted firing alert can open an Incident and automatically queue an Investi
 
 Read the summary, cited Findings, and limitations. Citations identify the reads supporting each Finding. Review their timestamps and any incomplete results. Editors and Admins can [inspect a cited observation](/concepts/investigations-and-conversations#inspect-a-cited-observation).
 
-A completed Investigation may answer a factual question, support an explanation, or remain inconclusive. Missing access or telemetry can prevent an answer. Action Proposals are recommendations for you to review and verify. OpenCluster does not execute production changes.
+A completed Investigation records whether the evidence supports an explanation or remains inconclusive. Missing access or telemetry can prevent an answer. Review and verify any Action Proposals before making a production change.
 
 ## Continue the Conversation
 
-Ask a focused follow-up, such as “Did the deployment happen before the errors started?” Follow-ups open new investigations in the same conversation. Messages sent during active work wait and may be handled together. Earlier results stay unchanged, and prior cited Findings provide context. See [Conversations and follow-ups](/concepts/investigations-and-conversations#conversations-and-follow-ups).
+Ask a focused follow-up, such as “Did the deployment happen before the errors started?” Web Chat replies to queued Messages in order. To request an independent report, use [Open investigation](/api-reference/investigations/open-investigation) and include the Conversation ID if you want to link it to the report.

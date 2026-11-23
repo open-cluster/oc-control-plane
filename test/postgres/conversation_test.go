@@ -43,7 +43,7 @@ func openConversation(
 
 	opened, err := database.OpenConversation(context.Background(),
 		ownerOf(t, organization), organization, conversation.NewConversation{
-			Source: conversation.SourceWeb, Subject: subject,
+			Source: conversation.SourceWeb, Title: subject,
 			CreatedBy: "user-under-test",
 		})
 	if err != nil {
@@ -67,78 +67,6 @@ func say(
 		t.Fatalf("appending a message: %v", err)
 	}
 	return said
-}
-
-func TestQueuedMessagesDrainIntoOneNextTurn(t *testing.T) {
-	t.Parallel()
-
-	database, organization := migratedDatabase(t)
-	opened := openConversation(t, database, organization, "checkout is slow")
-
-	say(t, database, organization, opened.ID, "what changed?")
-	first, took, err := openTurnForTest(database, context.Background(), organization, opened.ID,
-		turnWindowLead)
-	if err != nil || !took {
-		t.Fatalf("opening the first turn: took=%v err=%v", took, err)
-	}
-
-	say(t, database, organization, opened.ID, "ignore the database")
-	say(t, database, organization, opened.ID, "check deployments instead")
-
-	if _, took, err = openTurnForTest(database, context.Background(), organization, opened.ID,
-		turnWindowLead); err != nil || took {
-		t.Fatalf("a second turn opened while the first was running: took=%v err=%v",
-			took, err)
-	}
-
-	if err = seedInvestigationConclusion(context.Background(), database, organization, first.InvestigationID, conclusionSaying("nothing changed")); err != nil {
-		t.Fatalf("concluding the first turn: %v", err)
-	}
-
-	second, took, err := openTurnForTest(database, context.Background(), organization, opened.ID,
-		turnWindowLead)
-	if err != nil || !took {
-		t.Fatalf("draining into the next turn: took=%v err=%v", took, err)
-	}
-	if second.Ordinal != 2 {
-		t.Errorf("the drained turn is ordinal %d, want 2", second.Ordinal)
-	}
-
-	detail, err := database.ConversationDetail(context.Background(), organization,
-		opened.ID, 50)
-	if err != nil {
-		t.Fatalf("reading the conversation: %v", err)
-	}
-	if len(detail.Turns) != 2 {
-		t.Fatalf("%d turns, want two: both queued messages belong to ONE next turn",
-			len(detail.Turns))
-	}
-	for _, message := range detail.Messages {
-		if message.Queued() {
-			t.Errorf("message %d is still queued after the drain", message.Sequence)
-		}
-	}
-	if detail.Messages[1].InvestigationID != second.InvestigationID ||
-		detail.Messages[2].InvestigationID != second.InvestigationID {
-		t.Errorf("the queued messages did not both land on the drained turn: %+v",
-			detail.Messages)
-	}
-}
-
-func TestDrainingAnEmptyQueueOpensNothing(t *testing.T) {
-	t.Parallel()
-
-	database, organization := migratedDatabase(t)
-	opened := openConversation(t, database, organization, "checkout is slow")
-
-	turn, took, err := openTurnForTest(database, context.Background(), organization, opened.ID,
-		turnWindowLead)
-	if err != nil {
-		t.Fatalf("draining an empty queue: %v", err)
-	}
-	if took {
-		t.Errorf("a turn opened with nothing queued: %+v", turn)
-	}
 }
 
 func TestAnotherOrganizationsConversationIsNotFound(t *testing.T) {
@@ -310,44 +238,6 @@ func TestProviderConversationRequiresAnIntactOriginBinding(t *testing.T) {
 	}
 }
 
-func TestAtomicAppendQueuesWhileTurnIsActive(t *testing.T) {
-	database, org, _ := twoOrganizationsInOneDatabase(t)
-	ctx := context.Background()
-	opened := openConversation(t, database, org, "queued follow-up")
-	appendPerson := func(text string) (conversation.Message, conversation.Turn, bool, error) {
-		return database.AppendMessageAndOpenTurn(ctx, ownerOf(t, org), org, opened.ID,
-			conversation.NewMessage{Role: conversation.RoleUser,
-				AuthorID: "user-under-test", AuthorName: "Test Operator", Text: text}, turnWindowLead, 100)
-	}
-	_, first, started, err := appendPerson("initial question")
-	if err != nil || !started {
-		t.Fatalf("initial append: started=%v, err=%v", started, err)
-	}
-	queued, _, started, err := appendPerson("correction while running")
-	if err != nil || started {
-		t.Fatalf("follow-up append: started=%v, err=%v", started, err)
-	}
-	if !queued.Queued() || queued.Sequence != 2 {
-		t.Fatalf("follow-up = %+v", queued)
-	}
-	if err := seedInvestigationConclusion(ctx, database, org, first.InvestigationID, conclusionSaying("first answer")); err != nil {
-		t.Fatal(err)
-	}
-	second, started, err := openTurnForTest(database, ctx, org, opened.ID, turnWindowLead)
-	if err != nil || !started || second.Ordinal != 2 {
-		t.Fatalf("drain: turn=%+v, started=%v, err=%v", second, started, err)
-	}
-	detail, err := database.ConversationDetail(ctx, org, opened.ID, 50)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(detail.Messages) != 3 || detail.Messages[1].InvestigationID != second.InvestigationID ||
-		detail.Messages[2].Role != conversation.RoleAssistant ||
-		detail.Messages[2].InvestigationID != first.InvestigationID {
-		t.Fatalf("persisted Messages = %+v", detail.Messages)
-	}
-}
-
 func TestAuthenticatedAppendRefusesSlackConversationWithoutSideEffects(t *testing.T) {
 	database, org, _ := twoOrganizationsInOneDatabase(t)
 	ctx := context.Background()
@@ -365,11 +255,9 @@ func TestAuthenticatedAppendRefusesSlackConversationWithoutSideEffects(t *testin
 	}
 
 	principal := ownerOf(t, org)
-	_, _, _, err = database.AppendMessageAndOpenTurn(ctx, principal, org, recorded.Conversation,
-		conversation.NewMessage{Role: conversation.RoleUser,
-			AuthorID: principal.UserID().String(), AuthorName: "Web User", Text: "must not cross sources"},
-		turnWindowLead, 100)
-	if !errors.Is(err, conversation.ErrSourceMismatch) {
+	_, err = database.AdmitAgentChat(ctx, principal, org, recorded.Conversation, uuid.New(),
+		conversation.NewMessage{Text: "must not cross sources"})
+	if !errors.Is(err, conversation.ErrUnknown) {
 		t.Fatalf("authenticated append error = %v, want source mismatch", err)
 	}
 
@@ -390,84 +278,6 @@ func TestAuthenticatedAppendRefusesSlackConversationWithoutSideEffects(t *testin
 	}
 }
 
-func TestCompetingAtomicAppendsDrainExactlyOnce(t *testing.T) {
-	database, org, _ := twoOrganizationsInOneDatabase(t)
-	ctx := context.Background()
-	chat := openConversation(t, database, org, "competing follow-ups")
-	principal := ownerOf(t, org)
-	appendPerson := func(text string) (conversation.Turn, bool, error) {
-		_, turn, started, err := database.AppendMessageAndOpenTurn(ctx, principal, org, chat.ID,
-			conversation.NewMessage{Role: conversation.RoleUser,
-				AuthorID: principal.UserID().String(), Text: text}, turnWindowLead, 100)
-		return turn, started, err
-	}
-	first, started, err := appendPerson("initial question")
-	if err != nil || !started {
-		t.Fatalf("initial turn: %v, %v", started, err)
-	}
-	start := make(chan struct{})
-	appended := make(chan error, 10)
-	for i := range 10 {
-		go func() {
-			<-start
-			_, opened, err := appendPerson(fmt.Sprintf("follow-up %d", i))
-			if err == nil && opened {
-				err = errors.New("opened another active turn")
-			}
-			appended <- err
-		}()
-	}
-	close(start)
-	for range 10 {
-		if err := <-appended; err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := seedInvestigationConclusion(ctx, database, org, first.InvestigationID, conclusionSaying("first answer")); err != nil {
-		t.Fatal(err)
-	}
-	type drainResult struct {
-		turn    conversation.Turn
-		started bool
-		err     error
-	}
-	drained := make(chan drainResult, 2)
-	for range 2 {
-		go func() {
-			turn, started, err := openTurnForTest(database, ctx, org, chat.ID, turnWindowLead)
-			drained <- drainResult{turn, started, err}
-		}()
-	}
-	var second conversation.Turn
-	opened := 0
-	for range 2 {
-		result := <-drained
-		if result.err != nil {
-			t.Fatal(result.err)
-		}
-		if result.started {
-			opened++
-			second = result.turn
-		}
-	}
-	detail, err := database.ConversationDetail(ctx, org, chat.ID, 50)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if opened != 1 || len(detail.Turns) != 2 || len(detail.Messages) != 12 {
-		t.Fatalf("drains=%d turns=%d Messages=%d", opened, len(detail.Turns), len(detail.Messages))
-	}
-	for _, message := range detail.Messages {
-		if message.Role == conversation.RoleUser && message.Sequence > 1 && message.InvestigationID != second.InvestigationID {
-			t.Fatalf("follow-up not assigned to the one next turn: %+v", message)
-		}
-	}
-	if assistant := detail.Messages[len(detail.Messages)-1]; assistant.Role != conversation.RoleAssistant ||
-		assistant.InvestigationID != first.InvestigationID {
-		t.Fatalf("first reply was not retained as one assistant Message: %+v", assistant)
-	}
-}
-
 func TestSlackQueueCapacityPreservesDeduplicationAndRetry(t *testing.T) {
 	database, org, _ := twoOrganizationsInOneDatabase(t)
 	ctx := context.Background()
@@ -477,12 +287,17 @@ func TestSlackQueueCapacityPreservesDeduplicationAndRetry(t *testing.T) {
 	}
 	said := storage.SlackMessage{Integration: integration.ID, ContentDigest: randomDigest(t),
 		Channel: "CQUEUE", Thread: "1.0", Subject: "queue", AuthorID: "UQUEUE", Text: "first"}
-	if _, err := database.RecordSlackMessage(ctx, org, said); err != nil {
+	slack, err := database.RecordSlackMessage(ctx, org, said)
+	if err != nil {
 		t.Fatal(err)
 	}
 	chat := openConversation(t, database, org, "web backlog")
+	principal := ownerOf(t, org)
 	for range 99 {
-		say(t, database, org, chat.ID, "queued")
+		if _, err := database.AdmitAgentChat(ctx, principal, org, chat.ID, uuid.New(),
+			conversation.NewMessage{Text: "queued"}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if outcome, err := database.RecordSlackMessage(ctx, org, said); err != nil || !outcome.Duplicate {
 		t.Fatalf("duplicate at capacity: %+v, %v", outcome, err)
@@ -492,7 +307,7 @@ func TestSlackQueueCapacityPreservesDeduplicationAndRetry(t *testing.T) {
 	if _, err := database.RecordSlackMessage(ctx, org, said); !errors.Is(err, conversation.ErrQueueFull) {
 		t.Fatalf("new Message at capacity: %v", err)
 	}
-	if _, started, err := openTurnForTest(database, ctx, org, chat.ID, turnWindowLead); err != nil || !started {
+	if _, started, err := openTurnForTest(database, ctx, org, slack.Conversation, turnWindowLead); err != nil || !started {
 		t.Fatalf("drain: %v, %v", started, err)
 	}
 	if outcome, err := database.RecordSlackMessage(ctx, org, said); err != nil || outcome.Duplicate {
@@ -501,7 +316,7 @@ func TestSlackQueueCapacityPreservesDeduplicationAndRetry(t *testing.T) {
 }
 
 func TestAtomicMessageAppendRollsBackDatabaseFailures(t *testing.T) {
-	for _, table := range []string{"audit_event", "investigation"} {
+	for _, table := range []string{"audit_event", "agent_execution"} {
 		t.Run(table, func(t *testing.T) {
 			database, org, _ := twoOrganizationsInOneDatabase(t)
 			ctx := context.Background()
@@ -516,9 +331,8 @@ func TestAtomicMessageAppendRollsBackDatabaseFailures(t *testing.T) {
 				FOR EACH ROW EXECUTE FUNCTION reject_queue_write()`); err != nil {
 				t.Fatal(err)
 			}
-			_, _, _, err = database.AppendMessageAndOpenTurn(ctx, ownerOf(t, org), org, chat.ID,
-				conversation.NewMessage{Role: conversation.RoleUser,
-					AuthorID: "user-under-test", Text: "must roll back"}, turnWindowLead, 100)
+			_, err = database.AdmitAgentChat(ctx, ownerOf(t, org), org, chat.ID, uuid.New(),
+				conversation.NewMessage{Text: "must roll back"})
 			if err == nil {
 				t.Fatal("injected database failure was reported as acceptance")
 			}
@@ -539,23 +353,20 @@ func TestQueuedMessageAdmissionIsAtomicAcrossConversations(t *testing.T) {
 	chats := []conversation.Conversation{
 		openConversation(t, database, org, "first"), openConversation(t, database, org, "second"),
 	}
-	for _, chat := range chats {
-		say(t, database, org, chat.ID, "initial question")
-		if _, started, err := openTurnForTest(database, ctx, org, chat.ID, turnWindowLead); err != nil || !started {
-			t.Fatalf("start: %v, %v", started, err)
-		}
-	}
+	principal := ownerOf(t, org)
 	for i := range 99 {
-		say(t, database, org, chats[i%2].ID, fmt.Sprintf("queued %d", i))
+		if _, err := database.AdmitAgentChat(ctx, principal, org, chats[i%2].ID, uuid.New(),
+			conversation.NewMessage{Text: fmt.Sprintf("queued %d", i)}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	start := make(chan struct{})
 	results := make(chan error, 2)
 	for _, chat := range chats {
 		go func() {
 			<-start
-			_, _, _, err := database.AppendMessageAndOpenTurn(ctx, ownerOf(t, org), org, chat.ID,
-				conversation.NewMessage{Role: conversation.RoleUser,
-					AuthorID: "user-under-test", Text: "last available slot"}, turnWindowLead, 100)
+			_, err := database.AdmitAgentChat(ctx, principal, org, chat.ID, uuid.New(),
+				conversation.NewMessage{Text: "last available slot"})
 			results <- err
 		}()
 	}
@@ -575,70 +386,21 @@ func TestQueuedMessageAdmissionIsAtomicAcrossConversations(t *testing.T) {
 		t.Fatalf("accepted=%d refused=%d; want one of each", accepted, refused)
 	}
 	otherChat := openConversation(t, database, other, "unaffected Organization")
-	say(t, database, other, otherChat.ID, "still accepted")
+	if _, err := database.AdmitAgentChat(ctx, ownerOf(t, other), other, otherChat.ID, uuid.New(),
+		conversation.NewMessage{Text: "still accepted"}); err != nil {
+		t.Fatal(err)
+	}
 	pool, err := poolForTest(database, org)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var queued int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM conversation_message
-		WHERE org_id = $1 AND investigation_id IS NULL AND role = 1`, org).Scan(&queued); err != nil {
+		WHERE org_id = $1 AND client_message_id IS NOT NULL AND role = 1`, org).Scan(&queued); err != nil {
 		t.Fatal(err)
 	}
 	if queued != 100 {
 		t.Fatalf("persisted queued Messages = %d, want 100", queued)
-	}
-}
-
-func TestQueuedMessageBacklogDrainsInBoundedOrderedBatches(t *testing.T) {
-	database, org, _ := twoOrganizationsInOneDatabase(t)
-	ctx := context.Background()
-	pool, err := poolForTest(database, org)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, test := range []struct {
-		name    string
-		message string
-		count   int
-		batches []int
-	}{
-		{name: "count", message: "question", count: 205, batches: []int{100, 100, 5}},
-		{name: "bytes", message: strings.Repeat("界", 8192), count: 5, batches: []int{2, 2, 1}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			chat := openConversation(t, database, org, "queued backlog")
-			if _, err := pool.Exec(ctx, `
-				INSERT INTO conversation_message
-					(conversation_id, org_id, sequence, role, author_id, text, window_from, window_until)
-				SELECT $1, $2, n, 1, 'actor-' || n, $3, now() - interval '24 hours', now()
-				FROM generate_series(1, $4::integer) n`, chat.ID, org, test.message, test.count); err != nil {
-				t.Fatal(err)
-			}
-			wantFirst := 1
-			for batch, want := range test.batches {
-				turn, started, err := openTurnForTest(database, ctx, org, chat.ID, turnWindowLead)
-				if err != nil || !started {
-					t.Fatalf("batch %d: started=%v, err=%v", batch, started, err)
-				}
-				var count, first, last int
-				if err := pool.QueryRow(ctx, `SELECT count(*), min(sequence), max(sequence)
-					FROM conversation_message WHERE org_id = $1 AND conversation_id = $2 AND investigation_id = $3`,
-					org, chat.ID, turn.InvestigationID).Scan(&count, &first, &last); err != nil {
-					t.Fatal(err)
-				}
-				if count != want || first != wantFirst || last != wantFirst+want-1 {
-					t.Fatalf("batch %d: count=%d first=%d last=%d", batch, count, first, last)
-				}
-				wantFirst = last + 1
-				if err := seedInvestigationConclusion(ctx, database, org, turn.InvestigationID, conclusionSaying("answer")); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if _, started, err := openTurnForTest(database, ctx, org, chat.ID, turnWindowLead); err != nil || started {
-				t.Fatalf("empty drain: started=%v, err=%v", started, err)
-			}
-		})
 	}
 }
 
@@ -687,56 +449,6 @@ func TestConversationDetailBoundsTurns(t *testing.T) {
 		if _, err = database.ConversationTurns(ctx, otherOrg, id, 50, ""); !errors.Is(err, conversation.ErrUnknown) {
 			t.Fatalf("foreign or missing Conversation: %v", err)
 		}
-	}
-}
-
-func TestQueuedMessageWindowSurvivesDrain(t *testing.T) {
-	for _, explicit := range []bool{false, true} {
-		t.Run(map[bool]string{false: "default", true: "explicit"}[explicit], func(t *testing.T) {
-			t.Parallel()
-			ctx := context.Background()
-			database, org := migratedDatabase(t)
-			chat := openConversation(t, database, org, "queued windows")
-			appendMessage := func(window *conversation.Window) (conversation.Message, conversation.Turn, bool, error) {
-				return database.AppendMessageAndOpenTurn(ctx, ownerOf(t, org), org, chat.ID,
-					conversation.NewMessage{Role: conversation.RoleUser, AuthorID: "user-under-test", Text: "question", Window: window}, time.Hour, 100)
-			}
-			_, first, opened, err := appendMessage(nil)
-			if err != nil || !opened {
-				t.Fatalf("first: %v %v", opened, err)
-			}
-			var requested *conversation.Window
-			if explicit {
-				requested = &conversation.Window{From: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), Until: time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC)}
-			}
-			queued, _, opened, err := appendMessage(requested)
-			if err != nil || opened || queued.WindowFrom.IsZero() || queued.WindowUntil.IsZero() {
-				t.Fatalf("queued window: %+v opened=%v err=%v", queued, opened, err)
-			}
-			inherited, _, _, err := appendMessage(nil)
-			if err != nil || !inherited.WindowFrom.Equal(queued.WindowFrom) || !inherited.WindowUntil.Equal(queued.WindowUntil) {
-				t.Fatalf("window inheritance: %+v err=%v", inherited, err)
-			}
-			_, _, _, err = appendMessage(&conversation.Window{From: queued.WindowFrom.Add(-time.Hour), Until: queued.WindowUntil})
-			if !errors.Is(err, conversation.ErrWindowConflict) {
-				t.Fatalf("incompatible window accepted: %v", err)
-			}
-			if _, err = database.CancelInvestigation(ctx, ownerOf(t, org), org, first.InvestigationID); err != nil {
-				t.Fatal(err)
-			}
-			second, opened, err := openTurnForTest(database, ctx, org, chat.ID, 365*24*time.Hour)
-			if err != nil || !opened {
-				t.Fatalf("drain: %v %v", opened, err)
-			}
-			found, err := database.Investigation(ctx, org, second.InvestigationID)
-			if err != nil || !found.WindowFrom.Equal(queued.WindowFrom) || !found.WindowUntil.Equal(queued.WindowUntil) {
-				t.Fatalf("drain shifted window: %+v err=%v", found, err)
-			}
-			detail, err := database.ConversationDetail(ctx, org, chat.ID, 10)
-			if err != nil || len(detail.Messages) != 3 {
-				t.Fatalf("refusal wrote a Message: %d %v", len(detail.Messages), err)
-			}
-		})
 	}
 }
 

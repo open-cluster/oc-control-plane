@@ -74,9 +74,8 @@ func TestAlertBatchSharesCapacityWithManualConversationAndSlackProducers(t *test
 		manual <- err
 	}()
 	go func() {
-		_, _, _, err := database.AppendMessageAndOpenTurn(ctx, principal, organization, chat.ID,
-			conversation.NewMessage{Role: conversation.RoleUser,
-				AuthorID: principal.UserID().String(), Text: "investigate"}, time.Hour, 3)
+		_, err := database.AdmitAgentChat(ctx, principal, organization, chat.ID, uuid.New(),
+			conversation.NewMessage{Text: "What changed?"})
 		web <- err
 	}()
 	go func() { slackResult <- database.ApplySlackMessageWork(ctx, organization, work, time.Hour, 3) }()
@@ -90,7 +89,7 @@ func TestAlertBatchSharesCapacityWithManualConversationAndSlackProducers(t *test
 	if err := <-manual; !errors.Is(err, investigation.ErrQueueFull) {
 		t.Fatalf("manual producer: %v", err)
 	}
-	if err := <-web; !errors.Is(err, conversation.ErrQueueFull) {
+	if err := <-web; err != nil {
 		t.Fatalf("Conversation producer: %v", err)
 	}
 	if err := <-slackResult; !errors.Is(err, storage.ErrInvestigationCapacity) {

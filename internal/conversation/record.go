@@ -47,25 +47,27 @@ func (r Role) String() string {
 }
 
 const (
-	MaxSubjectLength     = 512
+	MaxTitleLength       = 512
 	MaxMessageTextLength = 8192
 	MaxAuthorIDLength    = 256
 	MaxAuthorNameLength  = 256
 )
 
 var (
-	ErrUnknown         = errors.New("conversation unknown")
-	ErrIncidentUnknown = errors.New("incident unknown")
-	ErrSourceMismatch  = errors.New("authenticated Messages cannot be appended to a Slack Conversation")
-	ErrBadCursor       = errors.New("after is not a page position from a previous response")
-	ErrQueueFull       = errors.New("this organization has too much work waiting")
+	ErrUnknown               = errors.New("conversation unknown")
+	ErrIncidentUnknown       = errors.New("incident unknown")
+	ErrBadCursor             = errors.New("after is not a page position from a previous response")
+	ErrQueueFull             = errors.New("this organization has too much work waiting")
+	ErrClientMessageConflict = errors.New("client message ID already names different input")
+	ErrLegacyHistory         = errors.New("this Conversation is read-only; create a new Conversation to continue")
+	ErrChatUnavailable       = errors.New("this deployment has no model provider configured for Chat")
 )
 
 type Conversation struct {
 	ID             uuid.UUID
 	IncidentID     uuid.UUID
 	Source         Source
-	Subject        string
+	Title          string
 	CreatedBy      string
 	CreatedAt      time.Time
 	LastActivityAt time.Time
@@ -98,7 +100,7 @@ type Turn struct {
 type NewConversation struct {
 	IncidentID uuid.UUID
 	Source     Source
-	Subject    string
+	Title      string
 	CreatedBy  string
 }
 
@@ -108,6 +110,12 @@ type NewMessage struct {
 	AuthorID   string
 	AuthorName string
 	Text       string
+}
+
+type AcceptedMessage struct {
+	Message     Message
+	ExecutionID uuid.UUID
+	Status      string
 }
 
 func boundedRunes(text string, limit int) string {
@@ -144,23 +152,23 @@ type TurnPage struct {
 	Next  string
 }
 
+type MessagePage struct {
+	Messages []Message
+	Next     string
+}
+
 type Store interface {
 	OpenConversation(ctx context.Context, who authz.Principal, org uuid.UUID,
 		wanted NewConversation) (Conversation, error)
 	QueryConversations(ctx context.Context, who authz.Principal,
 		org uuid.UUID, page Page) (List, error)
-	ConversationDetail(ctx context.Context, org uuid.UUID, id uuid.UUID,
-		messages int) (Detail, error)
+	WebConversation(ctx context.Context, org, id uuid.UUID) (Conversation, error)
+	RenameConversation(ctx context.Context, who authz.Principal, org, id uuid.UUID, title string) (Conversation, error)
+	DeleteConversation(ctx context.Context, who authz.Principal, org, id uuid.UUID) error
+	ConversationMessages(ctx context.Context, org, id uuid.UUID, limit int, cursor string) (MessagePage, error)
 	ConversationTurns(ctx context.Context, org uuid.UUID, id uuid.UUID,
 		limit int, cursor string) (TurnPage, error)
-	AppendMessageAndOpenTurn(
-		ctx context.Context,
-		who authz.Principal,
-		org uuid.UUID,
-		id uuid.UUID,
-		said NewMessage,
-		lead time.Duration,
-		maxPending int) (Message, Turn, bool, error)
+	AdmitConversationMessage(ctx context.Context, who authz.Principal, org, id, clientMessageID uuid.UUID, input NewMessage, replayOnly bool) (AcceptedMessage, error)
 }
 
 func Bounded(text string, limit int) string { return boundedRunes(text, limit) }

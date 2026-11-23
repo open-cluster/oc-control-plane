@@ -3,20 +3,17 @@ title: "Investigations and results"
 description: "Follow a conversation, assess cited findings, and review actions and postmortems."
 ---
 
-An investigation reads connected sources to answer an operational question or investigate an incident. It has a time window and execution limits, so the answer reflects the evidence available for that turn.
-
-A factual Conversation reply can complete without an assessment. An Incident Investigation that concludes states whether the evidence supports an explanation or leaves the cause unresolved. Missing access, telemetry, or human input can limit either result.
+Use web Chat for operational questions and follow-ups. Start an Investigation when you need an evidence-backed assessment with cited Findings. An Investigation can start from an Incident or a question and can link back to a Conversation.
 
 ## Conversations and follow-ups
 
-Keep related questions in the same conversation. For example, ask “Why did checkout latency rise?” and then “Does the deployment at 09:42 explain it?” Earlier cited findings provide context without changing the earlier result.
+Keep related questions in the same Conversation. For example, ask “Why did checkout latency rise?” and then “Does the deployment at 09:42 explain it?” Chat can use connected sources to answer. Each submitted Message queues its own reply, and replies use prior context in Conversation order. The Messages endpoint keeps their visible history available. Ask for a fresh read when conditions change.
 
-Follow-ups open new investigations. Messages sent while work is active wait and may be handled together in the next turn. Conversation history provides context, but it is not a complete memory or fresh evidence. Ask explicitly for a new interval or a fresh check when conditions change.
+Create a Conversation with an optional title or Incident association. When the title is empty, OpenCluster names it after the first successful exchange. You can rename it at any time. Earlier web Conversations with Investigation turns retain their [historical turns](/api-reference/conversations/list-conversation-turns) and Messages. Open a new Conversation to continue from those records.
 
 In Slack, mention the app again in the same thread. Slack evidence reads stay in that thread, while other eligible connected systems can supply evidence. See [Slack access boundaries](/integrations/collaboration/slack#read-slack-as-evidence).
 
-An Investigation continues if your browser disconnects or your session expires.
-After signing in again, return to the same Conversation to follow its progress.
+Accepted Chat and Investigation work continues if your browser disconnects. Return to the Conversation Messages or the Investigation to see its result.
 
 ## Findings and citations
 
@@ -44,4 +41,4 @@ After an incident resolves, an Editor or Admin can request a draft postmortem th
 
 Missing impact, resolution, owner, or deadline facts appear as `Needs human input.` You can correct and regenerate the draft before marking it reviewed. Review records the reviewer, and the postmortem is not automatically published. Human testimony remains distinct from system evidence.
 
-See [Run your first investigation](/getting-started/run-your-first-investigation) for the question-to-answer workflow and the [API reference](/api-reference/conversations/list-conversation-turns) for time windows and turn pagination.
+See [Run your first investigation](/getting-started/run-your-first-investigation) for the question-to-answer workflow.

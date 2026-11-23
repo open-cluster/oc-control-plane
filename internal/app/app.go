@@ -148,7 +148,7 @@ func Run(
 		}
 	}
 	if prepare == nil && chatModel != nil {
-		prepare = prepareInvestigationExecution(database, catalog, sealer, chatModel)
+		prepare = prepareAgentExecution(database, catalog, sealer, chatModel)
 	}
 
 	return serve(ctx, assembled{
@@ -159,6 +159,7 @@ func Run(
 		catalog:           catalog,
 		sealer:            sealer,
 		prepareExecution:  prepare,
+		chatModel:         chatModel,
 		executionWake:     options.ExecutionWake,
 		onListen:          options.OnListen,
 		inventoryInterval: inventoryInterval(options.InventoryInterval),
@@ -186,6 +187,7 @@ type assembled struct {
 	catalog           integrations.Catalog
 	sealer            seal.Sealer
 	prepareExecution  PrepareExecution
+	chatModel         model.ChatModel
 	executionWake     <-chan struct{}
 	onListen          func(net.Addr)
 	inventoryInterval time.Duration

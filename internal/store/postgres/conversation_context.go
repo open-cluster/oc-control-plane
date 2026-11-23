@@ -33,7 +33,7 @@ func conversationOrigin(ctx context.Context, on querier, organization, id uuid.U
 		    AND (NOT $3 OR (NOT i.disconnected AND i.verification_status = 'verified' AND i.verified_at IS NOT NULL
 		        AND EXISTS (SELECT 1 FROM integration_installation installed
 		                     WHERE installed.org_id = i.org_id AND installed.integration_id = i.integration_id)))
-		WHERE c.org_id = $1 AND c.conversation_id = $2`, organization, id, requireVerified).
+		WHERE c.org_id = $1 AND c.conversation_id = $2 AND c.deleted_at IS NULL`, organization, id, requireVerified).
 		Scan(&source, &integration, &channel, &thread)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, conversation.ErrUnknown

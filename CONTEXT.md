@@ -62,24 +62,23 @@ of its Alert Events is firing.
 
 ## Investigation
 
-One bounded evidence-gathering turn about an Incident or operator question. It progresses
+One bounded evidence-gathering task about an Incident or operator question. It progresses
 from queued to running and terminates as concluded, cancelled, or failed. Running means
 assigned to a worker, including expired execution awaiting recovery. AgentScope can
-resume unfinished execution. A follow-up opens another Investigation while the completed
-report remains immutable.
+resume unfinished execution. A new Investigation can reference a Conversation and owns
+its execution and checkpoint. Completed reports remain immutable.
 
 ## Conversation
 
-The multi-turn context a User talks to. Its immutable Source is `web` or `slack`. It
-contains ordered visible Messages. During the web and Slack transition, those Messages
-can open Investigation turns. AgentScope checkpoints carry the Conversation context
-across those turns.
+The durable history of a Chat. Its immutable Source is `web` or `slack`. It contains
+ordered visible Messages. Web Chat uses a Conversation checkpoint across replies.
+Transitional Slack Conversations still open assigned Investigation turns.
 
 ## Message
 
 One ordered entry in a Conversation. Its role is `user` or `assistant`; the Conversation
-Source determines how a user Message is attributed. Messages assigned to an Investigation
-are the authoritative request for that turn.
+Source determines how a user Message is attributed. A web user Message admits one Chat
+execution. Messages assigned to a historical Investigation are the request for that turn.
 
 ## Finding
 

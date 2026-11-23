@@ -2,6 +2,7 @@ package investigation
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/correlation"
 	observability "github.com/open-cluster/oc-control-plane/internal/telemetry"
 )
@@ -96,17 +98,15 @@ func (h Handlers) Routes() []authz.Route {
 }
 
 type openRequest struct {
-	IncidentID string `json:"incidentId"`
+	conversation.WindowInput
+	IncidentID     uuid.UUID `json:"incidentId"`
+	ConversationID uuid.UUID `json:"conversationId"`
+	Question       string    `json:"question"`
 }
 
 func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
 	organization := h.organization(request)
-	if !h.AgentAvailable {
-		writeJSON(writer, http.StatusServiceUnavailable, errorView{
-			Error: "this deployment has no model provider configured, so it cannot investigate"})
-		return
-	}
 	var askedRequest openRequest
 	if !h.decode(writer, request, &askedRequest) {
 		return
@@ -115,22 +115,59 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	trigger, refusal, err := h.resolveTrigger(ctx, organization, askedRequest)
+	now := time.Now().UTC()
+	requestedWindow, err := askedRequest.Parse(now)
 	if err != nil {
-		h.fail(writer, request, err)
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
 		return
 	}
-	if refusal != "" {
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: refusal})
+	question := strings.TrimSpace(askedRequest.Question)
+	if (askedRequest.IncidentID == uuid.Nil) == (question == "") || len([]rune(question)) > 1024 {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: "give an incidentId or a question of at most 1024 characters"})
 		return
 	}
-	window := windowOf(trigger, h.WindowLead)
-	opened, err := h.Store.CreateInvestigation(ctx, principal, organization, NewInvestigation{
-		IncidentID:  trigger.IncidentID,
-		Subject:     subjectOf(trigger),
-		WindowFrom:  window.from,
-		WindowUntil: window.until,
-	}, h.MaxPending)
+	key := strings.TrimSpace(request.Header.Get("Idempotency-Key"))
+	if len(request.Header.Values("Idempotency-Key")) > 1 || len(key) > 128 ||
+		(key == "" && (askedRequest.ConversationID != uuid.Nil || question != "" || requestedWindow != nil)) {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: "give an Idempotency-Key of at most 128 bytes"})
+		return
+	}
+	wanted := NewInvestigation{
+		IncidentID: askedRequest.IncidentID, ConversationID: askedRequest.ConversationID,
+		Subject: question, RequestKey: key, ReplayOnly: !h.AgentAvailable,
+		WindowFrom: now.Add(-conversation.QuestionWindow(h.WindowLead)), WindowUntil: now,
+	}
+	if key != "" {
+		input, err := json.Marshal(struct {
+			IncidentID, ConversationID uuid.UUID
+			Question                   string
+			Window                     *conversation.Window
+		}{
+			IncidentID: askedRequest.IncidentID, ConversationID: askedRequest.ConversationID,
+			Question: question, Window: requestedWindow,
+		})
+		if err != nil {
+			writeJSON(writer, http.StatusBadRequest, errorView{Error: "invalid Investigation request"})
+			return
+		}
+		wanted.RequestHash = sha256.Sum256(input)
+	}
+	if requestedWindow != nil {
+		wanted.WindowFrom, wanted.WindowUntil = requestedWindow.From, requestedWindow.Until
+	}
+	if wanted.IncidentID != uuid.Nil {
+		trigger, err := h.Store.TriggerIncident(ctx, organization, wanted.IncidentID)
+		if err != nil {
+			h.fail(writer, request, err)
+			return
+		}
+		wanted.Subject = subjectOf(trigger)
+		if requestedWindow == nil {
+			window := windowOf(trigger, h.WindowLead)
+			wanted.WindowFrom, wanted.WindowUntil = window.from, window.until
+		}
+	}
+	opened, err := h.Store.CreateInvestigation(ctx, principal, organization, wanted, h.MaxPending)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
@@ -138,27 +175,12 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	observability.LoggerFor(ctx, h.Logger, correlation.From(ctx)).InfoContext(ctx, "investigation opened",
 		slog.String("org_id", organization.String()),
 		slog.String("investigation_id", opened.ID.String()),
-		slog.String("incident_id", trigger.IncidentID.String()))
+		slog.String("incident_id", opened.IncidentID.String()))
 
-	writeJSON(writer, http.StatusAccepted, investigationViewOf(opened))
-}
-
-func (h Handlers) resolveTrigger(
-	ctx context.Context, organization uuid.UUID, asked openRequest,
-) (Trigger, string, error) {
-	incidentID := strings.TrimSpace(asked.IncidentID)
-	if incidentID == "" {
-		return Trigger{}, "give an incidentId", nil
-	}
-	id, parsed := parseIdentity(incidentID)
-	if !parsed {
-		return Trigger{}, "incidentId is not an identity", nil
-	}
-	trigger, err := h.Store.TriggerIncident(ctx, organization, id)
-	if err != nil {
-		return Trigger{}, "", err
-	}
-	return trigger, "", nil
+	view := investigationViewOf(opened)
+	view.ExecutionID = opened.ExecutionID.String()
+	view.EventsURL = "/api/v1/investigations/" + opened.ID.String() + "/events"
+	writeJSON(writer, http.StatusAccepted, view)
 }
 
 func parseIdentity(value string) (uuid.UUID, bool) {
@@ -356,6 +378,12 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "investigation not found"})
 	case errors.Is(err, ErrIncidentUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "incident not found"})
+	case errors.Is(err, conversation.ErrUnknown):
+		writeJSON(writer, http.StatusNotFound, errorView{Error: "conversation not found"})
+	case errors.Is(err, ErrRequestConflict):
+		writeJSON(writer, http.StatusConflict, errorView{Error: ErrRequestConflict.Error()})
+	case errors.Is(err, ErrAgentUnavailable):
+		writeJSON(writer, http.StatusServiceUnavailable, errorView{Error: ErrAgentUnavailable.Error()})
 	case errors.Is(err, ErrQueueFull):
 		writeJSON(writer, http.StatusTooManyRequests, errorView{
 			Error: "this Organization has reached its pending Investigation limit; wait for work to start and try again"})

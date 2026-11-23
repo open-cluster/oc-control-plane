@@ -30,7 +30,7 @@ func TestConversationAndInvestigationStatusesFollowAssignmentUntilRecovery(t *te
 	conversation, id := plane.openConversation(t, "assignment lifecycle", "second question")
 	assertStatus := func(want string) {
 		t.Helper()
-		for _, path := range []string{"/investigations/" + id, "/conversations/" + conversation, "/conversations/" + conversation + "/turns"} {
+		for _, path := range []string{"/investigations/" + id, "/conversations/" + conversation + "/turns"} {
 			status, body := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+path, nil)
 			if status != http.StatusOK {
 				t.Fatalf("reading %s = %d: %s", path, status, body)
@@ -91,16 +91,9 @@ func TestConversationTurnsPaginateAndRejectInvalidQueries(t *testing.T) {
 	id, first := plane.openConversation(t, "paginated conversation", "first question")
 	plane.awaitInvestigation(t, first)
 	path := plane.base(surfaceOrg) + "/conversations/" + id
-	status, body := plane.call(t, http.MethodPost, path+"/messages", map[string]any{"message": "second question"})
-	if status != http.StatusAccepted {
-		t.Fatalf("follow-up = %d: %s", status, body)
-	}
-	var accepted struct {
-		Turn struct{ InvestigationID string } `json:"turn"`
-	}
-	decodeInto(t, body, &accepted)
-	plane.awaitInvestigation(t, accepted.Turn.InvestigationID)
-	status, body = plane.call(t, http.MethodGet, path+"/turns?limit=1", nil)
+	second := plane.seedLegacyTurn(t, id, "second question")
+	plane.awaitInvestigation(t, second)
+	status, body := plane.call(t, http.MethodGet, path+"/turns?limit=1", nil)
 	if status != http.StatusOK {
 		t.Fatalf("first page = %d: %s", status, body)
 	}
@@ -121,7 +114,7 @@ func TestConversationTurnsPaginateAndRejectInvalidQueries(t *testing.T) {
 		t.Fatalf("next page = %d: %s", status, body)
 	}
 	decodeInto(t, body, &page)
-	if len(page.Turns) != 1 || page.Turns[0].InvestigationID != accepted.Turn.InvestigationID || page.Turns[0].Turn != 2 || page.Next != nil {
+	if len(page.Turns) != 1 || page.Turns[0].InvestigationID != second || page.Turns[0].Turn != 2 || page.Next != nil {
 		t.Fatalf("last page = %s", body)
 	}
 	var rawPage struct {
@@ -131,12 +124,12 @@ func TestConversationTurnsPaginateAndRejectInvalidQueries(t *testing.T) {
 	if _, present := rawPage.Turns[0]["answer"]; present {
 		t.Fatalf("Turn exposed the Conversation reply: %s", body)
 	}
-	status, body = plane.call(t, http.MethodGet, path, nil)
+	status, body = plane.call(t, http.MethodGet, path+"/messages", nil)
 	if status != http.StatusOK {
 		t.Fatalf("Conversation detail = %d: %s", status, body)
 	}
 	var detail struct {
-		Messages []map[string]json.RawMessage `json:"messages"`
+		Messages []map[string]json.RawMessage `json:"items"`
 	}
 	decodeInto(t, body, &detail)
 	wantRoles := []string{`"user"`, `"assistant"`, `"user"`, `"assistant"`}
@@ -161,19 +154,15 @@ func TestConversationTurnsPaginateAndRejectInvalidQueries(t *testing.T) {
 	if status, body := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/conversations/"+other+"/turns?cursor="+cursor, nil); status != http.StatusBadRequest {
 		t.Errorf("cursor reused across conversations = %d: %s", status, body)
 	}
-	for _, suffix := range []string{"", "/turns?limit=200"} {
+	for _, suffix := range []string{"/messages?limit=200", "/turns?limit=200"} {
 		status, body := plane.call(t, http.MethodGet, path+suffix, nil)
 		if status != http.StatusOK {
 			t.Fatalf("reading %s = %d: %s", suffix, status, body)
 		}
 		var fields map[string]json.RawMessage
 		decodeInto(t, body, &fields)
-		field := "next"
-		if suffix == "" {
-			field = "turnsNext"
-		}
-		if string(fields[field]) != "null" {
-			t.Errorf("exhausted %s must be present and null: %s", field, body)
+		if string(fields["next"]) != "null" {
+			t.Errorf("exhausted next must be present and null: %s", body)
 		}
 	}
 }

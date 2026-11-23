@@ -113,7 +113,7 @@ func (d *Database) ApplySlackMessageWork(
 	if _, err = tx.Exec(ctx, `SAVEPOINT slack_message_turn`); err != nil {
 		return fmt.Errorf("setting a slack turn savepoint: %w", err)
 	}
-	_, opened, err := openTurn(ctx, tx, work.Organization, work.ConversationID, windowLead)
+	_, opened, err := openSlackTurn(ctx, tx, work.Organization, work.ConversationID, windowLead)
 	if err != nil {
 		return err
 	}

@@ -114,7 +114,7 @@ func TestConversationAndInvestigationListingsApplyDocumentedCapabilities(t *test
 	open := func(subject, incidentID string) string {
 		t.Helper()
 		status, body := plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/conversations",
-			map[string]any{"subject": subject, "incidentId": incidentID, "message": "investigate"})
+			map[string]any{"title": subject, "incidentId": incidentID, "message": "investigate"})
 		if status != http.StatusCreated {
 			t.Fatalf("opening conversation = %d: %s", status, body)
 		}

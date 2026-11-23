@@ -2,6 +2,9 @@ package ai
 
 import _ "embed"
 
+//go:embed prompts/chat.md
+var ChatInstructions string
+
 //go:embed prompts/investigation.md
 var InvestigationInstructions string
 

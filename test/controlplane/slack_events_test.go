@@ -146,7 +146,7 @@ func (p *slackEventPlane) conversationsIn(t *testing.T) []struct {
 	defer func() { _ = database.Close(ctx) }()
 
 	rows, err := database.Query(ctx, `
-		SELECT c.conversation_id, c.source, c.subject,
+		SELECT c.conversation_id, c.source, c.title,
 		       (SELECT count(*) FROM conversation_message m
 		         WHERE m.org_id = c.org_id AND m.conversation_id = c.conversation_id)
 		  FROM conversation c

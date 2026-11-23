@@ -101,16 +101,23 @@ func TestSlackMessageWorkWaitsForAnAgentAndProcessesAfterRestart(t *testing.T) {
 func TestConversationFollowupRefusalPreservesActiveAndQueuedWork(t *testing.T) {
 	agent := &blockingModel{started: make(chan uuid.UUID, 1)}
 	plane, _ := agentPlane(t, agent)
-	conversationID, _ := plane.openConversation(t, "durable queued Conversation", "first question")
+	conversationID, _ := plane.openConversation(t, "durable queued Conversation", "")
+	path := plane.base(surfaceOrg) + "/conversations/" + conversationID
+	initial := map[string]any{"clientMessageId": uuid.NewString(), "text": "first question"}
+	status, body := plane.call(t, http.MethodPost, path+"/messages", initial)
+	if status != http.StatusAccepted {
+		t.Fatalf("submitting first Message = %d: %s", status, body)
+	}
+	var admitted struct{ ExecutionID string }
+	decodeInto(t, body, &admitted)
 	select {
 	case <-agent.started:
 	case <-time.After(10 * time.Second):
-		t.Fatal("initial Investigation was not claimed")
+		t.Fatal("initial Chat reply was not claimed")
 	}
-	path := plane.base(surfaceOrg) + "/conversations/" + conversationID
-	status, body := plane.call(t, http.MethodPost, path+"/messages",
-		map[string]any{"message": "queued follow-up"})
-	if status != http.StatusAccepted || !strings.Contains(body, `"queued":true`) {
+	status, body = plane.call(t, http.MethodPost, path+"/messages",
+		map[string]any{"clientMessageId": uuid.NewString(), "text": "queued follow-up"})
+	if status != http.StatusAccepted || !strings.Contains(body, `"status":"queued"`) {
 		t.Fatalf("queueing follow-up before downgrade = %d: %s", status, body)
 	}
 	plane.shutdown()
@@ -150,13 +157,19 @@ func TestConversationFollowupRefusalPreservesActiveAndQueuedWork(t *testing.T) {
 		return state
 	}
 	before := snapshot()
+	status, body = withoutAgent.call(t, http.MethodPost, restartedPath+"/messages", initial)
+	var replayed struct{ ExecutionID string }
+	decodeInto(t, body, &replayed)
+	if status != http.StatusAccepted || replayed.ExecutionID == "" || replayed != admitted {
+		t.Fatalf("replaying accepted Message without a model = %d: %s", status, body)
+	}
 	status, beforeRead := withoutAgent.call(t, http.MethodGet, restartedPath, nil)
 	if status != http.StatusOK {
 		t.Fatalf("reading retained work before refusal = %d: %s", status, beforeRead)
 	}
 
 	status, body = withoutAgent.call(t, http.MethodPost, restartedPath+"/messages",
-		map[string]any{"message": "must not be accepted"})
+		map[string]any{"clientMessageId": uuid.NewString(), "text": "must not be accepted"})
 	if status != http.StatusServiceUnavailable ||
 		!strings.Contains(body, "no model provider configured") {
 		t.Fatalf("following up after Agent downgrade = %d: %s", status, body)
