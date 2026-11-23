@@ -183,11 +183,6 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusAccepted, view)
 }
 
-func parseIdentity(value string) (uuid.UUID, bool) {
-	id, err := uuid.Parse(value)
-	return id, err == nil
-}
-
 const maxSubjectLength = 512
 
 func subjectOf(trigger Trigger) string {

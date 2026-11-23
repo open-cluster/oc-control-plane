@@ -203,19 +203,6 @@ func seedAssignedWebTurn(ctx context.Context, pool *pgxpool.Pool, org, id uuid.U
 	})
 }
 
-func waitingTurnsForTest(
-	database *storage.Database, ctx context.Context, organization uuid.UUID,
-) (int, error) {
-	pool, err := poolForTest(database, organization)
-	if err != nil {
-		return 0, err
-	}
-	var waiting int
-	err = pool.QueryRow(ctx, `SELECT count(*) FROM agent_execution
-		WHERE org_id = $1 AND investigation_id IS NOT NULL AND status = 'queued'`, organization).Scan(&waiting)
-	return waiting, err
-}
-
 func slackReplyStateForTest(
 	database *storage.Database, ctx context.Context, organization, investigationID uuid.UUID,
 ) (status int, sequence int64, streamTS, note string, found bool, err error) {

@@ -91,6 +91,10 @@ func TestConversationTurnsPaginateAndRejectInvalidQueries(t *testing.T) {
 	id, first := plane.openConversation(t, "paginated conversation", "first question")
 	plane.awaitInvestigation(t, first)
 	path := plane.base(surfaceOrg) + "/conversations/" + id
+	if status, body := plane.call(t, http.MethodPost, path+"/messages",
+		map[string]string{"clientMessageId": uuid.NewString(), "text": "continue"}); status != http.StatusConflict {
+		t.Fatalf("admitting Chat on a legacy Conversation = %d: %s", status, body)
+	}
 	second := plane.seedLegacyTurn(t, id, "second question")
 	plane.awaitInvestigation(t, second)
 	status, body := plane.call(t, http.MethodGet, path+"/turns?limit=1", nil)
