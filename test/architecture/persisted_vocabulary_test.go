@@ -1,8 +1,11 @@
 package gates_test
 
 import (
+	"os"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
@@ -39,12 +42,15 @@ func TestConversationSourceVocabularyIsFrozen(t *testing.T) {
 func TestTheHonestStopsAreFrozen(t *testing.T) {
 	t.Parallel()
 
-	assertVocabulary(t, "the stopped_by vocabulary", []string{
-		investigation.StoppedByToolRuns,
-		investigation.StoppedByReasonerTurns,
-		investigation.StoppedByWallClock,
-		investigation.StoppedByContext,
-	}, []string{
+	contents, err := os.ReadFile("../../api/openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document openAPIDocument
+	if err := yaml.Unmarshal(contents, &document); err != nil {
+		t.Fatal(err)
+	}
+	assertVocabulary(t, "the stopped_by vocabulary", document.Components.Schemas["Investigation"].Properties["stoppedBy"].Enum, []string{
 		"tool_runs",
 		"reasoner_turns",
 		"wall_clock",

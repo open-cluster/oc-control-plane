@@ -30,7 +30,7 @@ func TestEventStreamBoundsSlowReaders(t *testing.T) {
 			running := startControlPlaneRunning(t, func(cfg *config.Config) {
 				cfg.HTTPListenAddress = address
 				dsn = cfg.DatabaseDSN
-			}, app.Options{Agent: &blockingAgentMain{}})
+			}, app.Options{Model: &blockingModel{}})
 			plane := &integrationPlane{controlPlane: running, api: address, intake: address}
 			_, turn := plane.openConversation(t, "large replay", "investigate checkout")
 			seedEventBacklog(t, dsn, turn)

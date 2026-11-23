@@ -26,26 +26,41 @@ func (p *Database) AgentStateSaver(organization uuid.UUID, execution AgentExecut
 }
 
 func (s *AgentStateSaver) SaveState(ctx context.Context, session string, state *agent.AgentState) error {
-	if session != s.execution.SessionID() || !validAgentCheckpoint(session, state) {
+	if session != s.execution.SessionID() {
 		return ErrAgentCheckpoint
+	}
+	checkpoint, err := encodeAgentCheckpoint(session, state)
+	if err != nil {
+		return err
+	}
+	return s.database.withAgentLease(ctx, s.organization, s.execution, func(tx pgx.Tx) error {
+		return writeAgentCheckpoint(ctx, tx, s.organization, s.execution, checkpoint)
+	})
+}
+
+func encodeAgentCheckpoint(session string, state *agent.AgentState) ([]byte, error) {
+	if !validAgentCheckpoint(session, state) {
+		return nil, ErrAgentCheckpoint
 	}
 	checkpoint, err := json.Marshal(state)
 	if err != nil {
-		return fmt.Errorf("%w: cannot encode native state", ErrAgentCheckpoint)
+		return nil, fmt.Errorf("%w: cannot encode native state", ErrAgentCheckpoint)
 	}
-	return s.database.withAgentLease(ctx, s.organization, s.execution, func(tx pgx.Tx) error {
-		written, err := tx.Exec(ctx, `
-			INSERT INTO agent_checkpoint AS c (org_id, session_id, writer_execution_id, conversation_id, state)
-			VALUES ($1, $2, $3, $4, $5::jsonb)
-			ON CONFLICT (org_id, session_id, committed)
-			DO UPDATE SET state = excluded.state
-			 WHERE c.writer_execution_id = excluded.writer_execution_id`,
-			s.organization, session, s.execution.ID, nullableUUID(s.execution.ConversationID), checkpoint)
-		if err == nil && written.RowsAffected() != 1 {
-			return ErrAgentLeaseLost
-		}
-		return err
-	})
+	return checkpoint, nil
+}
+
+func writeAgentCheckpoint(ctx context.Context, tx pgx.Tx, org uuid.UUID, execution AgentExecution, checkpoint []byte) error {
+	written, err := tx.Exec(ctx, `
+		INSERT INTO agent_checkpoint AS c (org_id, session_id, writer_execution_id, conversation_id, state)
+		VALUES ($1, $2, $3, $4, $5::jsonb)
+		ON CONFLICT (org_id, session_id, committed)
+		DO UPDATE SET state = excluded.state
+		 WHERE c.writer_execution_id = excluded.writer_execution_id`,
+		org, execution.SessionID(), execution.ID, nullableUUID(execution.checkpointConversation()), checkpoint)
+	if err == nil && written.RowsAffected() != 1 {
+		return ErrAgentLeaseLost
+	}
+	return err
 }
 
 func (s *AgentStateSaver) LoadState(ctx context.Context, session string) (*agent.AgentState, error) {
@@ -68,7 +83,7 @@ func (s *AgentStateSaver) Restore(ctx context.Context) (*agent.AgentState, uuid.
 			 WHERE org_id = $1 AND session_id = $2
 			   AND (writer_execution_id = $3 OR (writer_execution_id IS NULL AND conversation_id = $4))
 			 ORDER BY writer_execution_id NULLS LAST LIMIT 1`,
-			s.organization, session, s.execution.ID, nullableUUID(s.execution.ConversationID)).Scan(&checkpoint, &writer)
+			s.organization, session, s.execution.ID, nullableUUID(s.execution.checkpointConversation())).Scan(&checkpoint, &writer)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -108,7 +123,8 @@ func (s *AgentStateSaver) DeleteSession(ctx context.Context, session string) err
 func finishAgentCheckpoint(ctx context.Context, tx pgx.Tx, org uuid.UUID, execution AgentExecution, status AgentExecutionStatus) error {
 	switch status {
 	case AgentExecutionCompleted:
-		if execution.ConversationID == uuid.Nil {
+		conversationID := execution.checkpointConversation()
+		if conversationID == uuid.Nil {
 			return nil
 		}
 		// Promotion and removal of the previous Conversation snapshot commit with the outcome.
@@ -116,7 +132,7 @@ func finishAgentCheckpoint(ctx context.Context, tx pgx.Tx, org uuid.UUID, execut
 			DELETE FROM agent_checkpoint WHERE org_id = $1 AND conversation_id = $2
 			  AND writer_execution_id IS NULL AND EXISTS (
 			      SELECT 1 FROM agent_checkpoint WHERE org_id = $1 AND session_id = $3 AND writer_execution_id = $4)`,
-			org, execution.ConversationID, execution.SessionID(), execution.ID); err != nil {
+			org, conversationID, execution.SessionID(), execution.ID); err != nil {
 			return err
 		}
 		_, err := tx.Exec(ctx, `UPDATE agent_checkpoint SET writer_execution_id = NULL, committed = true

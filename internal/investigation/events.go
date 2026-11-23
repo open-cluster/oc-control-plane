@@ -6,14 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 )
 
@@ -76,156 +73,11 @@ func bounded(text string, limit int) string {
 	return string(runes[:limit])
 }
 
-type stream struct {
-	appendEvent   func(context.Context, uuid.UUID, uuid.UUID, Event) error
-	organization  uuid.UUID
-	investigation uuid.UUID
-	telemetry     *Telemetry
-	startedAt     time.Time
-	mu            sync.Mutex
-	sequence      int64
-	sawFirst      bool
-	closed        bool
-}
-
-type EventStream = stream
-
-func NewEventStream(appendEvent func(
-	context.Context,
-	uuid.UUID,
-	uuid.UUID, Event) error,
-	telemetry *Telemetry,
-	organization uuid.UUID,
-	investigation uuid.UUID,
-) *EventStream {
-	return newStream(appendEvent, telemetry, organization, investigation)
-}
-
-func newStream(appendEvent func(
-	context.Context,
-	uuid.UUID,
-	uuid.UUID,
-	Event) error,
-	telemetry *Telemetry,
-	organization uuid.UUID,
-	investigation uuid.UUID,
-) *stream {
-	return &stream{
-		appendEvent:   appendEvent,
-		telemetry:     telemetry,
-		organization:  organization,
-		investigation: investigation,
-		startedAt:     time.Now(),
-	}
-}
-
-func (s *stream) Emit(
-	ctx context.Context, payload EventPayload,
-) error {
-	if s == nil || s.appendEvent == nil {
-		return nil
-	}
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	var fields map[string]any
-	if err := json.Unmarshal(encoded, &fields); err != nil {
-		return err
-	}
-	return s.emit(ctx, payload.EventType(), fields)
-}
-
-func (s *stream) emit(
-	ctx context.Context, eventType EventType, payload map[string]any,
-) error {
-	if s == nil || s.appendEvent == nil {
-		return nil
-	}
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return nil
-	}
-	event := Event{
-		Sequence: s.sequence + 1,
-		At:       time.Now().UTC(),
-		Type:     eventType,
-		Payload:  safePayload(payload),
-	}
-	if err := s.appendEvent(ctx, s.organization, s.investigation, event); err != nil {
-		s.mu.Unlock()
-		return err
-	}
-	s.sequence = event.Sequence
-	if eventType.Terminal() {
-		s.closed = true
-	}
-	firstEvent := !s.sawFirst
-	s.sawFirst = true
-	s.mu.Unlock()
-
-	if firstEvent {
-		s.telemetry.firstEvent(time.Since(s.startedAt))
-	}
-	return nil
-}
-
-func safePayload(payload map[string]any) map[string]any {
-	safe := make(map[string]any, len(payload))
-	if len(payload) == 0 {
-		return safe
-	}
-	for _, key := range sortedKeys(payload) {
-		if audit.NamesACredential(key) {
-			continue
-		}
-		if len(safe) >= maxPayloadEntries {
-			break
-		}
-		safe[key] = safeValue(payload[key])
-	}
-	return safe
-}
-
-func safeValue(value any) any {
-	nested, isMap := value.(map[string]any)
-	if !isMap {
-		return value
-	}
-	inner := make(map[string]any, len(nested))
-	for _, key := range sortedKeys(nested) {
-		if audit.NamesACredential(key) {
-			continue
-		}
-		if len(inner) >= maxPayloadEntries {
-			break
-		}
-		if text, isText := nested[key].(string); isText {
-			inner[key] = bounded(text, eventTextBound)
-			continue
-		}
-		inner[key] = nested[key]
-	}
-	return inner
-}
-
-func sortedKeys(payload map[string]any) []string {
-	keys := make([]string, 0, len(payload))
-	for key := range payload {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-const maxPayloadEntries = 32
-
 const (
 	eventPollInterval   = 500 * time.Millisecond
 	eventHeartbeat      = 15 * time.Second
 	eventWriteTimeout   = 10 * time.Second
-	eventStreamLifetime = investigationTimeout + time.Minute
+	eventStreamLifetime = 31 * time.Minute
 	eventAuthInterval   = 30 * time.Second
 	eventAuthTimeout    = 5 * time.Second
 )

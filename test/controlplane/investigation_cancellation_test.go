@@ -2,34 +2,45 @@ package controlplane
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
 	"github.com/google/uuid"
-	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
-type blockingAgentMain struct {
+type blockingModel struct {
+	bufferedModel
 	started chan uuid.UUID
 }
 
-func (b *blockingAgentMain) Run(
-	ctx context.Context, _ uuid.UUID, running investigation.Investigation,
-) error {
-	select {
-	case b.started <- running.ID:
-	default:
+func (b *blockingModel) Chat(ctx context.Context, prompt []*message.Msg, _ ...model.CallOption) (*model.ChatResponse, error) {
+	if b.started != nil {
+		text := prompt[len(prompt)-1].GetTextContent("\n")
+		_, raw, _ := strings.Cut(*text, "\n")
+		var input struct {
+			ID uuid.UUID `json:"investigationId"`
+		}
+		if err := json.Unmarshal([]byte(raw), &input); err != nil {
+			return nil, err
+		}
+		select {
+		case b.started <- input.ID:
+		default:
+		}
 	}
 	<-ctx.Done()
-	return ctx.Err()
+	return nil, ctx.Err()
 }
 
 func TestRunningInvestigationCanBeCancelledThroughTheAuthorizedApplicationAPI(t *testing.T) {
 	t.Parallel()
 
-	model := &blockingAgentMain{started: make(chan uuid.UUID, 1)}
+	model := &blockingModel{started: make(chan uuid.UUID, 1)}
 	plane, _ := agentPlane(t, model)
 	incident := plane.openIncident(t, "CheckoutLatency", "cancel-running")
 	var runningID string
@@ -74,7 +85,7 @@ func TestRunningInvestigationCanBeCancelledThroughTheAuthorizedApplicationAPI(t 
 func TestDirectInvestigationCreationRequiresOnlyAnIncidentIdentity(t *testing.T) {
 	t.Parallel()
 
-	plane, _ := agentPlane(t, &blockingAgentMain{started: make(chan uuid.UUID, 1)})
+	plane, _ := agentPlane(t, &blockingModel{started: make(chan uuid.UUID, 1)})
 	path := plane.base(surfaceOrg) + "/investigations"
 
 	if status, body := plane.call(t, http.MethodPost, path,

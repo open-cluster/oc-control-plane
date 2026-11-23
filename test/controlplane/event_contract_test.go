@@ -7,40 +7,54 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
-	modelagent "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
+	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
 type eventContractModel struct {
+	bufferedModel
 	calls       int
 	tool        string
-	observation chan modelagent.ToolResultTurn
+	observation chan message.ToolResultBlock
 }
 
-func (m *eventContractModel) Complete(ctx context.Context, prompt modelagent.Prompt) (modelagent.Completion, error) {
+func (m *eventContractModel) Chat(_ context.Context, prompt []*message.Msg, opts ...model.CallOption) (*model.ChatResponse, error) {
 	m.calls++
 	if m.calls == 1 {
-		return modelagent.Completion{Stop: modelagent.StopToolUse, ToolCalls: []modelagent.CompletionCall{{
-			ID: "channels", Name: m.tool,
-			Arguments: json.RawMessage(`{"purpose":"Find the incident channel","input":{}}`),
-		}}}, nil
+		return toolResponse("channels", m.tool, `{"input":{}}`), nil
 	}
-	if len(prompt.Turns) > 0 && len(prompt.Turns[0].ToolResults) > 0 {
-		m.observation <- prompt.Turns[0].ToolResults[0]
+	if !reportRequested(opts) {
+		return investigationRecap(), nil
 	}
-	completion, err := (concludingModel{}).Complete(ctx, prompt)
-	if err != nil {
-		return completion, err
+	conclusion := investigation.Conclusion{
+		Status: investigation.Inconclusive, Summary: "line one\n" + strings.Repeat("界", 4087),
 	}
-	var document map[string]any
-	if err := json.Unmarshal(completion.ToolCalls[0].Arguments, &document); err != nil {
-		return modelagent.Completion{}, err
+	for _, msg := range prompt {
+		for _, block := range msg.Content {
+			observation, ok := block.(message.ToolResultBlock)
+			if !ok || observation.ID != "channels" {
+				continue
+			}
+			select {
+			case m.observation <- observation:
+			default:
+			}
+			observed := strings.TrimPrefix(observation.GetOutputText(), "[Tool Run ")
+			id, _, _ := strings.Cut(observed, "]")
+			if runID, err := uuid.Parse(id); err == nil {
+				conclusion.Findings = []investigation.Finding{{
+					Kind: investigation.FindingObservation, Statement: "Slack returned the Incident channel.",
+					EvidenceRefs: []investigation.EvidenceRef{{ToolRunID: runID}},
+				}}
+			}
+		}
 	}
-	document["summary"] = "line one\n" + strings.Repeat("界", 4087)
-	completion.ToolCalls[0].Arguments, err = json.Marshal(document)
-	return completion, err
+	return reportResponse(conclusion)
 }
 
 func TestAvailableToolAndAnswerEventsMatchVersionTwoSchema(t *testing.T) {
@@ -48,14 +62,9 @@ func TestAvailableToolAndAnswerEventsMatchVersionTwoSchema(t *testing.T) {
 		[]string{"started", "tool_started", "tool_completed", "concluded"})
 }
 
-func TestUnavailableToolCompletionMatchesVersionTwoSchemaWithoutAStart(t *testing.T) {
-	assertModelEventSchema(t, &eventContractModel{tool: "unavailable.read"},
-		[]string{"started", "tool_completed", "concluded"})
-}
-
 func assertModelEventSchema(t *testing.T, model *eventContractModel, want []string) {
 	t.Helper()
-	model.observation = make(chan modelagent.ToolResultTurn, 1)
+	model.observation = make(chan message.ToolResultBlock, 1)
 	vendor := newVendorFake(t, "xoxb-good-token-1234")
 	vendor.channels = `{"ok":true,"channels":[{"id":"C0INCIDENT","name":"incidents"}]}`
 	address := freeAddress(t)
@@ -64,19 +73,26 @@ func assertModelEventSchema(t *testing.T, model *eventContractModel, want []stri
 		dsn = cfg.DatabaseDSN
 		cfg.HTTPListenAddress = address
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "openrouter", "z-ai/glm-4.7", "scripted-model-key"
-	}, app.Options{Completer: model, SlackAPIURL: vendor.URL})
+	}, app.Options{Model: model, SlackAPIURL: vendor.URL})
 	plane := &integrationPlane{controlPlane: running, api: address, intake: address, dsn: dsn}
 	if status, body := plane.createSlack(t, "Operator testimony", "xoxb-good-token-1234"); status != http.StatusCreated {
 		t.Fatalf("create Slack = %d: %s", status, body)
 	}
-	_, turn := plane.openConversation(t, "event schema", "investigate checkout")
+	conversationID, turn := plane.openConversation(t, "event schema", "investigate checkout")
 	result := plane.awaitInvestigation(t, turn)
 	var final struct {
 		Summary string `json:"summary"`
+		Runs    []struct {
+			ID uuid.UUID
+		}
 	}
 	decodeInto(t, result, &final)
-	status, body := plane.call(t, http.MethodGet,
-		plane.base(surfaceOrg)+"/investigations/"+turn+"/runs/1/observation", nil)
+	if len(final.Runs) != 1 || final.Runs[0].ID == uuid.Nil || strings.Contains(result, "runRefs") {
+		t.Fatalf("native Investigation must expose only stable evidence references: %s", result)
+	}
+	runID := final.Runs[0].ID
+	path := plane.base(surfaceOrg) + "/tool-runs/" + runID.String() + "/observation"
+	status, body := plane.call(t, http.MethodGet, path, nil)
 	var retained struct {
 		InvestigationID                                 string
 		Ordinal                                         int
@@ -94,11 +110,10 @@ func assertModelEventSchema(t *testing.T, model *eventContractModel, want []stri
 	if err := serializedSchema(t, "ToolRunObservation").Validate(serialized); err != nil {
 		t.Fatalf("retained observation violates OpenAPI: %v", err)
 	}
-	failed := model.tool == "unavailable.read"
 	observed := <-model.observation
-	if retained.InvestigationID != turn || retained.Ordinal != 1 || retained.ObservationText == nil ||
-		*retained.ObservationText != observed.Content || observed.CallID != "channels" ||
-		observed.IsError != failed || (retained.Outcome == "failed") != failed ||
+	if retained.InvestigationID != turn || retained.Ordinal != 0 || retained.ObservationText == nil ||
+		*retained.ObservationText != observed.GetOutputText() || observed.ID != "channels" ||
+		retained.Outcome != "succeeded" ||
 		retained.WindowApplied == nil || *retained.WindowApplied {
 		t.Fatalf("retained observation differs from correlated provider input: %s", body)
 	}
@@ -107,14 +122,15 @@ func assertModelEventSchema(t *testing.T, model *eventContractModel, want []stri
 	if _, present := detail.Runs[0]["observationText"]; present {
 		t.Fatal("ordinary Investigation detail contains retained observation text")
 	}
-	path := plane.base(surfaceOrg) + "/investigations/" + turn + "/runs/1/observation"
-	for _, ordinal := range []string{"0", "-1", "bad", "2147483648"} {
-		if code, _ := plane.call(t, http.MethodGet, strings.Replace(path, "/runs/1/", "/runs/"+ordinal+"/", 1), nil); code != http.StatusBadRequest {
-			t.Fatalf("invalid ordinal %s returned %d", ordinal, code)
-		}
+	if code, _ := plane.call(t, http.MethodGet, strings.Replace(path, runID.String(), "bad", 1), nil); code != http.StatusBadRequest {
+		t.Fatalf("invalid Tool Run ID returned %d", code)
 	}
-	if code, _ := plane.call(t, http.MethodGet, strings.Replace(path, "/runs/1/", "/runs/2/", 1), nil); code != http.StatusNotFound {
+	if code, _ := plane.call(t, http.MethodGet, strings.Replace(path, runID.String(), uuid.NewString(), 1), nil); code != http.StatusNotFound {
 		t.Fatalf("absent run returned %d", code)
+	}
+	legacyPath := plane.base(surfaceOrg) + "/investigations/" + turn + "/runs/1/observation"
+	if code, _ := plane.call(t, http.MethodGet, legacyPath, nil); code != http.StatusNotFound {
+		t.Fatalf("native Tool Run was assigned a synthetic ordinal: %d", code)
 	}
 	restore := plane.switchOrganization(t, neighbourOrg)
 	code, _ := plane.call(t, http.MethodGet, path, nil)
@@ -122,7 +138,7 @@ func assertModelEventSchema(t *testing.T, model *eventContractModel, want []stri
 	if code != http.StatusNotFound {
 		t.Fatalf("foreign observation returned %d", code)
 	}
-	if !failed {
+	{
 		if retained.IntegrationName != "Operator testimony" || retained.IntegrationType != "slack" || retained.IntegrationID == "" {
 			t.Fatalf("observation lost current Integration attribution: %s", body)
 		}
@@ -132,7 +148,7 @@ func assertModelEventSchema(t *testing.T, model *eventContractModel, want []stri
 		}
 		_, renamed = plane.call(t, http.MethodGet, path, nil)
 		decodeInto(t, renamed, &retained)
-		if retained.IntegrationName != "Renamed source" || *retained.ObservationText != observed.Content {
+		if retained.IntegrationName != "Renamed source" || *retained.ObservationText != observed.GetOutputText() {
 			t.Fatal("Integration rename rewrote the retained observation or kept stale display information")
 		}
 	}
@@ -165,6 +181,12 @@ func assertModelEventSchema(t *testing.T, model *eventContractModel, want []stri
 	for _, event := range assertSerializedEvents(t, body) {
 		kind := event["type"].(string)
 		seen[kind] = true
+		if kind == "tool_started" || kind == "tool_completed" {
+			payload := event["payload"].(map[string]any)
+			if payload["toolRunId"] != runID.String() || payload["ordinal"] != nil {
+				t.Fatalf("Tool event does not use its durable UUID: %v", payload)
+			}
+		}
 		if kind == "started" {
 			if event["payload"].(map[string]any)["text"] != "Reviewing this request and available evidence sources." {
 				t.Fatal("Started event does not describe the initial phase")
@@ -185,5 +207,20 @@ func assertModelEventSchema(t *testing.T, model *eventContractModel, want []stri
 		if !seen[kind] {
 			t.Errorf("no %s event validated", kind)
 		}
+	}
+	status, body = plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/conversations/"+conversationID+"/messages",
+		map[string]any{"message": "Which channel did you find?"})
+	if status != http.StatusAccepted {
+		t.Fatalf("follow-up admission = %d: %s", status, body)
+	}
+	var followUp struct {
+		Turn struct {
+			ID string `json:"investigationId"`
+		} `json:"turn"`
+	}
+	decodeInto(t, body, &followUp)
+	if got := plane.awaitInvestigation(t, followUp.Turn.ID); !strings.Contains(got, `"status":"concluded"`) ||
+		!strings.Contains(got, `"evidenceRefs":[{"toolRunId":`) {
+		t.Fatalf("follow-up lost its earlier Tool Run citation: %s", got)
 	}
 }

@@ -91,10 +91,7 @@ func PrepareToolObservation(run *ToolRun, credentials ...string) {
 	}
 	// string building ----->
 	out := &strings.Builder{}
-	header := "[run " + strconv.Itoa(run.Ordinal) + "]"
-	if run.Ordinal == 0 {
-		header = "[Tool Run " + run.ID.String() + "]"
-	}
+	header := "[Tool Run " + run.ID.String() + "]"
 	out.WriteString(header + " " +
 		run.Tool + " " + compactArguments(run.Arguments) + "\n")
 	if run.Outcome == RunFailed {

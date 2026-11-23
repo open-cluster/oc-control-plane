@@ -183,7 +183,7 @@ Set `OC_LOG_LEVEL` to `debug`, `info`, `warn`, or `error`. The default is `info`
 Logs are flat JSON on stderr, with `time`, `level`, and `msg`. Request and Tool
 execution durations use numeric `duration_ms`. Routine requests, including successful
 health probes, are DEBUG. Readiness failures produce a safe, correlated WARN.
-Tool execution logs include the Integration, Investigation, ordinal, and outcome,
+Tool execution logs include the Integration, Investigation, Tool Run UUID, and outcome,
 without query arguments or observations. Opaque adapter errors remain DEBUG because
 they can include malformed queries. Recognized network errors and timeouts use WARN.
 Use `OC_OTLP_ENDPOINT` when exporting traces to a collector.

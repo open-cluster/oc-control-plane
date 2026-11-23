@@ -19,7 +19,7 @@ import (
 
 var _ investigation.HTTPStore = (*Database)(nil)
 
-const toolRunColumns = `r.tool_run_id, r.integration_id, coalesce(r.ordinal, 0), r.tool, r.purpose, r.arguments,
+const investigationRunColumns = `r.tool_run_id, r.integration_id, coalesce(r.ordinal, 0), r.tool, r.purpose, r.arguments,
     r.window_from, r.window_until, r.outcome, r.truncated, r.summary, r.sources, r.error,
     r.started_at, r.finished_at, r.window_applied, r.model_clipped`
 
@@ -27,7 +27,11 @@ const investigationColumns = `investigation_id, incident_id,
 	       conversation_id, turn, subject, window_from, window_until, status, conclusion,
 	       stopped_by, error, spend_input_tokens,
 	       spend_output_tokens, created_at, concluded_at,
-	       lease_worker <> ''`
+	       ` + runningAgentInvestigation
+
+const runningAgentInvestigation = `EXISTS (
+	SELECT 1 FROM agent_execution e
+	 WHERE e.org_id = i.org_id AND e.investigation_id = i.investigation_id AND e.status = 'running')`
 
 func (p *Database) CreateInvestigation(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID,
@@ -44,12 +48,12 @@ func (p *Database) CreateInvestigation(
 				return investigation.Investigation{}, audit.Target{}, nil, err
 			}
 			row := transaction.QueryRow(ctx, `
-				INSERT INTO investigation (investigation_id, org_id, incident_id,
-				                           subject, window_from, window_until)
-				VALUES ($1, $2, $3, $4, $5, $6)
+				INSERT INTO investigation AS i (investigation_id, org_id, incident_id,
+				                                subject, window_from, window_until, requested_by)
+				VALUES ($1, $2, $3, $4, $5, $6, $7)
 				RETURNING `+investigationColumns,
 				uuid.New(), organization, nullableUUID(wanted.IncidentID), wanted.Subject,
-				wanted.WindowFrom, wanted.WindowUntil)
+				wanted.WindowFrom, wanted.WindowUntil, nullableUUID(principal.UserID()))
 
 			created, err := scanInvestigation(row)
 			if err != nil {
@@ -59,6 +63,9 @@ func (p *Database) CreateInvestigation(
 				}
 				return investigation.Investigation{}, audit.Target{}, nil,
 					fmt.Errorf("creating an investigation: %w", err)
+			}
+			if err := queueInvestigation(ctx, transaction, organization, created.ID); err != nil {
+				return investigation.Investigation{}, audit.Target{}, nil, err
 			}
 			return created,
 				audit.Target{Kind: audit.TargetInvestigation, ID: created.ID.String()},
@@ -96,8 +103,11 @@ func (p *Database) investigation(
 	if err != nil {
 		return investigation.Investigation{}, fmt.Errorf("reading an investigation: %w", err)
 	}
-	missing, err := evidenceMissing(ctx, pool, organization, found.ConversationID,
-		resultEvidence(found.ID, found.Conclusion), false)
+	refs, historical := resultEvidence(found)
+	missing, err := evidenceMissing(ctx, pool, organization, found.ConversationID, refs, false)
+	if err == nil && !missing && len(historical) > 0 {
+		missing, err = historicalEvidenceMissing(ctx, pool, organization, found.ConversationID, historical)
+	}
 	if err != nil {
 		return investigation.Investigation{}, fmt.Errorf("checking cited evidence: %w", err)
 	}
@@ -109,14 +119,14 @@ func (p *Database) investigation(
 
 func (p *Database) InvestigationToolRuns(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
-) ([]investigation.ToolRun, error) {
+) ([]investigation.ToolRunRead, error) {
 	pool, err := p.poolForOrganization(organization)
 	if err != nil {
 		return nil, err
 	}
 
 	runRows, err := pool.Query(ctx, `
-		SELECT `+toolRunColumns+`
+		SELECT `+investigationRunColumns+`
 		  FROM investigation_tool_run r `+toolRunOwnerJoins+`
 		 WHERE r.org_id = $2 AND r.outcome IS NOT NULL AND `+webInvestigationSource+`
 		   AND (r.investigation_id = $1 OR r.execution_id = (
@@ -127,9 +137,9 @@ func (p *Database) InvestigationToolRuns(
 	}
 	defer runRows.Close()
 
-	runs := make([]investigation.ToolRun, 0, 8)
+	runs := make([]investigation.ToolRunRead, 0, 8)
 	for runRows.Next() {
-		run, err := scanToolRun(runRows, false)
+		run, err := scanToolRun(runRows, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -141,35 +151,43 @@ func (p *Database) InvestigationToolRuns(
 	return runs, nil
 }
 
-func (p *Database) InvestigationToolRunObservation(ctx context.Context, organization, id uuid.UUID, ordinal int) (investigation.ToolRun, error) {
-	pool, err := p.poolForOrganization(organization)
+func (p *Database) ToolRunObservation(ctx context.Context, org uuid.UUID, ref investigation.HistoricalEvidenceRef) (investigation.ToolRunRead, uuid.UUID, error) {
+	pool, err := p.poolForOrganization(org)
 	if err != nil {
-		return investigation.ToolRun{}, err
+		return investigation.ToolRunRead{}, uuid.Nil, err
 	}
-	row := pool.QueryRow(ctx, `SELECT `+toolRunColumns+`, r.observation_text,
-        coalesce(integration.name, ''), coalesce(integration.provider, '')
-        FROM investigation_tool_run r `+toolRunOwnerJoins+`
-        LEFT JOIN integration ON integration.org_id = r.org_id AND integration.integration_id = r.integration_id
-        WHERE r.org_id = $1 AND r.investigation_id = $2 AND r.ordinal = $3 AND `+webInvestigationSource, organization, id, ordinal)
-	run, err := scanToolRun(row, true)
+	match := "r.tool_run_id = $2"
+	args := []any{org, ref.ToolRunID}
+	if ref.ToolRunOrdinal > 0 {
+		match = "r.investigation_id = $2 AND r.ordinal = $3"
+		args = []any{org, ref.InvestigationID, ref.ToolRunOrdinal}
+	}
+	row := pool.QueryRow(ctx, `SELECT `+investigationRunColumns+`, r.observation_text,
+		coalesce(integration.name, ''), coalesce(integration.provider, ''), i.investigation_id
+		FROM investigation_tool_run r `+toolRunOwnerJoins+`
+		LEFT JOIN integration ON integration.org_id = r.org_id AND integration.integration_id = r.integration_id
+		WHERE r.org_id = $1 AND i.investigation_id IS NOT NULL AND r.outcome IS NOT NULL
+		  AND `+match+` AND `+webInvestigationSource, args...)
+	var owner uuid.UUID
+	run, err := scanToolRun(row, &owner)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return investigation.ToolRun{}, investigation.ErrUnknown
+		return investigation.ToolRunRead{}, uuid.Nil, investigation.ErrUnknown
 	}
 	if err != nil {
-		return investigation.ToolRun{}, fmt.Errorf("reading a Tool Run observation: %w", err)
+		return investigation.ToolRunRead{}, uuid.Nil, fmt.Errorf("reading a Tool Run observation: %w", err)
 	}
-	return run, nil
+	return run, owner, nil
 }
 
-func scanToolRun(row pgx.Row, observation bool) (investigation.ToolRun, error) {
-	var run investigation.ToolRun
+func scanToolRun(row pgx.Row, owner *uuid.UUID) (investigation.ToolRunRead, error) {
+	var run investigation.ToolRunRead
 	var integrationID *uuid.UUID
 	var arguments, sources []byte
 	fields := []any{&run.ID, &integrationID, &run.Ordinal, &run.Tool, &run.Purpose, &arguments,
 		&run.WindowFrom, &run.WindowUntil, &run.Outcome, &run.Truncated, &run.Summary,
 		&sources, &run.Error, &run.StartedAt, &run.FinishedAt, &run.WindowApplied, &run.ModelClipped}
-	if observation {
-		fields = append(fields, &run.ObservationText, &run.IntegrationName, &run.IntegrationType)
+	if owner != nil {
+		fields = append(fields, &run.ObservationText, &run.IntegrationName, &run.IntegrationType, owner)
 	}
 	if err := row.Scan(fields...); err != nil {
 		return run, fmt.Errorf("scanning a tool run: %w", err)
@@ -248,78 +266,6 @@ func (p *Database) QueryInvestigations(
 	return list, nil
 }
 
-func (p *Database) RecordToolRun(
-	ctx context.Context, organization uuid.UUID, id uuid.UUID, token uuid.UUID,
-	run investigation.ToolRun,
-) error {
-	if run.ObservationText != nil && len(*run.ObservationText) > investigation.MaxObservationBytes {
-		return errors.New("tool run observation exceeds its storage bound")
-	}
-	pool, err := p.poolForOrganization(organization)
-	if err != nil {
-		return err
-	}
-	arguments, err := json.Marshal(orEmptyConfiguration(run.Arguments))
-	if err != nil {
-		return fmt.Errorf("encoding a run's arguments: %w", err)
-	}
-	sources, err := json.Marshal(orEmptyStrings(run.Sources))
-	if err != nil {
-		return fmt.Errorf("encoding a run's sources: %w", err)
-	}
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if err = lockInvestigation(ctx, tx, organization, id); err != nil {
-		return err
-	}
-	tag, err := tx.Exec(ctx, `
-		INSERT INTO investigation_tool_run (investigation_id, org_id, tool_run_id,
-		                                    integration_id, ordinal, tool,
-		                                    purpose, arguments,
-		                                    window_from, window_until,
-		                                    outcome, truncated, summary, sources, error,
-		                                    started_at, finished_at, observation_text, model_clipped, window_applied)
-		SELECT $1, $2, coalesce($21::uuid, gen_random_uuid()),
-		       $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $18, $19, $20
-		FROM investigation WHERE investigation_id = $1 AND org_id = $2 AND status = 1
-		AND lease_token = $17 AND lease_expires_at > clock_timestamp()`,
-		id, organization, nullableUUID(run.IntegrationID), run.Ordinal,
-		run.Tool, run.Purpose, arguments, run.WindowFrom, run.WindowUntil,
-		int16(run.Outcome), run.Truncated, run.Summary, sources, run.Error,
-		run.StartedAt, run.FinishedAt, token, run.ObservationText, run.ModelClipped, run.WindowApplied, nullableUUID(run.ID))
-	if err != nil {
-		return fmt.Errorf("recording a tool run: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return investigation.ErrAlreadyEnded
-	}
-	return tx.Commit(ctx)
-}
-
-func (p *Database) ConcludeInvestigation(
-	ctx context.Context, organization uuid.UUID, id uuid.UUID, token uuid.UUID,
-	conclusion investigation.Conclusion, stoppedBy string, usage investigation.Usage,
-) error {
-	encoded, err := json.Marshal(conclusion)
-	if err != nil {
-		return fmt.Errorf("encoding conclusion: %w", err)
-	}
-	return p.endInvestigation(ctx, organization, id, token, int16(investigation.StatusConcluded),
-		encoded, stoppedBy, "", boundedRunes(conclusion.Summary, conversation.MaxMessageTextLength), usage,
-		investigation.ConcludedPayload(conclusion, stoppedBy))
-}
-
-func (p *Database) FailInvestigation(
-	ctx context.Context, organization uuid.UUID, id uuid.UUID, token uuid.UUID,
-	reason string, usage investigation.Usage,
-) error {
-	return p.endInvestigation(ctx, organization, id, token, int16(investigation.StatusFailed),
-		[]byte("{}"), "", reason, "", usage, investigation.FailedPayload(reason))
-}
-
 func (p *Database) CancelInvestigation(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID, id uuid.UUID,
 ) (investigation.Investigation, error) {
@@ -335,10 +281,7 @@ func (p *Database) CancelInvestigation(
 				UPDATE investigation AS i
 				   SET status = $3,
 				       concluded_at = now(),
-				       cancel_requested_at = now(),
-				       lease_worker = '',
-				       lease_token = NULL,
-				       lease_expires_at = NULL
+				       cancel_requested_at = now()
 				 WHERE investigation_id = $1 AND org_id = $2 AND status = 1 AND `+webInvestigationSource+`
 				RETURNING `+investigationColumns,
 				id, organization, int16(investigation.StatusCancelled))
@@ -358,6 +301,9 @@ func (p *Database) CancelInvestigation(
 			if err != nil {
 				return investigation.Investigation{}, audit.Target{}, nil,
 					fmt.Errorf("cancelling an investigation: %w", err)
+			}
+			if _, err := revokeAgentExecution(ctx, transaction, organization, uuid.Nil, uuid.Nil, id); err != nil {
+				return investigation.Investigation{}, audit.Target{}, nil, fmt.Errorf("revoking the Investigation agent lease: %w", err)
 			}
 			if _, err = transaction.Exec(ctx, `
 				UPDATE relay_job
@@ -380,104 +326,40 @@ func (p *Database) CancelInvestigation(
 				return investigation.Investigation{}, audit.Target{}, nil,
 					fmt.Errorf("recording an investigation cancellation event: %w", err)
 			}
-			if _, err := revokeAgentExecution(ctx, transaction, organization, uuid.Nil, uuid.Nil, id); err != nil {
-				return investigation.Investigation{}, audit.Target{}, nil, fmt.Errorf("revoking the Investigation agent lease: %w", err)
-			}
 			return ended, audit.Target{Kind: audit.TargetInvestigation, ID: id.String()},
 				audit.Detail{"subject": ended.Subject}, nil
 		})
 }
 
-func (p *Database) endInvestigation(
-	ctx context.Context, organization uuid.UUID, id uuid.UUID, token uuid.UUID,
-	status int16, conclusion []byte, stoppedBy, reason string,
-	assistantReply string, usage investigation.Usage, payload investigation.EventPayload,
-) error {
-	pool, err := p.poolForOrganization(organization)
-	if err != nil {
-		return err
+func insertInvestigationReply(ctx context.Context, transaction pgx.Tx, organization, conversationID, id uuid.UUID, assistantReply string) error {
+	if _, err := transaction.Exec(ctx, `
+		INSERT INTO conversation_message
+		    (conversation_id, org_id, sequence, role, author_id, author_name,
+		     text, investigation_id, window_from, window_until)
+		SELECT turn.conversation_id, turn.org_id,
+		       coalesce((SELECT max(sequence) FROM conversation_message message
+		                  WHERE message.org_id = turn.org_id
+		                    AND message.conversation_id = turn.conversation_id), 0) + 1,
+		       $3, '', '', $4, turn.investigation_id, turn.window_from, turn.window_until
+		  FROM investigation turn
+		 WHERE turn.investigation_id = $1 AND turn.org_id = $2
+		   AND turn.conversation_id IS NOT NULL`,
+		id, organization, int16(conversation.RoleAssistant), assistantReply); err != nil {
+		return fmt.Errorf("recording an assistant Message: %w", err)
 	}
-	transaction, err := pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("beginning terminal transition: %w", err)
+	if _, err := transaction.Exec(ctx, `
+		UPDATE conversation
+		   SET last_activity_at = now()
+		 WHERE conversation_id = $1 AND org_id = $2`, conversationID, organization); err != nil {
+		return fmt.Errorf("stamping a completed Conversation: %w", err)
 	}
-	defer func() { _ = transaction.Rollback(ctx) }()
-	var conversationID *uuid.UUID
-	if err = transaction.QueryRow(ctx, `
-		SELECT conversation_id
-		  FROM investigation
-		 WHERE investigation_id = $1 AND org_id = $2`, id, organization).Scan(&conversationID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return investigation.ErrUnknown
-		}
-		return fmt.Errorf("reading an investigation's Conversation: %w", err)
-	}
-	if conversationID != nil {
-		if err = lockConversation(ctx, transaction, organization, *conversationID); err != nil {
-			return err
-		}
-	}
-	if err = lockInvestigation(ctx, transaction, organization, id); err != nil {
-		return err
-	}
-	tag, err := transaction.Exec(ctx, `
-		UPDATE investigation
-		   SET status              = $3,
-		       conclusion          = $4,
-		       stopped_by          = $5,
-		       error               = $6,
-		       spend_input_tokens  = $7,
-		       spend_output_tokens = $8,
-		       concluded_at        = now(),
-		       -- The lease goes with the ending. A terminal investigation is nobody's to
-		       -- hold, and leaving one behind would make the sweeper reason about work
-		       -- that is already finished.
-		       lease_worker        = '',
-		       lease_token         = NULL,
-		       lease_expires_at    = NULL
-		 WHERE investigation_id = $1 AND org_id = $2 AND status = 1
-		   AND lease_token = $9 AND lease_expires_at > clock_timestamp()`,
-		id, organization, status, conclusion, stoppedBy,
-		reason, usage.InputTokens, usage.OutputTokens, token)
-	if err != nil {
-		return fmt.Errorf("ending an investigation: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return investigation.ErrUnknown
-	}
-	if err := appendInvestigationTerminalEvent(ctx, transaction, organization, id, payload); err != nil {
-		return err
-	}
-	if conversationID != nil && assistantReply != "" {
-		if _, err = transaction.Exec(ctx, `
-			INSERT INTO conversation_message
-			    (conversation_id, org_id, sequence, role, author_id, author_name,
-			     text, investigation_id, window_from, window_until)
-			SELECT turn.conversation_id, turn.org_id,
-			       coalesce((SELECT max(sequence) FROM conversation_message message
-			                  WHERE message.org_id = turn.org_id
-			                    AND message.conversation_id = turn.conversation_id), 0) + 1,
-			       $3, '', '', $4, turn.investigation_id, turn.window_from, turn.window_until
-			  FROM investigation turn
-			 WHERE turn.investigation_id = $1 AND turn.org_id = $2
-			   AND turn.conversation_id IS NOT NULL`,
-			id, organization, int16(conversation.RoleAssistant), assistantReply); err != nil {
-			return fmt.Errorf("recording an assistant Message: %w", err)
-		}
-		if _, err = transaction.Exec(ctx, `
-			UPDATE conversation
-			   SET last_activity_at = now()
-			 WHERE conversation_id = $1 AND org_id = $2`, *conversationID, organization); err != nil {
-			return fmt.Errorf("stamping a completed Conversation: %w", err)
-		}
-	}
-	return transaction.Commit(ctx)
+	return nil
 }
 
-func appendInvestigationTerminalEvent(ctx context.Context, tx pgx.Tx, organization, id uuid.UUID, payload investigation.EventPayload) error {
+func appendInvestigationEvent(ctx context.Context, tx pgx.Tx, organization, id uuid.UUID, payload investigation.EventPayload) error {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("encoding terminal event: %w", err)
+		return fmt.Errorf("encoding Investigation event: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO investigation_event (investigation_id, org_id, sequence, type, payload)
@@ -485,7 +367,7 @@ func appendInvestigationTerminalEvent(ctx context.Context, tx pgx.Tx, organizati
 		  FROM investigation_event
 		 WHERE investigation_id = $1 AND org_id = $2`,
 		id, organization, int16(payload.EventType()), encoded); err != nil {
-		return fmt.Errorf("recording terminal event: %w", err)
+		return fmt.Errorf("recording Investigation event: %w", err)
 	}
 	return nil
 }
@@ -585,6 +467,11 @@ func scanInvestigation(row scanned) (investigation.Investigation, error) {
 		if err := json.Unmarshal(conclusion, &found.Conclusion); err != nil {
 			return investigation.Investigation{}, fmt.Errorf("decoding conclusion: %w", err)
 		}
+		var err error
+		found.Historical, err = investigation.ReadHistoricalCitations(conclusion, "impact", "findings", "hypotheses", "actions", "limitations")
+		if err != nil {
+			return investigation.Investigation{}, fmt.Errorf("reading historical Conclusion citations: %w", err)
+		}
 	}
 	return found, nil
 }
@@ -636,8 +523,8 @@ func reserveWaitingInvestigations(
 	}
 	var waiting int
 	if err := transaction.QueryRow(ctx, `
-		SELECT count(*) FROM investigation
-		 WHERE org_id = $1 AND status = 1 AND lease_worker = ''`,
+		SELECT count(*) FROM investigation i
+		 WHERE i.org_id = $1 AND i.status = 1 AND NOT `+runningAgentInvestigation,
 		organization).Scan(&waiting); err != nil {
 		return fmt.Errorf("counting organization waiting investigations: %w", err)
 	}

@@ -250,13 +250,18 @@ func openAlertInvestigations(
 		return err
 	}
 	_, err := tx.Exec(ctx, `
-		INSERT INTO investigation
-			(investigation_id, org_id, incident_id, subject, window_from,
-			 window_until, automatic_incident)
-		SELECT gen_random_uuid(), org_id, incident_id, title,
-		       first_seen_at - ($3 * interval '1 microsecond'), last_seen_at, true
-		  FROM incident
-		 WHERE org_id = $1 AND incident_id = ANY($2::uuid[])`,
+		WITH opened AS (
+		    INSERT INTO investigation
+		        (investigation_id, org_id, incident_id, subject, window_from,
+		         window_until, automatic_incident)
+		    SELECT gen_random_uuid(), org_id, incident_id, title,
+		           first_seen_at - ($3 * interval '1 microsecond'), last_seen_at, true
+		      FROM incident
+		     WHERE org_id = $1 AND incident_id = ANY($2::uuid[])
+		    RETURNING org_id, investigation_id
+		)
+		INSERT INTO agent_execution (org_id, execution_id, investigation_id)
+		SELECT org_id, gen_random_uuid(), investigation_id FROM opened`,
 		organization, incidents, policy.WindowLead.Microseconds())
 	if err != nil {
 		return fmt.Errorf("opening automatic Incident Investigations: %w", err)

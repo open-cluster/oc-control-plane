@@ -117,7 +117,7 @@ func TestConversationDrainDoesNotExceedBacklog(t *testing.T) {
 	if err != nil || !opened {
 		t.Fatalf("opening first turn: opened=%t err=%v", opened, err)
 	}
-	if _, _, claimed, err := database.ClaimInvestigation(context.Background(), aClaim("worker")); err != nil || !claimed {
+	if _, _, claimed, err := claimFixtureInvestigation(context.Background(), database); err != nil || !claimed {
 		t.Fatalf("claiming first turn: claimed=%t err=%v", claimed, err)
 	}
 	if _, err := appendMessageForTest(database, context.Background(), principal, organization, chat.ID,
@@ -125,8 +125,7 @@ func TestConversationDrainDoesNotExceedBacklog(t *testing.T) {
 			AuthorID: principal.UserID().String(), Text: "follow up"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.ConcludeInvestigation(context.Background(), organization,
-		turn.InvestigationID, claimToken(t, database, organization, turn.InvestigationID), investigation.Conclusion{Summary: "done"}, "", investigation.Usage{}); err != nil {
+	if err := seedInvestigationConclusion(context.Background(), database, organization, turn.InvestigationID, investigation.Conclusion{Summary: "done"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.CreateInvestigation(context.Background(), principal, organization,
@@ -137,7 +136,7 @@ func TestConversationDrainDoesNotExceedBacklog(t *testing.T) {
 	if _, err := database.OpenNextConversationTurn(context.Background(), organization, chat.ID, time.Hour, 1); !errors.Is(err, conversation.ErrQueueFull) {
 		t.Fatalf("OpenNextConversationTurn error = %v, want queue full", err)
 	}
-	if _, _, claimed, err := database.ClaimInvestigation(context.Background(), aClaim("other-worker")); err != nil || !claimed {
+	if _, _, claimed, err := claimFixtureInvestigation(context.Background(), database); err != nil || !claimed {
 		t.Fatalf("claiming queued work: claimed=%t err=%v", claimed, err)
 	}
 	if drained, err := database.OpenQueuedConversationTurn(context.Background(), time.Hour, 1); err != nil || !drained {
@@ -201,10 +200,8 @@ func TestInvestigationCancellationIsTerminalAttributedAndAudited(t *testing.T) {
 	if activity[0].Payload["message"] != "Investigation cancelled by an operator" {
 		t.Fatalf("terminal cancellation activity is not safe and explicit: %+v", activity[0])
 	}
-	if err = database.AppendEvent(context.Background(), organization, turn.InvestigationID,
-		claimToken(t, database, organization, turn.InvestigationID), investigation.Event{Sequence: 2, At: time.Now().UTC(),
-			Type: investigation.EventProgress, Payload: map[string]any{"message": "too late"}}); !errors.Is(err, investigation.ErrAlreadyEnded) {
-		t.Fatalf("a remote worker appended activity after the terminal cancellation: %v", err)
+	if _, _, err := database.ClaimNextAgentExecution(context.Background(), time.Minute); !errors.Is(err, storage.ErrAgentExecutionUnavailable) {
+		t.Fatalf("a worker claimed a terminal cancellation: %v", err)
 	}
 	activity, err = database.Events(context.Background(), organization, turn.InvestigationID, 0, 10)
 	if err != nil || len(activity) != 1 || !activity[len(activity)-1].Type.Terminal() {

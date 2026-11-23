@@ -19,7 +19,7 @@ import (
 
 func TestConversationAndInvestigationStatusesFollowAssignmentUntilRecovery(t *testing.T) {
 	ctx := context.Background()
-	agent := &blockingAgentMain{started: make(chan uuid.UUID, 1)}
+	agent := &blockingModel{started: make(chan uuid.UUID, 1)}
 	plane, _ := agentPlane(t, agent)
 	plane.openConversation(t, "hold the worker", "first question")
 	select {
@@ -56,9 +56,9 @@ func TestConversationAndInvestigationStatusesFollowAssignmentUntilRecovery(t *te
 		t.Fatal(err)
 	}
 	t.Cleanup(database.Close)
-	org, claimed, took, err := database.ClaimInvestigation(ctx, investigation.Claim{Worker: "lifecycle-test", LeaseFor: time.Minute})
-	if err != nil || !took || claimed.ID.String() != id {
-		t.Fatalf("claim = %s took=%v err=%v", claimed.ID, took, err)
+	org, claimed, err := database.ClaimNextAgentExecution(ctx, time.Minute)
+	if err != nil || claimed.InvestigationID.String() != id {
+		t.Fatalf("claim = %+v err=%v", claimed, err)
 	}
 	assertStatus("running")
 	pool, err := pgx.Connect(ctx, plane.dsn)
@@ -66,12 +66,17 @@ func TestConversationAndInvestigationStatusesFollowAssignmentUntilRecovery(t *te
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = pool.Close(ctx) })
-	if _, err := pool.Exec(ctx, `UPDATE investigation SET lease_expires_at = now() - interval '1 minute' WHERE org_id = $1 AND investigation_id = $2`, org, claimed.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE agent_execution SET lease_expires_at = now() - interval '1 minute' WHERE org_id = $1 AND execution_id = $2`, org, claimed.ID); err != nil {
 		t.Fatal(err)
 	}
 	assertStatus("running")
-	if n, err := database.RecoverStale(ctx, investigation.RecoveryReason, 1); err != nil || n != 1 {
-		t.Fatalf("recovery = %d: %v", n, err)
+	resumed, err := database.ClaimAgentExecution(ctx, org, claimed.ID, time.Minute)
+	if err != nil || resumed.LeaseToken == claimed.LeaseToken {
+		t.Fatalf("recovery = %+v: %v", resumed, err)
+	}
+	assertStatus("running")
+	if err := database.FinishAgentExecution(ctx, org, resumed, storage.AgentExecutionFailed, "", nil, investigation.Usage{}); err != nil {
+		t.Fatal(err)
 	}
 	assertStatus("failed")
 }
@@ -81,7 +86,7 @@ func TestConversationTurnsPaginateAndRejectInvalidQueries(t *testing.T) {
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = address
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "openrouter", "z-ai/glm-4.7", "scripted-model-key"
-	}, app.Options{Completer: concludingModel{}})
+	}, app.Options{Model: concludingModel{}})
 	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
 	id, first := plane.openConversation(t, "paginated conversation", "first question")
 	plane.awaitInvestigation(t, first)

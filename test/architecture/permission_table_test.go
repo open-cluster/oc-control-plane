@@ -136,6 +136,7 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 		"GET /api/v1/relays/{registration}/failures",
 		"GET /api/v1/relays/{registration}/integrations",
 		"GET /api/v1/session",
+		"GET /api/v1/tool-runs/{toolRun}/observation",
 		"POST /api/v1/session/refresh",
 		"PATCH /api/v1/incidents/{incident}/postmortem",
 		"PATCH /api/v1/integrations/{integration}",

@@ -258,8 +258,13 @@ func openRouterFailure(ctx context.Context, err error) error {
 	}
 
 	var invalid *sdkerrors.BadRequestResponseError
-	if errors.As(err, &invalid) && model.IsContextLimitExceeded(errors.New(invalid.Error_.Message)) {
-		return aserr.ErrModelContextLimit
+	if errors.As(err, &invalid) {
+		if model.IsContextLimitExceeded(errors.New(invalid.Error_.Message)) {
+			return aserr.ErrModelContextLimit
+		}
+		if rejectsToolChoice(invalid.Error_.Message) {
+			return errModelToolChoice
+		}
 	}
 	switch err.(type) {
 	case *sdkerrors.TooManyRequestsResponseError,

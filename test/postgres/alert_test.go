@@ -97,7 +97,7 @@ func TestAlertBatchSharesCapacityWithManualConversationAndSlackProducers(t *test
 		t.Fatalf("Slack producer: %v", err)
 	}
 	for range 3 {
-		if _, _, found, err := database.ClaimInvestigation(ctx, aClaim("alert")); err != nil || !found {
+		if _, _, found, err := claimFixtureInvestigation(ctx, database); err != nil || !found {
 			t.Fatalf("claiming alert batch: found=%t err=%v", found, err)
 		}
 	}
@@ -139,7 +139,7 @@ func TestAcceptedAlertDeliveryLeavesAnInvestigationClaimableWithoutAWebhookWorke
 	if err != nil || outcome.IncidentsOpened != 1 {
 		t.Fatalf("accepting alert: %+v, %v", outcome, err)
 	}
-	org, claimed, found, err := database.ClaimInvestigation(ctx, aClaim("alert-runner"))
+	org, claimed, found, err := claimFixtureInvestigation(ctx, database)
 	if err != nil || !found || org != organization {
 		t.Fatalf("claim after acceptance: found=%t org=%s err=%v", found, org, err)
 	}
@@ -253,7 +253,7 @@ func TestAlertBatchRefusalRollsBackAndRetrySucceedsAfterCapacityIsClaimed(t *tes
 	if err != nil || len(page.Incidents) != 1 || page.Incidents[0].Status != incident.StatusOpen {
 		t.Fatalf("refused delivery left Incidents: %+v, %v", page, err)
 	}
-	if _, _, found, err := database.ClaimInvestigation(ctx, aClaim("existing-runner")); err != nil || !found {
+	if _, _, found, err := claimFixtureInvestigation(ctx, database); err != nil || !found {
 		t.Fatalf("claiming existing capacity: found=%t err=%v", found, err)
 	}
 	accepted, err := database.RecordDelivery(ctx, organization, delivery, policy)
@@ -356,10 +356,10 @@ func TestConcurrentExactAlertDuplicatesOpenOneAutomaticInvestigation(t *testing.
 	if opened != 1 || duplicates != 1 {
 		t.Fatalf("concurrent duplicates opened=%d duplicate=%d", opened, duplicates)
 	}
-	if _, _, found, err := database.ClaimInvestigation(ctx, aClaim("one")); err != nil || !found {
+	if _, _, found, err := claimFixtureInvestigation(ctx, database); err != nil || !found {
 		t.Fatalf("automatic Investigation claim: %t %v", found, err)
 	}
-	if _, _, found, err := database.ClaimInvestigation(ctx, aClaim("two")); err != nil || found {
+	if _, _, found, err := claimFixtureInvestigation(ctx, database); err != nil || found {
 		t.Fatalf("duplicate Investigation claim: %t %v", found, err)
 	}
 }
@@ -576,10 +576,10 @@ func TestTwoDeliveriesCarryingOneGroupAtOnce_ProduceOneIncidentAndBothSucceed(t 
 		t.Errorf("the incident reports basis %v, want the source's own grouping",
 			page.Incidents[0].Basis)
 	}
-	if _, _, found, err := database.ClaimInvestigation(context.Background(), aClaim("first")); err != nil || !found {
+	if _, _, found, err := claimFixtureInvestigation(context.Background(), database); err != nil || !found {
 		t.Fatalf("concurrent deliveries left no automatic Investigation: found=%t err=%v", found, err)
 	}
-	if _, _, found, err := database.ClaimInvestigation(context.Background(), aClaim("second")); err != nil || found {
+	if _, _, found, err := claimFixtureInvestigation(context.Background(), database); err != nil || found {
 		t.Fatalf("concurrent deliveries left a second automatic Investigation: found=%t err=%v", found, err)
 	}
 }

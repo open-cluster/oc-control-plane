@@ -190,17 +190,11 @@ func TestAgentExecution(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := database.AdmitAgentInvestigation(ctx, foreignOrg, created.ID); !errors.Is(err, storage.ErrAgentExecutionUnavailable) {
-			t.Fatalf("foreign Investigation admitted: %v", err)
-		}
-		queued, err := database.AdmitAgentInvestigation(ctx, organization, created.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := database.ClaimAgentExecution(ctx, foreignOrg, queued.ID, time.Minute); !errors.Is(err, storage.ErrAgentExecutionUnavailable) {
+		queued := investigationExecutionID(t, database, organization, created.ID)
+		if _, err := database.ClaimAgentExecution(ctx, foreignOrg, queued, time.Minute); !errors.Is(err, storage.ErrAgentExecutionUnavailable) {
 			t.Fatalf("foreign execution claimed: %v", err)
 		}
-		claim, err := database.ClaimAgentExecution(ctx, organization, queued.ID, time.Minute)
+		claim, err := database.ClaimAgentExecution(ctx, organization, queued, time.Minute)
 		if err != nil {
 			t.Fatal(err)
 		}

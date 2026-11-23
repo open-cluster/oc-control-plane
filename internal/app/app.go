@@ -9,6 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
+
+	"github.com/open-cluster/oc-control-plane/internal/ai"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
@@ -20,10 +23,6 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/integrations/prometheus"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/slack"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/tempo"
-	"github.com/open-cluster/oc-control-plane/internal/investigation"
-	"github.com/open-cluster/oc-control-plane/internal/investigation/agent"
-	"github.com/open-cluster/oc-control-plane/internal/investigation/agent/anthropic"
-	"github.com/open-cluster/oc-control-plane/internal/investigation/agent/openrouter"
 	"github.com/open-cluster/oc-control-plane/internal/seal"
 	"github.com/open-cluster/oc-control-plane/internal/store/postgres"
 	"github.com/open-cluster/oc-control-plane/internal/telemetry"
@@ -48,15 +47,11 @@ const (
 type Options struct {
 	Version           string
 	OnListen          func(net.Addr)
-	Agent             investigation.Agent
 	PrepareExecution  PrepareExecution
 	ExecutionWake     <-chan struct{}
-	Completer         agent.Completer
-	ModelEffort       string
+	Model             model.ChatModel
 	ModelBaseURL      string
 	InventoryInterval time.Duration
-	MaxToolRuns       int
-	MaxTurns          int
 	SlackAPIURL       string
 	GitHubAPIURL      string
 }
@@ -144,35 +139,18 @@ func Run(
 		}
 	}
 
-	investigationAgent := options.Agent
-	var configuredAgent *agent.Agent
-	if options.PrepareExecution != nil {
-		investigationAgent = nil
-	} else if investigationAgent == nil && cfg.ModelProvider != "" {
-		if configuredAgent, err = modelBoundary(cfg, logger, options); err != nil {
+	prepare := options.PrepareExecution
+	chatModel := options.Model
+	if prepare == nil && chatModel == nil && cfg.ModelProvider != "" {
+		chatModel, err = ai.NewChatModel(cfg, options.ModelBaseURL, ollamaContextSize)
+		if err != nil {
 			return err
 		}
 	}
-	if configuredAgent != nil {
-		configuredAgent.Store = database
-		configuredAgent.Catalog = catalog
-		configuredAgent.Sealer = sealer
-		configuredAgent.RuntimeTelemetry = investigation.NewTelemetry(logger)
-		configuredAgent.Logger = logger
-		configuredAgent.MaxToolRuns = options.MaxToolRuns
-		configuredAgent.MaxTurns = options.MaxTurns
-		investigationAgent = configuredAgent
+	if prepare == nil && chatModel != nil {
+		prepare = prepareInvestigationExecution(database, catalog, sealer, chatModel)
 	}
 
-	investigations := &investigation.Runner{
-		Store:      database,
-		Agent:      investigationAgent,
-		Workers:    cfg.InvestigationWorkers,
-		MaxPending: cfg.MaxPendingInvestigations,
-		WindowLead: defaultInvestigationWindowLead,
-		Telemetry:  investigation.NewTelemetry(logger),
-		Logger:     logger,
-	}
 	return serve(ctx, assembled{
 		config:            cfg,
 		logger:            logger,
@@ -180,8 +158,7 @@ func Run(
 		database:          database,
 		catalog:           catalog,
 		sealer:            sealer,
-		investigations:    investigations,
-		prepareExecution:  options.PrepareExecution,
+		prepareExecution:  prepare,
 		executionWake:     options.ExecutionWake,
 		onListen:          options.OnListen,
 		inventoryInterval: inventoryInterval(options.InventoryInterval),
@@ -191,49 +168,6 @@ func Run(
 
 func configuredSealer(cfg config.Config) (seal.Sealer, error) {
 	return seal.New(cfg.SealingKey)
-}
-
-func modelBoundary(cfg config.Config, logger *slog.Logger, options Options) (*agent.Agent, error) {
-	modelConfig := agent.ModelConfig{
-		Provider:        cfg.ModelProvider,
-		Model:           cfg.ModelName,
-		Effort:          agent.Effort(options.ModelEffort),
-		BaseURL:         options.ModelBaseURL,
-		Credential:      agent.Secret(cfg.ModelAPIKey),
-		MaxOutputTokens: cfg.ModelMaxOutputTokens,
-	}.WithDefaults()
-
-	if err := modelConfig.Validate(); err != nil {
-		return nil, err
-	}
-	completer := options.Completer
-	var openErr error
-	switch modelConfig.Provider {
-	case anthropic.Name:
-		if completer == nil {
-			completer, openErr = anthropic.New(modelConfig, anthropic.Options{})
-		}
-	case openrouter.Name:
-		if completer == nil {
-			completer, openErr = openrouter.New(modelConfig, openrouter.Options{})
-		}
-	default:
-		return nil, fmt.Errorf("%q is not a model provider this build serves; it serves [%s, %s]",
-			modelConfig.Provider, anthropic.Name, openrouter.Name)
-	}
-	if openErr != nil {
-		return nil, openErr
-	}
-
-	// Agent instance ----->
-	newAgent, err := agent.NewAgent(modelConfig, completer)
-	if err != nil {
-		return nil, err
-	}
-	newAgent.Instrument(agent.NewTelemetry(logger))
-	logger.Info("model boundary configured",
-		slog.String("model_config", modelConfig.String()))
-	return newAgent, nil
 }
 
 func inventoryInterval(replacement time.Duration) time.Duration {
@@ -251,7 +185,6 @@ type assembled struct {
 	database          *storage.Database
 	catalog           integrations.Catalog
 	sealer            seal.Sealer
-	investigations    *investigation.Runner
 	prepareExecution  PrepareExecution
 	executionWake     <-chan struct{}
 	onListen          func(net.Addr)
@@ -260,5 +193,5 @@ type assembled struct {
 }
 
 func (p assembled) agentAvailable() bool {
-	return p.investigations != nil && p.investigations.Agent != nil
+	return p.prepareExecution != nil
 }

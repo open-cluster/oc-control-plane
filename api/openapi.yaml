@@ -634,8 +634,25 @@ paths:
     get:
       <<: *privileged-read
       operationId: getToolRunObservation
+      summary: Inspect an observation by historical ordinal
+      deprecated: true
+      description: Editor and Admin only. This route serves stored historical ordinals. Returns the bounded text prepared for the model and current Integration display information. Legacy unavailable text is null, distinct from an empty string. Preparation does not prove remote provider delivery. Ordinary Investigation detail, lists, and events omit this text.
+      tags: [Investigations]
+      responses:
+        "200": { $ref: "#/components/responses/ToolRunObservation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/tool-runs/{toolRun}/observation:
+    parameters:
+      - { $ref: "#/components/parameters/ToolRunID" }
+    get:
+      <<: *privileged-read
+      operationId: getToolRunObservationByID
       summary: Inspect one retained Tool observation
-      description: Editor and Admin only. Returns the bounded text prepared for the model and current Integration display information. Legacy unavailable text is null, distinct from an empty string. Preparation does not prove remote provider delivery. Ordinary Investigation detail, lists, and events omit this text.
+      description: Editor and Admin only. The Tool Run UUID resolves its owning Investigation. Returns the bounded text prepared for the model and current Integration display information. Legacy unavailable text is null, distinct from an empty string. Preparation does not prove remote provider delivery. Ordinary Investigation detail, lists, and events omit this text.
       tags: [Investigations]
       responses:
         "200": { $ref: "#/components/responses/ToolRunObservation" }
@@ -1021,6 +1038,7 @@ components:
     RelayRegistrationID: { name: registration, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     IncidentID: { name: incident, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     InvestigationID: { name: investigation, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+    ToolRunID: { name: toolRun, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     ToolRunOrdinal: { name: ordinal, in: path, required: true, schema: { type: integer, minimum: 1, maximum: 2147483647 } }
     ConversationID: { name: conversation, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
     MessageSequence: { name: sequence, in: path, required: true, schema: { type: integer, minimum: 1 } }
@@ -1517,16 +1535,18 @@ components:
     Impact:
       type: object
       additionalProperties: false
-      required: [summary, runRefs]
+      required: [summary]
       properties:
         summary: { type: string, maxLength: 4096 }
-        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true, readOnly: true, description: Historical references when present. }
+        evidenceRefs: { type: array, items: { $ref: "#/components/schemas/EvidenceRef" }, uniqueItems: true }
     Finding:
       type: object
       additionalProperties: false
-      required: [statement, kind, mechanism, runRefs]
+      required: [statement, kind]
       anyOf:
-        - properties:
+        - required: [runRefs]
+          properties:
             runRefs: { minItems: 1 }
         - required: [evidenceRefs]
           properties:
@@ -1537,7 +1557,7 @@ components:
           type: string
           enum: [cause, contributing_factor, observation, ruled_out]
         mechanism: { type: string, maxLength: 4096 }
-        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true, readOnly: true, description: Historical references when present. }
         evidenceRefs:
           type: array
           uniqueItems: true
@@ -1558,36 +1578,40 @@ components:
     Hypothesis:
       type: object
       additionalProperties: false
-      required: [statement, status, test, runRefs]
+      required: [statement, status, test]
       properties:
         statement: { type: string, minLength: 1, maxLength: 4096 }
         status: { type: string, enum: [supported, ruled_out, unresolved] }
         test: { type: string, minLength: 1, maxLength: 4096 }
-        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true, readOnly: true, description: Historical references when present. }
+        evidenceRefs: { type: array, items: { $ref: "#/components/schemas/EvidenceRef" }, uniqueItems: true }
     ActionProposal:
       type: object
       additionalProperties: false
-      required: [title, rationale, verification, runRefs]
+      required: [title, rationale, verification]
       properties:
         title: { type: string, minLength: 1, maxLength: 512 }
         rationale: { type: string, minLength: 1, maxLength: 512 }
         verification: { type: string, minLength: 1, maxLength: 512 }
-        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true, readOnly: true, description: Historical references when present. }
+        evidenceRefs: { type: array, items: { $ref: "#/components/schemas/EvidenceRef" }, uniqueItems: true }
     Limitation:
       type: object
       additionalProperties: false
-      required: [type, statement, runRefs]
+      required: [type, statement]
       properties:
         type: { type: string, enum: [missing_telemetry, missing_access, contradiction, unresolved_assumption, essential_human_input] }
         statement: { type: string, minLength: 1, maxLength: 4096 }
-        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true, readOnly: true, description: Historical references when present. }
+        evidenceRefs: { type: array, items: { $ref: "#/components/schemas/EvidenceRef" }, uniqueItems: true }
         messageSequences:
           type: array
           minItems: 1
           maxItems: 100
           uniqueItems: true
           items: { type: integer, format: int64, minimum: 1 }
-          description: Assigned Message sequences not processed because the complete request could not fit the input budget.
+          readOnly: true
+          description: Historical assigned Message sequences retained from reports that exceeded the input budget.
     Investigation:
       type: object
       additionalProperties: false
@@ -1599,7 +1623,7 @@ components:
         incidentId: { $ref: "#/components/schemas/UUID" }
         windowFrom: { $ref: "#/components/schemas/Timestamp" }
         windowUntil: { $ref: "#/components/schemas/Timestamp" }
-        conclusionStatus: { type: string, enum: [verified_cause, supported_explanation, inconclusive, answer_only], description: "Assessment outcome. verified_cause is retained on historical results." }
+        conclusionStatus: { type: string, enum: [verified_cause, supported_explanation, inconclusive, answer_only], description: "Assessment outcome. Omitted for an unassessed factual Conversation reply. verified_cause and answer_only are historical values." }
         summary: { type: string, minLength: 1, maxLength: 4096 }
         impact: { $ref: "#/components/schemas/Impact" }
         findings: { type: array, items: { $ref: "#/components/schemas/Finding" } }
@@ -1649,7 +1673,7 @@ components:
       additionalProperties: false
       required: *tool-run-required
       allOf:
-        - required: [investigationId, ordinal, observationText]
+        - required: [investigationId, observationText]
       properties:
         <<: *tool-run-properties
         investigationId: { $ref: "#/components/schemas/UUID" }
@@ -1705,13 +1729,17 @@ components:
         payload:
           type: object
           additionalProperties: false
-          required: [ordinal, tool, integrationId, integration, purpose]
+          required: [tool, integrationId, integration, purpose]
+          anyOf:
+            - required: [toolRunId]
+            - required: [ordinal]
           properties:
+            toolRunId: { $ref: "#/components/schemas/UUID" }
             ordinal: { type: integer, minimum: 1 }
             tool: { type: string, minLength: 1, maxLength: 512 }
             integrationId: { $ref: "#/components/schemas/UUID" }
             integration: { type: string, minLength: 1, maxLength: 512 }
-            purpose: { type: string, minLength: 1, maxLength: 512 }
+            purpose: { type: string, maxLength: 512 }
     ToolCompletedInvestigationEvent:
       type: object
       additionalProperties: false
@@ -1722,8 +1750,12 @@ components:
         payload:
           type: object
           additionalProperties: false
-          required: [ordinal, outcome, durationMs, summary, truncated]
+          required: [outcome, durationMs, summary, truncated]
+          anyOf:
+            - required: [toolRunId]
+            - required: [ordinal]
           properties:
+            toolRunId: { $ref: "#/components/schemas/UUID" }
             ordinal: { type: integer, minimum: 1 }
             outcome: { type: string, enum: [succeeded, failed] }
             durationMs: { type: integer, format: int64, minimum: 0 }
@@ -1739,9 +1771,9 @@ components:
         payload:
           type: object
           additionalProperties: false
-          required: [status, summary]
+          required: [summary]
           properties:
-            status: { type: string, enum: [verified_cause, supported_explanation, inconclusive, answer_only], description: "Assessment outcome. verified_cause is retained on historical events." }
+            status: { type: string, enum: [verified_cause, supported_explanation, inconclusive, answer_only], description: "Assessment outcome. Omitted for an unassessed factual Conversation reply. verified_cause and answer_only are historical values." }
             summary: { type: string, minLength: 1, maxLength: 4096 }
     FailedInvestigationEvent:
       type: object
@@ -1919,33 +1951,34 @@ components:
     TimelineEntry:
       type: object
       additionalProperties: false
-      required: [at, description, runRefs]
+      required: [at, description]
       properties:
         at: { $ref: "#/components/schemas/Timestamp" }
         description: { type: string, minLength: 1, maxLength: 8192 }
         investigationId: { $ref: "#/components/schemas/UUID" }
-        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true, readOnly: true, description: Historical references when present. }
         evidenceRefs: { type: array, items: { $ref: "#/components/schemas/EvidenceRef" } }
     CitedStatement:
       type: object
       additionalProperties: false
-      required: [statement, runRefs]
+      required: [statement]
       properties:
         investigationId: { $ref: "#/components/schemas/UUID" }
         statement: { type: string, minLength: 1, maxLength: 8192 }
-        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true, readOnly: true, description: Historical references when present. }
         evidenceRefs: { type: array, items: { $ref: "#/components/schemas/EvidenceRef" } }
     ActionItem:
       type: object
       additionalProperties: false
-      required: [title, owner, deadline, verification, runRefs]
+      required: [title, owner, deadline, verification]
       properties:
         title: { type: string, minLength: 1, maxLength: 1024 }
         owner: { type: string, minLength: 1, maxLength: 256 }
         deadline: { type: string, minLength: 1, maxLength: 128 }
         verification: { type: string, minLength: 1, maxLength: 8192 }
         investigationId: { $ref: "#/components/schemas/UUID" }
-        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true }
+        runRefs: { type: array, items: { type: integer, minimum: 1 }, uniqueItems: true, readOnly: true, description: Historical references when present. }
+        evidenceRefs: { type: array, items: { $ref: "#/components/schemas/EvidenceRef" }, uniqueItems: true }
     Postmortem:
       type: object
       additionalProperties: false
@@ -1980,11 +2013,23 @@ components:
             title: { type: string, minLength: 1, maxLength: 1024 }
             executiveSummary: { type: string, minLength: 1, maxLength: 32768 }
             detection: { type: string, minLength: 1, maxLength: 32768 }
-            timeline: { type: array, items: { $ref: "#/components/schemas/TimelineEntry" } }
-            rootCauses: { type: array, items: { $ref: "#/components/schemas/CitedStatement" } }
-            contributingFactors: { type: array, items: { $ref: "#/components/schemas/CitedStatement" } }
-            actionItems: { type: array, items: { $ref: "#/components/schemas/ActionItem" } }
+            timeline: { type: array, items: { allOf: [{ $ref: "#/components/schemas/TimelineEntry" }, { $ref: "#/components/schemas/PostmortemCorrectionEvidence" }] } }
+            rootCauses: { type: array, items: { allOf: [{ $ref: "#/components/schemas/CitedStatement" }, { $ref: "#/components/schemas/PostmortemCorrectionEvidence" }] } }
+            contributingFactors: { type: array, items: { allOf: [{ $ref: "#/components/schemas/CitedStatement" }, { $ref: "#/components/schemas/PostmortemCorrectionEvidence" }] } }
+            actionItems: { type: array, items: { allOf: [{ $ref: "#/components/schemas/ActionItem" }, { $ref: "#/components/schemas/PostmortemCorrectionEvidence" }] } }
             openQuestions: { type: array, items: { type: string, maxLength: 8192 } }
+    PostmortemCorrectionEvidence:
+      type: object
+      properties:
+        runRefs: { not: {} }
+        evidenceRefs:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [toolRunId]
+            properties:
+              toolRunId: { $ref: "#/components/schemas/UUID" }
     GenericWebhookRequest:
       type: object
       additionalProperties: false

@@ -3,7 +3,8 @@
 OpenCluster has two execution boundaries:
 
 - The control plane owns durable Organization-scoped product state, the public API,
-  webhook intake, investigation coordination, model calls, and audit events.
+  webhook intake, Investigation coordination, and audit events. It runs AgentScope for
+  model calls, Tool scheduling, context compaction, and reply recovery.
 - The Relay runs inside the customer boundary, opens an outbound gRPC session, and performs
   the closed Kubernetes read capability protocol. The control plane has no Kubernetes
   library and receives no cluster credential.
@@ -23,36 +24,34 @@ The following path is the primary product walkthrough.
    creates the Incident and, when an Agent is available, its automatic Investigation.
    Alert intake does not create a Conversation. Resolution occurs when no grouped Alert
    Event remains firing.
-4. **Conversation and Investigation** separate continuity from execution. A Conversation
-   keeps messages and prior cited Findings; each turn opens a new immutable Investigation.
-5. **Offered tools** derive from enabled Integrations and their verified grants. There is
-   no provider switch inside the investigation loop. Every external call uses a common
-     envelope containing provider-specific input and an optional explanatory purpose.
-6. **Selective preflight** runs only for incident work with exact safe identifiers. An
-   exact namespace permits a Kubernetes event read; exact namespace, workload kind, and
-   workload name permit a runtime read. OpenCluster never guesses identifiers or broadly
-   prefetches Slack or GitHub.
-7. **Relay or provider read** dispatches the selected Tool. Slack and GitHub reads leave
+4. **Conversation and Investigation** separate continuity from execution. Web and Slack
+   Messages still open Investigation turns during their Chat cutovers. Native checkpoints
+   carry Tool results, compacted context, and the accepted visible reply across those turns.
+   Independent Investigations own their execution checkpoints.
+5. **AgentScope** selects reads from a Toolkit built from current authorization and
+   verified Integration capabilities. OpenCluster checks current access on Tool admission.
+   Tool arguments carry provider-specific input and an optional purpose.
+6. **Relay or provider read** dispatches the selected Tool. Slack and GitHub reads leave
    from the control plane. Kubernetes reads become a Relay Job executed through the
    customer’s outbound session.
-8. **Tool Run** receives a stable UUID before dispatch and records the Integration,
+7. **Tool Run** receives a stable UUID before dispatch and records the Integration,
    purpose, stripped provider input, applied window, outcome, truncation, summary, and
    source identifiers. Agent execution work links Relay Jobs through their Tool Runs.
    The execution lease fences completion of those observations and scopes cancellation.
-9. **Operational events** describe the read in flight using seven small versioned payloads.
-   Completion activity follows a committed Tool Run; unrecorded results never become evidence.
-   Hypotheses are model-local during reasoning and appear only in the final structured
-   conclusion.
-10. **Cited Finding** references supporting Tool Runs. Existing Investigation ordinals
-    continue to resolve. A verified cause requires a
-    confirmed causal Finding with a mechanism. Contradictions, missing telemetry, missing
-    access, and unresolved assumptions remain explicit limitations.
-11. **Action Proposal** distinguishes mitigation, rollback, verification, permanent fix,
-    and monitoring. It states risk, reversibility, approval need, verification, and cited
-    support. The API has no production-change execution route.
-12. **UI or Slack reply** receives the same structured conclusion: status, summary,
-    impact, Findings, hypotheses, Action Proposals, limitations, and whether human
-    confirmation is required.
+8. **Operational events** expose durable startup, Tool activity, and terminal outcomes.
+   Tool completion activity follows the commit of its Tool Run. Incremental public model
+   output is tracked in #234.
+9. **Conclusion** generation uses a buffered structured request after the native reply
+   and its checkpoint complete. An assigned Conversation turn needs its matching native
+   assistant Message to publish an accepted reply. The transaction commits the Conclusion,
+   terminal event, and any linked reply and promoted checkpoint under the execution lease.
+10. **Cited Findings** refer to successful Tool Runs. Causal Findings state a mechanism.
+    New citations use Tool Run UUIDs. Historical ordinal links continue to resolve while
+    their evidence is retained.
+11. **Action Proposals** contain a title, rationale, verification step, and optional
+    evidence citations. They are recommendations for the operator.
+12. **Delivery** exposes the structured Conclusion through the Investigation API.
+    Slack presents the accepted summary and activity in its thread.
 
 ## Postmortem workflow
 
@@ -64,8 +63,9 @@ operator input.
 
 The draft contains title, executive summary, impact, detection, timeline, root causes,
 contributing factors, resolution, what went well, what went wrong, detection gaps, action
-items, and open questions. Conversation messages remain labeled testimony unless system
-evidence corroborates them. Missing human facts are rendered as `Needs human input.`
+items, and open questions. Attributed user Messages remain labeled testimony. Missing
+human facts appear as `Needs human input.` Differing eligible Investigation summaries
+leave the executive summary for human review and add a reconciliation question.
 
 Regeneration replaces the current draft with a higher audited revision. Human corrections
 are audited and preserve explicitly supplied owners and deadlines. Review marks the draft
@@ -73,15 +73,18 @@ reviewed and records the reviewer and time.
 
 ## AI contract
 
-The reasoning input contains the safety policy, task instruction, structured Investigation
-context, native read Tools, and result schema. Catalog Tool names are provider-compatible
-operation names sent unchanged to the model. When several authorized Integrations offer an
-operation, the existing Tool envelope requires an integrationId from its eligible-source enum.
+The investigative reply uses a bounded task, authorized read Tools, and native context.
+When several authorized Integrations offer an operation, its arguments require an
+integrationId from the eligible sources. AgentScope receives the Conclusion schema in a
+separate structured request. Recovery can repeat that request after a crash before commit
+while reusing the completed investigative reply. Reads can repeat if interrupted before
+AgentScope checkpoints a Tool batch.
 
-The conclusion decoder rejects invalid status combinations, nonexistent citations,
-causal Findings without mechanisms, unsafe action approval claims, and invented impact.
-Evaluation hard gates require zero secret leakage, missing citations, fabricated causes,
-unsupported execution claims, and false verified-cause outcomes.
+OpenCluster validates the report shape, assessment and Finding combinations, and the
+presence of a mechanism for causal Findings. PostgreSQL checks cited Tool Run ownership,
+availability, and outcome in the completion transaction. These checks establish citation
+provenance and report consistency. The operator reviews whether the evidence supports the
+explanation.
 
 ## Trust boundaries
 

@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
-	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 func TestEvidenceReferenceSchemaRequiresCompleteOrdinalPair(t *testing.T) {
@@ -49,12 +48,13 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 	}
 	defer func() { _ = database.Close(ctx) }()
 	ids := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
-	refs := []investigation.EvidenceRef{{InvestigationID: ids[0], ToolRunOrdinal: 1}, {InvestigationID: ids[1], ToolRunOrdinal: 1}}
+	refs := []investigation.HistoricalEvidenceRef{{InvestigationID: ids[0], ToolRunOrdinal: 1}, {InvestigationID: ids[1], ToolRunOrdinal: 1}}
 	for index, id := range ids {
-		conclusion := investigation.Conclusion{Status: investigation.AnswerOnly, Summary: "Prior observations."}
+		conclusion := map[string]any{"status": "answer_only", "summary": "Prior observations."}
 		if index == 2 {
-			conclusion.Findings = []investigation.Finding{{Statement: "Two prior observations.", Kind: investigation.FindingObservation,
-				RunRefs: []int{}, EvidenceRefs: refs}}
+			conclusion["findings"] = []map[string]any{{
+				"statement": "Two prior observations.", "kind": "observation", "evidenceRefs": refs,
+			}}
 		}
 		encoded, err := json.Marshal(conclusion)
 		if err != nil {
@@ -151,7 +151,7 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 	if runIDs[0] == runIDs[1] {
 		t.Fatal("two Investigations' first runs shared an evidence identity")
 	}
-	refs[0] = investigation.EvidenceRef{ToolRunID: runIDs[0]}
+	refs[0] = investigation.HistoricalEvidenceRef{ToolRunID: runIDs[0]}
 	encodedRefs, err := json.Marshal(refs)
 	if err != nil {
 		t.Fatal(err)
@@ -169,7 +169,9 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 		}
 		status, body := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/investigations/"+ids[2].String(), nil)
 		var result struct {
-			Findings    []investigation.Finding
+			Findings []struct {
+				EvidenceRefs []investigation.HistoricalEvidenceRef
+			}
 			Limitations []investigation.Limitation
 		}
 		decodeInto(t, body, &result)
@@ -179,9 +181,6 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 		missing := slices.ContainsFunc(result.Limitations, func(item investigation.Limitation) bool { return item.Type == investigation.LimitationMissingTelemetry })
 		if missing != prune {
 			t.Fatalf("wrong evidence availability: %s", body)
-		}
-		if prune && result.Limitations[0].RunRefs == nil {
-			t.Fatalf("missing-evidence limitation has null runRefs: %s", body)
 		}
 	}
 	privateChat := uuid.New()
@@ -208,11 +207,15 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 			t.Fatalf("a web read found private Slack evidence: %d %s", status, body)
 		}
 	}
+	privateObservation := plane.base(surfaceOrg) + "/tool-runs/" + runIDs[1].String() + "/observation"
+	if status, body := plane.call(t, http.MethodGet, privateObservation, nil); status != http.StatusNotFound {
+		t.Fatalf("the Tool Run UUID exposed a private Slack observation: %d %s", status, body)
+	}
 	derived := plane.base(surfaceOrg) + "/investigations/" + ids[2].String()
 	if status, body := plane.call(t, http.MethodGet, derived, nil); status != http.StatusNotFound {
 		t.Fatalf("a retained web report exposed a restricted Slack citation: %d %s", status, body)
 	}
-	refs[1] = investigation.EvidenceRef{ToolRunID: runIDs[1]}
+	refs[1] = investigation.HistoricalEvidenceRef{ToolRunID: runIDs[1]}
 	encodedRefs, err = json.Marshal(refs)
 	if err != nil {
 		t.Fatal(err)
@@ -244,15 +247,6 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 		VALUES ($1, $2, 1, 2, 'prior restricted summary', $3, now()-interval '1 hour', now())`,
 		surfaceOrg, webChat, ids[2]); err != nil {
 		t.Fatal(err)
-	}
-	store, err := storage.OpenDatabase(ctx, plane.dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	brief, err := store.ConversationBrief(ctx, uuid.MustParse(surfaceOrg), webChat, current, 1)
-	if err != nil || len(brief.Findings) != 0 || len(brief.Recent) != 0 {
-		t.Fatalf("a later web turn received restricted history: %+v, %v", brief, err)
 	}
 	for _, suffix := range []string{"", "/turns"} {
 		path := plane.base(surfaceOrg) + "/conversations/" + webChat.String() + suffix

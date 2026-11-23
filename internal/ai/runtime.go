@@ -2,6 +2,7 @@ package ai
 
 import (
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
@@ -52,6 +53,7 @@ func NewAgent(config Config, checkpoint *agent.AgentState) (*agent.UnifiedAgent,
 		// AgentScope otherwise merges saved working directories into host permissions.
 		restored := *checkpoint
 		restored.PermissionCtx = nil
+		restored.Context = slices.Clone(checkpoint.Context)
 		checkpoint = &restored
 	}
 

@@ -163,7 +163,6 @@ func apiRouter(process assembled) (http.Handler, error) {
 		Catalog:                 process.catalog,
 		WebhookTypes:            webhookTypes(webhookAdapters()),
 		Sealer:                  process.sealer,
-		Investigations:          process.investigations,
 		AgentAvailable:          process.agentAvailable(),
 		StreamContext:           process.streamContext,
 		InvestigationWindowLead: defaultInvestigationWindowLead,

@@ -33,7 +33,7 @@ func TestCompletionProcessHelper(t *testing.T) {
 	if err := json.Unmarshal(contents, &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := app.Run(context.Background(), cfg, os.Stderr, app.Options{Completer: concludingModel{}}); err != nil {
+	if err := app.Run(context.Background(), cfg, os.Stderr, app.Options{Model: concludingModel{}}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -139,7 +139,7 @@ func TestCompletionSurvivesProcessInterruption(t *testing.T) {
 	if status != 1 || !noEnding || !noResult {
 		t.Fatal("interrupted transaction left a partial outcome")
 	}
-	if _, err := database.Exec(ctx, `UPDATE investigation SET lease_expires_at = clock_timestamp() - interval '1 second'
+	if _, err := database.Exec(ctx, `UPDATE agent_execution SET lease_expires_at = clock_timestamp() - interval '1 second'
 		WHERE investigation_id = $1 AND org_id = $2`, interrupted, surfaceOrg); err != nil {
 		t.Fatal(err)
 	}
@@ -148,9 +148,9 @@ func TestCompletionSurvivesProcessInterruption(t *testing.T) {
 	_, err = io.Copy(io.Discard, response.Body)
 	_ = response.Body.Close()
 	if err != nil {
-		t.Fatalf("waiting for the recovery sweep: %v", err)
+		t.Fatalf("waiting for the resumed reply: %v", err)
 	}
-	assertOneEnding(t, plane, interrupted, "failed")
+	assertOneEnding(t, plane, interrupted, "concluded")
 	_, completed := plane.openConversation(t, "committed completion", "investigate checkout")
 	before := plane.awaitInvestigation(t, completed)
 	kill()

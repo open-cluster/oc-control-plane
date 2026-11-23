@@ -98,9 +98,11 @@ func TestAlertmanagerGate_TheDocumentedConfigurationDeliversAnInvestigableIncide
 	var promptText strings.Builder
 	select {
 	case prompt := <-gate.prompts:
-		for _, block := range append(prompt.System, prompt.Content...) {
-			promptText.WriteString(block.Text)
-			promptText.WriteByte('\n')
+		for _, msg := range prompt {
+			if content := msg.GetTextContent("\n"); content != nil {
+				promptText.WriteString(*content)
+				promptText.WriteByte('\n')
+			}
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the Investigation completed without a Model prompt")

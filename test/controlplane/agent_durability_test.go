@@ -75,31 +75,31 @@ func TestSlackMessageWorkWaitsForAnAgentAndProcessesAfterRestart(t *testing.T) {
 		cfg.DatabaseDSN = plane.dsn
 		cfg.HTTPListenAddress = freeAddress(t)
 		cfg.InvestigationWorkers = 1
-	}, app.Options{Agent: &blockingAgentMain{}, SlackAPIURL: vendor.URL})
+	}, app.Options{Model: &blockingModel{}, SlackAPIURL: vendor.URL})
 
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		detail, err = database.ConversationDetail(context.Background(), uuid.MustParse(surfaceOrg), outcome.Conversation, 50)
-		if err == nil && len(detail.Messages) == 1 && len(detail.Turns) == 1 {
+		detail, detailErr := database.ConversationDetail(context.Background(), uuid.MustParse(surfaceOrg), outcome.Conversation, 50)
+		if err = connection.QueryRow(context.Background(), `SELECT status, attempts
+			FROM slack_message_work WHERE org_id = $1 AND conversation_id = $2`,
+			surfaceOrg, outcome.Conversation).Scan(&workStatus, &attempts); err != nil {
+			t.Fatal(err)
+		}
+		if detailErr == nil && len(detail.Messages) == 1 && len(detail.Turns) == 1 && workStatus == int(storage.SlackMessageComplete) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("accepted Slack question was not processed after Agent restart: %+v, %v", detail, err)
+			t.Fatalf("accepted Slack question was not processed after Agent restart: %+v, %v", detail, detailErr)
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	if err = connection.QueryRow(context.Background(), `SELECT status, attempts
-		FROM slack_message_work WHERE org_id = $1 AND conversation_id = $2`,
-		surfaceOrg, outcome.Conversation).Scan(&workStatus, &attempts); err != nil {
-		t.Fatal(err)
-	}
-	if workStatus != int(storage.SlackMessageComplete) || attempts != 1 {
+	if attempts != 1 {
 		t.Fatalf("Agent restart processed Slack work status=%d attempts=%d", workStatus, attempts)
 	}
 }
 
 func TestConversationFollowupRefusalPreservesActiveAndQueuedWork(t *testing.T) {
-	agent := &blockingAgentMain{started: make(chan uuid.UUID, 1)}
+	agent := &blockingModel{started: make(chan uuid.UUID, 1)}
 	plane, _ := agentPlane(t, agent)
 	conversationID, _ := plane.openConversation(t, "durable queued Conversation", "first question")
 	select {

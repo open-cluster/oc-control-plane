@@ -25,21 +25,21 @@ const (
 )
 
 type Handlers struct {
-	Resolve       func(*http.Request) (authz.Principal, error)
-	Store         HTTPStore
-	Runner        *Runner
-	Logger        *slog.Logger
-	MaxPending    int
-	StreamContext context.Context
-	WindowLead    time.Duration
+	Resolve        func(*http.Request) (authz.Principal, error)
+	Store          HTTPStore
+	AgentAvailable bool
+	Logger         *slog.Logger
+	MaxPending     int
+	StreamContext  context.Context
+	WindowLead     time.Duration
 }
 
 type HTTPStore interface {
 	CreateInvestigation(context.Context, authz.Principal, uuid.UUID,
 		NewInvestigation, int) (Investigation, error)
 	WebInvestigation(context.Context, uuid.UUID, uuid.UUID) (Investigation, error)
-	InvestigationToolRuns(context.Context, uuid.UUID, uuid.UUID) ([]ToolRun, error)
-	InvestigationToolRunObservation(context.Context, uuid.UUID, uuid.UUID, int) (ToolRun, error)
+	InvestigationToolRuns(context.Context, uuid.UUID, uuid.UUID) ([]ToolRunRead, error)
+	ToolRunObservation(context.Context, uuid.UUID, HistoricalEvidenceRef) (ToolRunRead, uuid.UUID, error)
 	QueryInvestigations(context.Context, authz.Principal, uuid.UUID, Query) (List, error)
 	CancelInvestigation(context.Context, authz.Principal, uuid.UUID,
 		uuid.UUID) (Investigation, error)
@@ -75,6 +75,12 @@ func (h Handlers) Routes() []authz.Route {
 			Handler:    http.HandlerFunc(h.readObservation),
 		},
 		{
+			Method:     http.MethodGet,
+			Pattern:    base + "/tool-runs/{toolRun}/observation",
+			Permission: authz.InvestigationObservationRead,
+			Handler:    http.HandlerFunc(h.readObservation),
+		},
+		{
 			Method:     http.MethodPost,
 			Pattern:    base + "/investigations/{investigation}/cancel",
 			Permission: authz.InvestigationCancel,
@@ -96,7 +102,7 @@ type openRequest struct {
 func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	principal := h.caller(request)
 	organization := h.organization(request)
-	if h.Runner == nil || h.Runner.Agent == nil {
+	if !h.AgentAvailable {
 		writeJSON(writer, http.StatusServiceUnavailable, errorView{
 			Error: "this deployment has no model provider configured, so it cannot investigate"})
 		return
@@ -265,25 +271,33 @@ func (h Handlers) cancel(writer http.ResponseWriter, request *http.Request) {
 		h.fail(writer, request, err)
 		return
 	}
-	if h.Runner != nil {
-		h.Runner.Cancel(id)
-	}
 	writeJSON(writer, http.StatusOK, investigationViewOf(ended))
 }
 
 func (h Handlers) readObservation(writer http.ResponseWriter, request *http.Request) {
-	organization, id, ok := h.addressed(writer, request)
-	if !ok {
-		return
-	}
-	ordinal, err := strconv.ParseInt(request.PathValue("ordinal"), 10, 32)
-	if err != nil || ordinal <= 0 || id == uuid.Nil {
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: "give an Investigation identity and positive Tool Run ordinal"})
-		return
+	var ref HistoricalEvidenceRef
+	if selector := request.PathValue("toolRun"); selector != "" {
+		id, err := uuid.Parse(selector)
+		if err != nil || id == uuid.Nil {
+			writeJSON(writer, http.StatusBadRequest, errorView{Error: "give a valid Tool Run UUID"})
+			return
+		}
+		ref.ToolRunID = id
+	} else {
+		_, id, ok := h.addressed(writer, request)
+		if !ok {
+			return
+		}
+		ordinal, err := strconv.ParseInt(request.PathValue("ordinal"), 10, 32)
+		if err != nil || ordinal <= 0 || id == uuid.Nil {
+			writeJSON(writer, http.StatusBadRequest, errorView{Error: "give an Investigation identity and positive Tool Run ordinal"})
+			return
+		}
+		ref.InvestigationID, ref.ToolRunOrdinal = id, int(ordinal)
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
-	run, err := h.Store.InvestigationToolRunObservation(ctx, organization, id, int(ordinal))
+	run, id, err := h.Store.ToolRunObservation(ctx, h.organization(request), ref)
 	if err != nil {
 		h.fail(writer, request, err)
 		return

@@ -5,7 +5,7 @@ description: "Follow a conversation, assess cited findings, and review actions a
 
 An investigation reads connected sources to answer an operational question or investigate an incident. It has a time window and execution limits, so the answer reflects the evidence available for that turn.
 
-A completed investigation can answer a factual question, support an explanation, or remain inconclusive. Completion alone does not mean a cause was established. Missing access, telemetry, or human input may prevent a defensible answer.
+A factual Conversation reply can complete without an assessment. An Incident Investigation that concludes states whether the evidence supports an explanation or leaves the cause unresolved. Missing access, telemetry, or human input can limit either result.
 
 ## Conversations and follow-ups
 
@@ -28,7 +28,7 @@ Check the source, timestamps, requested interval, and incomplete-result indicato
 
 ## Inspect a cited observation
 
-Editors and Admins can inspect the retained source observation behind a citation using the [observation API](/api-reference/investigations/inspect-one-retained-tool-observation). Viewers can read summaries and Tool Run metadata, but cannot retrieve these observation bodies.
+Editors and Admins can inspect the retained source observation by Tool Run UUID using the [observation API](/api-reference/investigations/inspect-one-retained-tool-observation). Viewers can read summaries and Tool Run metadata. Historical citations may use a stored ordinal.
 
 Observations are bounded and may omit source content. Older observations can be unavailable. See [response details](/api-reference/investigations/inspect-one-retained-tool-observation) for fields and [Security](/security/overview) for sensitivity and retention.
 

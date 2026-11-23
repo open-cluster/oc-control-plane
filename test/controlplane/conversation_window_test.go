@@ -13,7 +13,7 @@ func TestConversationAcceptsExplicitQuestionWindow(t *testing.T) {
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = address
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "openrouter", "z-ai/glm-4.7", "scripted-model-key"
-	}, app.Options{Completer: concludingModel{}})
+	}, app.Options{Model: concludingModel{}})
 	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
 	for _, invalid := range []map[string]any{
 		{"windowFrom": "2026-08-01T08:00:00Z"},

@@ -8,32 +8,35 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"gopkg.in/yaml.v3"
 
 	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
-	modelagent "github.com/open-cluster/oc-control-plane/internal/investigation/agent"
 )
 
-type failedEventModel struct{}
+type failedEventModel struct{ bufferedModel }
 
-func (failedEventModel) Complete(context.Context, modelagent.Prompt) (modelagent.Completion, error) {
-	return modelagent.Completion{}, errors.New("provider unavailable")
+func (failedEventModel) Chat(context.Context, []*message.Msg, ...model.CallOption) (*model.ChatResponse, error) {
+	return nil, errors.New("provider unavailable")
 }
 
 type liveProgressEventModel struct {
+	bufferedModel
 	calls        int
 	firstStarted chan struct{}
 	releaseFirst chan struct{}
 	thirdStarted chan struct{}
 }
 
-func (m *liveProgressEventModel) Complete(ctx context.Context, _ modelagent.Prompt) (modelagent.Completion, error) {
+func (m *liveProgressEventModel) Chat(ctx context.Context, _ []*message.Msg, _ ...model.CallOption) (*model.ChatResponse, error) {
 	m.calls++
 	switch m.calls {
 	case 1:
@@ -41,26 +44,17 @@ func (m *liveProgressEventModel) Complete(ctx context.Context, _ modelagent.Prom
 		select {
 		case <-m.releaseFirst:
 		case <-ctx.Done():
-			return modelagent.Completion{}, ctx.Err()
+			return nil, ctx.Err()
 		}
 	case 3:
 		close(m.thirdStarted)
 		<-ctx.Done()
-		return modelagent.Completion{}, ctx.Err()
+		return nil, ctx.Err()
 	}
-	calls := []modelagent.CompletionCall{{
-		ID: fmt.Sprintf("read-%d", m.calls), Name: "slack_list_channels",
-		Arguments: json.RawMessage(`{"purpose":"Read evidence","input":{}}`),
-	}}
-	if m.calls == 2 {
-		duplicate := calls[0]
-		duplicate.ID = "duplicate"
-		calls = append(calls, duplicate)
-	}
-	return modelagent.Completion{Stop: modelagent.StopToolUse, ToolCalls: calls}, nil
+	return toolResponse(fmt.Sprintf("read-%d", m.calls), "slack_list_channels", `{"purpose":"Read evidence","input":{}}`), nil
 }
 
-func TestLiveProgressEventMatchesSerializedSchema(t *testing.T) {
+func TestLiveToolCompletionMatchesSerializedSchema(t *testing.T) {
 	model := &liveProgressEventModel{
 		firstStarted: make(chan struct{}), releaseFirst: make(chan struct{}),
 		thirdStarted: make(chan struct{}),
@@ -71,7 +65,7 @@ func TestLiveProgressEventMatchesSerializedSchema(t *testing.T) {
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = address
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "openrouter", "z-ai/glm-4.7", "scripted-model-key"
-	}, app.Options{Completer: model, SlackAPIURL: vendor.URL})
+	}, app.Options{Model: model, SlackAPIURL: vendor.URL})
 	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
 	if status, body := plane.createSlack(t, "Operator testimony", "xoxb-good-token-1234"); status != http.StatusCreated {
 		t.Fatalf("create Slack = %d: %s", status, body)
@@ -88,8 +82,7 @@ func TestLiveProgressEventMatchesSerializedSchema(t *testing.T) {
 
 	schema := eventSchema(t)
 	scanner := bufio.NewScanner(response.Body)
-	sawProgress := false
-	sawCompletion := false
+	completions := 0
 	var seen []string
 	for scanner.Scan() {
 		data, present := strings.CutPrefix(scanner.Text(), "data: ")
@@ -99,44 +92,43 @@ func TestLiveProgressEventMatchesSerializedSchema(t *testing.T) {
 		event := decodeSerializedEvent(t, schema, data)
 		seen = append(seen, event["type"].(string))
 		if event["type"] == "tool_completed" {
-			sawCompletion = true
+			completions++
 			status, body := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/investigations/"+turn, nil)
 			if status != http.StatusOK {
 				t.Fatalf("Tool Run detail = %d: %s", status, body)
 			}
 			var detail struct {
 				Runs []struct {
-					Ordinal int `json:"ordinal"`
+					ID string `json:"id"`
 				} `json:"runs"`
 			}
 			decodeInto(t, body, &detail)
-			ordinal := int(event["payload"].(map[string]any)["ordinal"].(float64))
-			if len(detail.Runs) < ordinal || detail.Runs[ordinal-1].Ordinal != ordinal {
+			id := event["payload"].(map[string]any)["toolRunId"].(string)
+			if !slices.ContainsFunc(detail.Runs, func(run struct {
+				ID string `json:"id"`
+			}) bool {
+				return run.ID == id
+			}) {
 				t.Fatal("live completion has no committed Tool Run detail")
 			}
-			status, body = plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/investigations/"+turn+
-				"/runs/"+fmt.Sprint(ordinal)+"/observation", nil)
+			status, body = plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/tool-runs/"+id+"/observation", nil)
 			var retained struct{ ObservationText *string }
 			decodeInto(t, body, &retained)
 			if status != http.StatusOK || retained.ObservationText == nil {
 				t.Fatal("live completion has no committed prepared observation")
 			}
-		}
-		if event["type"] == "progress" {
-			if !sawCompletion {
-				t.Fatal("duplicate progress preceded the completed read")
+			if completions == 2 {
+				break
 			}
-			sawProgress = true
-			break
 		}
 	}
-	if !sawProgress {
-		t.Fatalf("live stream ended before progress; events=%v: %v", seen, scanner.Err())
+	if completions != 2 {
+		t.Fatalf("live stream ended before both Tool completions; events=%v: %v", seen, scanner.Err())
 	}
 	select {
 	case <-model.thirdStarted:
 	case <-time.After(10 * time.Second):
-		t.Fatal("the live stream did not observe progress before the next model exchange")
+		t.Fatal("the model did not receive the second Tool result")
 	}
 	status, body := plane.call(t, http.MethodPost,
 		plane.base(surfaceOrg)+"/investigations/"+turn+"/cancel", nil)
@@ -150,7 +142,7 @@ func TestFailedEventMatchesSerializedSchema(t *testing.T) {
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = address
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "openrouter", "z-ai/glm-4.7", "scripted-model-key"
-	}, app.Options{Completer: failedEventModel{}})
+	}, app.Options{Model: failedEventModel{}})
 	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
 	_, turn := plane.openConversation(t, "failure schema", "investigate checkout")
 	plane.awaitInvestigation(t, turn)
@@ -165,7 +157,7 @@ func TestFailedEventMatchesSerializedSchema(t *testing.T) {
 }
 
 func TestCancelledEventMatchesSerializedSchema(t *testing.T) {
-	plane, _ := agentPlane(t, &blockingAgentMain{})
+	plane, _ := agentPlane(t, &blockingModel{})
 	_, turn := plane.openConversation(t, "cancel schema", "investigate checkout")
 	status, body := plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/investigations/"+turn+"/cancel", nil)
 	if status != http.StatusOK {

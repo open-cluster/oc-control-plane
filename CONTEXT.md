@@ -64,16 +64,16 @@ of its Alert Events is firing.
 
 One bounded evidence-gathering turn about an Incident or operator question. It progresses
 from queued to running and terminates as concluded, cancelled, or failed. Running means
-assigned to a worker, including expired execution awaiting failure recovery. Assessment
-certainty and human-input requirements are separate outcomes. It never resumes; a
-follow-up opens another immutable Investigation.
+assigned to a worker, including expired execution awaiting recovery. AgentScope can
+resume unfinished execution. A follow-up opens another Investigation while the completed
+report remains immutable.
 
 ## Conversation
 
 The multi-turn context a User talks to. Its immutable Source is `web` or `slack`. It
-contains ordered Messages and the immutable Investigations those Messages opened. Prior
-cited Findings provide continuity without copying raw source payloads or private model
-reasoning.
+contains ordered visible Messages. During the web and Slack transition, those Messages
+can open Investigation turns. AgentScope checkpoints carry the Conversation context
+across those turns.
 
 ## Message
 
@@ -96,7 +96,8 @@ truncation, summary, and source identifiers.
 
 ## Action Proposal
 
-A recommendation with a title, rationale, verification procedure, and supporting Tool Runs.
+A recommendation with a title, rationale, and verification procedure. Cite supporting Tool Runs
+when available. A proposed diagnostic read can address missing evidence.
 OpenCluster does not execute it.
 
 ## Relay

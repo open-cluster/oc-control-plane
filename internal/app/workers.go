@@ -25,9 +25,8 @@ func startWorkers(ctx context.Context, group *errgroup.Group, process assembled)
 				process.executionWake, process.prepareExecution, process.logger)
 			return nil
 		})
-	} else if process.agentAvailable() {
 		group.Go(func() error {
-			process.investigations.Run(ctx)
+			admitQueuedTurns(ctx, process)
 			return nil
 		})
 		startSlackMessageWorker(ctx, group, process)
@@ -36,6 +35,24 @@ func startWorkers(ctx context.Context, group *errgroup.Group, process assembled)
 	startSessionPruner(ctx, group, process)
 	startChangesPruner(ctx, group, process)
 	startSlackReplyWorker(ctx, group, process)
+}
+
+func admitQueuedTurns(ctx context.Context, process assembled) {
+	tick := time.NewTicker(executionPoll)
+	defer tick.Stop()
+	for ctx.Err() == nil {
+		opened, err := process.database.OpenQueuedConversationTurn(ctx, defaultInvestigationWindowLead, process.config.MaxPendingInvestigations)
+		if err != nil && ctx.Err() == nil {
+			process.logger.WarnContext(ctx, "queued Conversation work could not be admitted")
+		}
+		if opened {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+		case <-tick.C:
+		}
+	}
 }
 
 func startSlackMessageWorker(ctx context.Context, group *errgroup.Group, process assembled) {

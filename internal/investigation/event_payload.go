@@ -1,48 +1,28 @@
 package investigation
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/google/uuid"
+)
 
 type EventPayload interface {
 	EventType() EventType
 }
 
-type StartedEventPayload struct {
-	Text string `json:"text,omitempty"`
-}
-
-func (StartedEventPayload) EventType() EventType { return EventStarted }
-
-func StartedPayload(text string) StartedEventPayload {
-	return StartedEventPayload{
-		Text: bounded(text, eventTextBound),
-	}
-}
-
-type ProgressEventPayload struct {
-	Text string `json:"text"`
-}
-
-func (ProgressEventPayload) EventType() EventType { return EventProgress }
-
-func ProgressPayload(text string) ProgressEventPayload {
-	return ProgressEventPayload{
-		Text: bounded(text, eventTextBound),
-	}
-}
-
 type ToolStartedEventPayload struct {
-	Ordinal       int    `json:"ordinal"`
-	Tool          string `json:"tool"`
-	IntegrationID string `json:"integrationId"`
-	Integration   string `json:"integration"`
-	Purpose       string `json:"purpose"`
+	ToolRunID     uuid.UUID `json:"toolRunId"`
+	Tool          string    `json:"tool"`
+	IntegrationID string    `json:"integrationId"`
+	Integration   string    `json:"integration"`
+	Purpose       string    `json:"purpose"`
 }
 
 func (ToolStartedEventPayload) EventType() EventType { return EventToolStarted }
 
 func ToolStartedPayload(run ToolRun, integration, name string) ToolStartedEventPayload {
 	return ToolStartedEventPayload{
-		Ordinal:       run.Ordinal,
+		ToolRunID:     run.ID,
 		Tool:          bounded(run.Tool, eventTextBound),
 		IntegrationID: integration,
 		Integration:   bounded(name, eventTextBound),
@@ -51,11 +31,11 @@ func ToolStartedPayload(run ToolRun, integration, name string) ToolStartedEventP
 }
 
 type ToolCompletedEventPayload struct {
-	Ordinal    int    `json:"ordinal"`
-	Outcome    string `json:"outcome"`
-	DurationMs int64  `json:"durationMs"`
-	Summary    string `json:"summary"`
-	Truncated  bool   `json:"truncated"`
+	ToolRunID  uuid.UUID `json:"toolRunId"`
+	Outcome    string    `json:"outcome"`
+	DurationMs int64     `json:"durationMs"`
+	Summary    string    `json:"summary"`
+	Truncated  bool      `json:"truncated"`
 }
 
 func (ToolCompletedEventPayload) EventType() EventType { return EventToolCompleted }
@@ -76,7 +56,7 @@ func ToolCompletedPayload(run ToolRun) ToolCompletedEventPayload {
 		}
 	}
 	return ToolCompletedEventPayload{
-		Ordinal:    run.Ordinal,
+		ToolRunID:  run.ID,
 		Outcome:    outcomeWord(run.Outcome),
 		DurationMs: duration,
 		Summary:    bounded(summary, eventTextBound),
@@ -95,13 +75,13 @@ func safeToolRunError(reason string) string {
 }
 
 type ConcludedEventPayload struct {
-	Status  ConclusionStatus `json:"status"`
+	Status  ConclusionStatus `json:"status,omitempty"`
 	Summary string           `json:"summary"`
 }
 
 func (ConcludedEventPayload) EventType() EventType { return EventConcluded }
 
-func ConcludedPayload(conclusion Conclusion, _ string) ConcludedEventPayload {
+func ConcludedPayload(conclusion Conclusion) ConcludedEventPayload {
 	return ConcludedEventPayload{
 		Status:  conclusion.Status,
 		Summary: bounded(conclusion.Summary, MaxSummaryLength),

@@ -9,11 +9,13 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
@@ -34,34 +36,45 @@ const (
 )
 
 type AgentExecution struct {
-	ID                   uuid.UUID
-	ConversationID       uuid.UUID
-	InvestigationID      uuid.UUID
-	MessageSequence      int64
-	ReplyMessageSequence int64
-	Status               AgentExecutionStatus
-	LeaseToken           uuid.UUID
-	LeaseExpiresAt       *time.Time
-	StartedAt            *time.Time
+	ID                          uuid.UUID
+	ConversationID              uuid.UUID
+	InvestigationID             uuid.UUID
+	MessageSequence             int64
+	ReplyMessageSequence        int64
+	Status                      AgentExecutionStatus
+	LeaseToken                  uuid.UUID
+	LeaseExpiresAt              *time.Time
+	StartedAt                   *time.Time
+	investigationConversationID uuid.UUID
 }
 
 func (execution AgentExecution) SessionID() string {
-	if execution.ConversationID != uuid.Nil {
-		return "conversation/" + execution.ConversationID.String()
+	if id := execution.checkpointConversation(); id != uuid.Nil {
+		return "conversation/" + id.String()
 	}
 	return "execution/" + execution.ID.String()
 }
 
+func (execution AgentExecution) checkpointConversation() uuid.UUID {
+	if execution.ConversationID != uuid.Nil {
+		return execution.ConversationID
+	}
+	return execution.investigationConversationID
+}
+
 const agentExecutionColumns = "e.execution_id, e.conversation_id, e.investigation_id, " +
-	"coalesce(e.message_sequence, 0), e.status, e.lease_token, e.lease_expires_at, e.started_at, coalesce(e.reply_message_sequence, 0)"
+	"coalesce(e.message_sequence, 0), e.status, e.lease_token, e.lease_expires_at, e.started_at, coalesce(e.reply_message_sequence, 0), " +
+	"(SELECT i.conversation_id FROM investigation i WHERE i.org_id = e.org_id AND i.investigation_id = e.investigation_id)"
 
 func scanAgentExecution(row pgx.Row, extra ...any) (AgentExecution, error) {
 	var execution AgentExecution
-	var conversationID, investigationID, leaseToken uuid.NullUUID
+	var conversationID, investigationID, investigationConversation, leaseToken uuid.NullUUID
 	fields := []any{&execution.ID, &conversationID, &investigationID,
-		&execution.MessageSequence, &execution.Status, &leaseToken, &execution.LeaseExpiresAt, &execution.StartedAt, &execution.ReplyMessageSequence}
+		&execution.MessageSequence, &execution.Status, &leaseToken, &execution.LeaseExpiresAt, &execution.StartedAt,
+		&execution.ReplyMessageSequence, &investigationConversation}
 	err := row.Scan(append(fields, extra...)...)
 	execution.ConversationID, execution.InvestigationID, execution.LeaseToken = conversationID.UUID, investigationID.UUID, leaseToken.UUID
+	execution.investigationConversationID = investigationConversation.UUID
 	return execution, err
 }
 
@@ -174,32 +187,17 @@ func admitAgentChat(
 	return execution, nil
 }
 
-func (p *Database) AdmitAgentInvestigation(ctx context.Context, organization, investigationID uuid.UUID) (AgentExecution, error) {
-	pool, err := p.poolForOrganization(organization)
-	if err != nil {
-		return AgentExecution{}, err
-	}
-	execution, err := scanAgentExecution(pool.QueryRow(ctx, `
-		INSERT INTO agent_execution AS e (org_id, execution_id, investigation_id)
-		SELECT org_id, $3, investigation_id FROM investigation
-		 WHERE org_id = $1 AND investigation_id = $2 AND conversation_id IS NULL AND status = 1 AND lease_worker = ''
-		 FOR NO KEY UPDATE
-		ON CONFLICT (org_id, investigation_id) DO NOTHING
-		RETURNING `+agentExecutionColumns, organization, investigationID, uuid.New()))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return AgentExecution{}, ErrAgentExecutionUnavailable
-	}
-	if err != nil {
-		return AgentExecution{}, fmt.Errorf("creating Investigation execution: %w", err)
-	}
-	return execution, nil
+func queueInvestigation(ctx context.Context, tx pgx.Tx, org, id uuid.UUID) error {
+	_, err := tx.Exec(ctx, `INSERT INTO agent_execution (org_id, execution_id, investigation_id)
+		VALUES ($1, gen_random_uuid(), $2)`, org, id)
+	return err
 }
 
 const agentExecutionEligible = `
 	AND (e.status = 'queued' OR (e.status = 'running' AND e.lease_expires_at <= clock_timestamp()))
 	AND (e.investigation_id IS NULL OR EXISTS (SELECT 1 FROM investigation owner
 	      WHERE owner.org_id = e.org_id AND owner.investigation_id = e.investigation_id
-	        AND owner.status = 1 AND owner.lease_worker = ''))
+	        AND owner.status = 1))
 	AND NOT EXISTS (
 	    SELECT 1 FROM agent_execution head
 	     WHERE head.org_id = e.org_id AND head.conversation_id = e.conversation_id
@@ -297,7 +295,17 @@ func claimEligibleAgentExecution(
 	if err != nil {
 		return AgentExecution{}, err
 	}
-	return execution, interruptAgentToolRuns(ctx, tx, organization, id)
+	if err := interruptAgentToolRuns(ctx, tx, organization, id); err != nil {
+		return AgentExecution{}, err
+	}
+	if execution.InvestigationID != uuid.Nil {
+		_, err = tx.Exec(ctx, `INSERT INTO investigation_event (org_id, investigation_id, sequence, type, payload)
+			SELECT $1, $2, 1, $3, jsonb_build_object('text', $4::text)
+			WHERE NOT EXISTS (SELECT 1 FROM investigation_event WHERE org_id = $1 AND investigation_id = $2)`,
+			organization, execution.InvestigationID, int16(investigation.EventStarted),
+			"Reviewing this request and available evidence sources.")
+	}
+	return execution, err
 }
 
 func endAgentLease(ctx context.Context, tx pgx.Tx, organization uuid.UUID, execution AgentExecution, status AgentExecutionStatus, replySequence int64) error {
@@ -329,7 +337,7 @@ func (p *Database) withAgentLease(ctx context.Context, organization uuid.UUID, e
 func useAgentLease(ctx context.Context, tx pgx.Tx, org uuid.UUID, execution AgentExecution, action func(pgx.Tx) error) error {
 	return useExecutionLease(ctx, tx, org, execution.ID, execution.LeaseToken, func(owned AgentExecution) error {
 		if owned.ConversationID != execution.ConversationID || owned.InvestigationID != execution.InvestigationID ||
-			owned.MessageSequence != execution.MessageSequence {
+			owned.MessageSequence != execution.MessageSequence || owned.investigationConversationID != execution.investigationConversationID {
 			return ErrAgentLeaseLost
 		}
 		return action(tx)
@@ -345,16 +353,17 @@ func useExecutionLease(
 	// Lock before checking time so a transaction that waited cannot use an expired lease.
 	var expires time.Time
 	var owned AgentExecution
-	var conversationID, investigationID uuid.NullUUID
+	var conversationID, investigationID, investigationConversation uuid.NullUUID
 	err := tx.QueryRow(ctx, `
 		WITH owned AS MATERIALIZED (
 		    SELECT lease_expires_at, conversation_id, investigation_id, coalesce(message_sequence, 0) AS message_sequence
 		     FROM agent_execution
 		     WHERE org_id = $1 AND execution_id = $2 AND status = 'running' AND lease_token = $3
 		     FOR UPDATE)
-		SELECT lease_expires_at, conversation_id, investigation_id, message_sequence
-		  FROM owned WHERE lease_expires_at > clock_timestamp()`,
-		org, id, token).Scan(&expires, &conversationID, &investigationID, &owned.MessageSequence)
+		SELECT owned.lease_expires_at, owned.conversation_id, owned.investigation_id, owned.message_sequence, i.conversation_id
+		  FROM owned LEFT JOIN investigation i ON i.org_id = $1 AND i.investigation_id = owned.investigation_id
+		 WHERE owned.lease_expires_at > clock_timestamp()`,
+		org, id, token).Scan(&expires, &conversationID, &investigationID, &owned.MessageSequence, &investigationConversation)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrAgentLeaseLost
 	}
@@ -362,6 +371,7 @@ func useExecutionLease(
 		return err
 	}
 	owned.ConversationID, owned.InvestigationID = conversationID.UUID, investigationID.UUID
+	owned.investigationConversationID = investigationConversation.UUID
 	if err := action(owned); err != nil {
 		return err
 	}
@@ -397,22 +407,52 @@ func (p *Database) AgentExecutionInput(ctx context.Context, org uuid.UUID, execu
 	return text, err
 }
 
-// FinishAgentExecution commits the product result and the execution status in one fenced transaction.
+// AuthorizeInvestigationReport checks current authority and identifies legacy assigned input.
+func (p *Database) AuthorizeInvestigationReport(ctx context.Context, org uuid.UUID, execution AgentExecution) (bool, error) {
+	var assigned bool
+	err := p.withAgentLease(ctx, org, execution, func(tx pgx.Tx) error {
+		if _, _, err := agentToolScope(ctx, tx, org, execution); err != nil {
+			return err
+		}
+		var err error
+		assigned, err = investigationHasAssignedMessage(ctx, tx, org, execution)
+		return err
+	})
+	return assigned, err
+}
+
+// FinishAgentExecution commits the product result and any final native checkpoint in one fenced transaction.
 func (p *Database) FinishAgentExecution(ctx context.Context, org uuid.UUID, execution AgentExecution,
 	status AgentExecutionStatus, reply string, conclusion *investigation.Conclusion, usage investigation.Usage,
+	checkpoint ...*agent.AgentState,
 ) error {
 	if status != AgentExecutionFailed && status != AgentExecutionCompleted {
 		return errors.New("invalid agent terminal outcome")
+	}
+	var state []byte
+	if len(checkpoint) > 0 {
+		if len(checkpoint) != 1 || status != AgentExecutionCompleted {
+			return ErrAgentCheckpoint
+		}
+		if execution.checkpointConversation() != uuid.Nil {
+			var err error
+			state, err = encodeAgentCheckpoint(execution.SessionID(), checkpoint[0])
+			if err != nil {
+				return err
+			}
+		}
 	}
 	pool, err := p.poolForOrganization(org)
 	if err != nil {
 		return err
 	}
 	return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		conversationID := execution.checkpointConversation()
 		var err error
-		if execution.ConversationID != uuid.Nil {
-			err = lockConversation(ctx, tx, org, execution.ConversationID)
-		} else {
+		if conversationID != uuid.Nil {
+			err = lockConversation(ctx, tx, org, conversationID)
+		}
+		if err == nil && execution.InvestigationID != uuid.Nil {
 			err = lockInvestigation(ctx, tx, org, execution.InvestigationID)
 		}
 		if errors.Is(err, conversation.ErrUnknown) || errors.Is(err, investigation.ErrUnknown) {
@@ -422,6 +462,11 @@ func (p *Database) FinishAgentExecution(ctx context.Context, org uuid.UUID, exec
 			return err
 		}
 		return useAgentLease(ctx, tx, org, execution, func(tx pgx.Tx) error {
+			if state != nil {
+				if err := writeAgentCheckpoint(ctx, tx, org, execution, state); err != nil {
+					return err
+				}
+			}
 			var sequence int64
 			if execution.ConversationID != uuid.Nil {
 				if status == AgentExecutionCompleted {
@@ -431,8 +476,15 @@ func (p *Database) FinishAgentExecution(ctx context.Context, org uuid.UUID, exec
 						return err
 					}
 				}
-			} else if err := finishAgentInvestigation(ctx, tx, org, execution, status, conclusion, usage); err != nil {
-				return err
+			} else {
+				if err := finishAgentInvestigation(ctx, tx, org, execution, status, conclusion, usage); err != nil {
+					return err
+				}
+				if conversationID != uuid.Nil && status == AgentExecutionCompleted {
+					if err := insertInvestigationReply(ctx, tx, org, conversationID, execution.InvestigationID, reply); err != nil {
+						return err
+					}
+				}
 			}
 			return endAgentLease(ctx, tx, org, execution, status, sequence)
 		})
@@ -469,20 +521,52 @@ func finishAgentInvestigation(ctx context.Context, tx pgx.Tx, org uuid.UUID, exe
 		if conclusion == nil {
 			return errors.New("completed Investigation requires a validated conclusion")
 		}
-		if err := validateAgentConclusionEvidence(ctx, tx, org, execution.ID, *conclusion); err != nil {
+		if err := validateAgentConclusionEvidence(ctx, tx, org, execution, *conclusion); err != nil {
 			return err
+		}
+		var assigned bool
+		if conclusion.Status == "" {
+			var err error
+			assigned, err = investigationHasAssignedMessage(ctx, tx, org, execution)
+			if err != nil {
+				return err
+			}
+		}
+		if err := investigation.ValidateConclusionStatus(*conclusion, assigned); err != nil {
+			return fmt.Errorf("%w: %s", investigation.ErrInvalidConclusion, err)
+		}
+		_, origin, err := agentToolScope(ctx, tx, org, execution)
+		if err != nil {
+			return err
+		}
+		if origin != nil {
+			err := lockActiveIntegration(ctx, tx, org, origin.IntegrationID)
+			if errors.Is(err, integrations.ErrDisconnected) || errors.Is(err, integrations.ErrUnknown) {
+				return ErrAgentToolRunUnavailable
+			}
+			if err != nil {
+				return err
+			}
+			// Recheck the verified Installation after locking its Integration.
+			_, current, err := agentToolScope(ctx, tx, org, execution)
+			if err != nil {
+				return err
+			}
+			if current == nil || *current != *origin {
+				return ErrAgentToolRunUnavailable
+			}
 		}
 		encoded, err := json.Marshal(conclusion)
 		if err != nil {
 			return err
 		}
 		ended, reason, result = investigation.StatusConcluded, "", encoded
-		payload = investigation.ConcludedPayload(*conclusion, "")
+		payload = investigation.ConcludedPayload(*conclusion)
 	}
 	tag, err := tx.Exec(ctx, `
 		UPDATE investigation SET status = $3, conclusion = $4::jsonb, error = $5, concluded_at = now(),
 		       spend_input_tokens = $6, spend_output_tokens = $7
-		 WHERE org_id = $1 AND investigation_id = $2 AND status = $8 AND lease_worker = ''`,
+		 WHERE org_id = $1 AND investigation_id = $2 AND status = $8`,
 		org, execution.InvestigationID, int16(ended), result, reason, usage.InputTokens, usage.OutputTokens,
 		int16(investigation.StatusRunning))
 	if err != nil {
@@ -491,7 +575,7 @@ func finishAgentInvestigation(ctx context.Context, tx pgx.Tx, org uuid.UUID, exe
 	if tag.RowsAffected() != 1 {
 		return ErrAgentLeaseLost
 	}
-	return appendInvestigationTerminalEvent(ctx, tx, org, execution.InvestigationID, payload)
+	return appendInvestigationEvent(ctx, tx, org, execution.InvestigationID, payload)
 }
 
 func (p *Database) CancelAgentChatExecution(ctx context.Context, org, conversationID, id uuid.UUID) error {
