@@ -226,7 +226,12 @@ func finishInvestigation(runCtx, leaseCtx context.Context, db *storage.Database,
 	}
 	instructions := ai.ConclusionInstructions
 	schema := investigation.ConclusionSchema()
+	var replyIndex, textStart int
 	if assigned {
+		replyIndex, textStart = terminalReply(checkpoint)
+		if replyIndex < 0 {
+			return failAgentExecution(leaseCtx, db, org, execution, usage)
+		}
 		instructions += "\nFor a factual question without a causal assessment, put the direct answer in the summary and omit status."
 		schema = investigation.AssignedMessageConclusionSchema()
 	}
@@ -253,7 +258,7 @@ func finishInvestigation(runCtx, leaseCtx context.Context, db *storage.Database,
 
 	// Publish only the accepted visible reply with Conversation context.
 	if assigned {
-		replaceFinalReply(checkpoint, runtime.Name(), conclusion.Summary)
+		checkpoint.Context[replyIndex] = replaceFinalReply(checkpoint.Context[replyIndex], textStart, conclusion.Summary)
 	}
 	err = db.FinishAgentExecution(leaseCtx, org, execution, storage.AgentExecutionCompleted,
 		conclusion.Summary, &conclusion, usage, checkpoint)
@@ -362,24 +367,18 @@ func finalReplyContent(state *agent.AgentState) string {
 	return text.String()
 }
 
-func replaceFinalReply(state *agent.AgentState, name, answer string) {
-	text := message.TextBlock{Type: "text", Text: answer}
-	index, start := terminalReply(state)
-	if index < 0 {
-		state.Context = append(state.Context, message.AssistantMsg(name, []message.ContentBlock{text}))
-		return
-	}
+func replaceFinalReply(native *message.Msg, start int, answer string) *message.Msg {
 	// Keep the native message identity and provider continuation data.
-	msg := *state.Context[index]
+	msg := *native
 	content := slices.Clone(msg.Content[:start])
 	for _, block := range msg.Content[start:] {
 		if _, ok := block.(message.TextBlock); !ok {
 			content = append(content, block)
 		}
 	}
-	content = append(content, text)
+	content = append(content, message.TextBlock{Type: "text", Text: answer})
 	msg.Content = content
-	state.Context[index] = &msg
+	return &msg
 }
 
 type executionReply struct {

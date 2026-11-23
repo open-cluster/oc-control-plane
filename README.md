@@ -90,9 +90,9 @@ OpenCluster is split into a control plane and an optional customer-side Relay.
 ### Control plane
 
 The control plane receives API requests and webhooks, groups alerts into Incidents,
-coordinates Conversations and Investigations, selects eligible Integration Tools, runs the
-reasoning loop, records Tool Runs and results, and exposes progress and conclusions to the UI
-or Slack.
+coordinates Conversations and Investigations, authorizes Tools, and records Tool Runs and
+results. The Investigation API exposes structured reports, and Slack delivers summaries and
+activity in the originating thread.
 
 PostgreSQL is the durable source of truth. Customer-owned state is explicitly scoped to an
 Organization, and operational mutations are audited.
@@ -104,7 +104,8 @@ After the investigative reply completes, AgentScope makes a separate structured 
 OpenCluster validates the Conclusion and commits it with the execution outcome and any linked
 Message. A factual reply to an assigned web or Slack Message can finish without a causal assessment.
 An autonomous Incident Investigation always records an assessment when it concludes. Conversation
-checkpoint promotion preserves native Tool results and compaction along with the accepted reply.
+checkpoint promotion updates the matching native assistant Message with the accepted reply and
+preserves its Tool results and compacted context.
 A crash before commit can regenerate the report from the completed checkpoint without resuming
 the investigative reply.
 When upgrading from the previous Investigation engine, stop the old control-plane instances

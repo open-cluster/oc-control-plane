@@ -137,4 +137,24 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 	if corrected := DraftFrom(input); corrected.Impact != input.Human.Impact {
 		t.Errorf("operator impact lost precedence: %q", corrected.Impact)
 	}
+
+	first := input.Results[0].Conclusion.Summary
+	other := InvestigationResult{InvestigationID: uuid.New(), Conclusion: investigation.Conclusion{
+		Status:  investigation.Inconclusive,
+		Summary: first,
+	}}
+	input.Results = append(input.Results, other)
+	if draft := DraftFrom(input); draft.ExecutiveSummary != first {
+		t.Fatalf("repeated summary changed the executive summary: %q", draft.ExecutiveSummary)
+	}
+	input.Results[1].Conclusion.Summary = "The cause remains unresolved."
+	conflicting := DraftFrom(input)
+	if conflicting.ExecutiveSummary != NeedsHumanInput ||
+		!strings.Contains(strings.Join(conflicting.OpenQuestions, " "), "Reconcile the differing Investigation summaries") {
+		t.Fatalf("differing summaries silently produced %q with questions %v", conflicting.ExecutiveSummary, conflicting.OpenQuestions)
+	}
+	if len(conflicting.RootCauses) != 1 || len(conflicting.RootCauses[0].EvidenceRefs) != 1 ||
+		conflicting.RootCauses[0].EvidenceRefs[0] != nativeRef {
+		t.Fatalf("summary reconciliation lost the cited root cause: %+v", conflicting.RootCauses)
+	}
 }

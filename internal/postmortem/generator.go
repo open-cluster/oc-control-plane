@@ -74,7 +74,8 @@ func DraftFrom(input GenerationInput) Postmortem {
 			At: input.ResolvedAt, Description: "Incident alerts resolved",
 		})
 	}
-	missingCausalEvidence := false
+	var summary string
+	var missingCausalEvidence, summariesDiffer bool
 	for _, result := range input.Results {
 		conclusion := result.Conclusion
 		if conclusion.Status == "" || conclusion.Status == investigation.HistoricalAnswerOnly {
@@ -111,8 +112,11 @@ func DraftFrom(input GenerationInput) Postmortem {
 			missingCause = true
 		}
 		missingCausalEvidence = missingCausalEvidence || missingCause
-		if !missingCause && conclusion.Summary != "" {
-			draft.ExecutiveSummary = conclusion.Summary
+		if candidate := strings.TrimSpace(conclusion.Summary); !missingCause && candidate != "" {
+			if summary == "" {
+				summary = conclusion.Summary
+			}
+			summariesDiffer = summariesDiffer || candidate != strings.TrimSpace(summary)
 		}
 		for _, action := range conclusion.Actions {
 			refs, _ := reportEvidence(successful, action.EvidenceRefs)
@@ -138,6 +142,11 @@ func DraftFrom(input GenerationInput) Postmortem {
 	}
 	if missingCausalEvidence {
 		draft.OpenQuestions = append(draft.OpenQuestions, investigation.MissingEvidenceStatement)
+	}
+	if summariesDiffer {
+		draft.OpenQuestions = append(draft.OpenQuestions, "Reconcile the differing Investigation summaries before finalizing the executive summary.")
+	} else if summary != "" {
+		draft.ExecutiveSummary = summary
 	}
 	for _, message := range input.Messages {
 		author := valueOr(message.Author, "operator")
