@@ -88,7 +88,7 @@ func TestAgentCoordinatorCommitsReply(t *testing.T) {
 	const nextAnswer = "8443."
 	admitted := make(chan storage.AgentExecution, 1)
 	disconnected := make(chan struct{})
-	principal := ownerOf(t, org)
+	principal := executionOwner(t, database, org)
 	clientID := uuid.New()
 	// The fixture admits through an actual request context. The worker belongs to the process.
 	accept := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -342,7 +342,8 @@ func TestAgentCoordinatorRecoversAcrossProcessCrashes(t *testing.T) {
 	defer cancel()
 	const input = "read the fixture port"
 	const answer = "Checkout is on port 8443."
-	execution, err := database.AdmitAgentChat(ctx, ownerOf(t, org), org, chat.ID, uuid.New(), conversation.NewMessage{Text: input})
+	execution, err := database.AdmitAgentChat(ctx, executionOwner(t, database, org), org, chat.ID,
+		uuid.New(), conversation.NewMessage{Text: input})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -661,6 +662,7 @@ func TestCompactedConversationSurvivesProcessRestart(t *testing.T) {
 	org := organization(t, "recover-compacted")
 	ensureTestOrganization(t, database, org)
 	chat := openConversation(t, database, org, "Compaction")
+	principal := executionOwner(t, database, org)
 	pool, err := poolForTest(database, org)
 	if err != nil {
 		t.Fatal(err)
@@ -699,7 +701,7 @@ func TestCompactedConversationSurvivesProcessRestart(t *testing.T) {
 
 	admit := func(text string) uuid.UUID {
 		t.Helper()
-		work, err := database.AdmitAgentChat(ctx, ownerOf(t, org), org, chat.ID, uuid.New(), conversation.NewMessage{Text: text})
+		work, err := database.AdmitAgentChat(ctx, principal, org, chat.ID, uuid.New(), conversation.NewMessage{Text: text})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -805,7 +807,7 @@ func TestAgentCoordinatorRejectsIncompleteReplies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal := ownerOf(t, org)
+	principal := executionOwner(t, database, org)
 	for _, fault := range []string{"confirmation", "provider error", "truncated", "iteration limit", "oversize"} {
 		t.Run(fault, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)

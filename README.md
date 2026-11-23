@@ -102,8 +102,8 @@ Message for a legacy assigned turn. Explicit and autonomous Investigations recor
 they conclude. Web Chat commits the assistant Message and Conversation checkpoint together.
 A crash before commit can regenerate the report from the completed checkpoint without resuming
 the investigative reply.
-When upgrading from the previous Investigation engine, stop the old control-plane instances
-before starting this version so each newly admitted Investigation gets a native execution.
+Stop older control-plane instances before applying the web Chat migration. The upgraded
+control plane can resume recoverable legacy Investigation work that was already accepted.
 
 Findings require citations to successful reads. Failed or skipped reads can explain
 limitations. Action Proposals for obtaining missing evidence may omit citations. Startup,

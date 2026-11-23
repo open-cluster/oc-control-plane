@@ -207,7 +207,7 @@ func admitAgentChat(
 	}
 	input.Role = conversation.RoleUser
 	input.AuthorID = authorID
-	input.AuthorName = principal.DisplayName()
+	input.AuthorName = conversation.Bounded(principal.DisplayName(), conversation.MaxAuthorNameLength)
 	message, err := insertConversationMessage(ctx, tx, organization, conversationID, input, window, &clientMessageID)
 	if err != nil {
 		return AgentExecution{}, err

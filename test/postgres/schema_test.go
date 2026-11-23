@@ -609,6 +609,7 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 		"0012_agent_execution_claim",
 		"0013_tool_run_ownership",
 		"0014_investigation_requester",
+		"0015_web_chat",
 	}) {
 		t.Fatalf("fresh migration applied %v, want every schema migration", applied)
 	}

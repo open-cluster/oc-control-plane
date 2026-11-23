@@ -733,6 +733,7 @@ paths:
         required: true
       responses:
         "201": { $ref: "#/components/responses/ConversationOpened" }
+        "503": { $ref: "#/components/responses/Unavailable" }
         default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/conversations/{conversation}:
     parameters: &conversation-path

@@ -1079,6 +1079,8 @@ paths:
       responses:
         '201':
           $ref: '#/components/responses/ConversationOpened'
+        '503':
+          $ref: '#/components/responses/Unavailable'
         default:
           $ref: '#/components/responses/ErrorResponse'
       operationId: openConversation

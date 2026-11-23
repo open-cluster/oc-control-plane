@@ -110,11 +110,13 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 	}
 
 	expected := []string{
+		"DELETE /api/v1/conversations/{conversation}",
 		"DELETE /api/v1/integrations/{integration}",
 		"DELETE /api/v1/members/{user}",
 		"GET /api/v1/audit-events",
 		"GET /api/v1/conversations",
 		"GET /api/v1/conversations/{conversation}",
+		"GET /api/v1/conversations/{conversation}/messages",
 		"GET /api/v1/conversations/{conversation}/turns",
 		"GET /api/v1/incidents",
 		"GET /api/v1/incidents/{incident}",
@@ -138,6 +140,7 @@ func TestThePR2RouteCutoverHasOneCanonicalShape(t *testing.T) {
 		"GET /api/v1/session",
 		"GET /api/v1/tool-runs/{toolRun}/observation",
 		"POST /api/v1/session/refresh",
+		"PATCH /api/v1/conversations/{conversation}",
 		"PATCH /api/v1/incidents/{incident}/postmortem",
 		"PATCH /api/v1/integrations/{integration}",
 		"PATCH /api/v1/members/{user}",
