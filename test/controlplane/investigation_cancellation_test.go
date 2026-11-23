@@ -83,7 +83,7 @@ func TestRunningInvestigationCanBeCancelledThroughTheAuthorizedApplicationAPI(t 
 	}
 }
 
-func TestDirectInvestigationCreationRequiresOnlyAnIncidentIdentity(t *testing.T) {
+func TestDirectInvestigationRequiresAnIncidentOrAnIdempotentQuestion(t *testing.T) {
 	t.Parallel()
 
 	plane, _ := agentPlane(t, &blockingModel{started: make(chan uuid.UUID, 1)})
@@ -91,21 +91,25 @@ func TestDirectInvestigationCreationRequiresOnlyAnIncidentIdentity(t *testing.T)
 
 	if status, body := plane.call(t, http.MethodPost, path,
 		map[string]any{"question": "why is checkout slow?"}); status != http.StatusBadRequest ||
-		!strings.Contains(body, "request body is not what this operation accepts") {
-		t.Fatalf("opening from a question = %d, want 400: %s", status, body)
+		!strings.Contains(body, "Idempotency-Key") {
+		t.Fatalf("opening from an unkeyed question = %d, want 400: %s", status, body)
 	}
 	if status, body := plane.call(t, http.MethodPost, path,
 		map[string]any{"incidentId": uuid.NewString(), "question": "why?"}); status != http.StatusBadRequest ||
-		!strings.Contains(body, "request body is not what this operation accepts") {
+		!strings.Contains(body, "give an incidentId or a question") {
 		t.Fatalf("opening with an extra question = %d, want 400: %s", status, body)
 	}
 	if status, body := plane.call(t, http.MethodPost, path, map[string]any{}); status != http.StatusBadRequest ||
-		!strings.Contains(body, "give an incidentId") {
-		t.Fatalf("opening without an incidentId = %d, want 400: %s", status, body)
+		!strings.Contains(body, "give an incidentId or a question") {
+		t.Fatalf("opening without an Incident or question = %d, want 400: %s", status, body)
 	}
 	if status, body := plane.call(t, http.MethodPost, path,
-		map[string]any{"incidentId": "not-an-identity"}); status != http.StatusBadRequest ||
-		!strings.Contains(body, "incidentId is not an identity") {
+		map[string]any{"incidentId": "not-an-identity"}); status != http.StatusBadRequest {
 		t.Fatalf("opening with an invalid incidentId = %d, want 400: %s", status, body)
+	}
+	if status, body := plane.call(t, http.MethodPost, path,
+		map[string]any{"question": "Why is checkout slow?"},
+		http.Header{"Idempotency-Key": {uuid.NewString()}}); status != http.StatusAccepted {
+		t.Fatalf("opening from an idempotent question = %d, want 202: %s", status, body)
 	}
 }
