@@ -71,11 +71,22 @@ ship a browser console. If a container exits, inspect its Compose logs.
 
 ## 3. Create the first User and Organization
 
-With a compatible, privately served frontend, open `/setup` and submit Organization
-name, email, optional display name, and password. Ensure `OPENCLUSTER_PUBLIC_URL`
-matches the browser-facing origin of its same-origin API proxy.
+With a compatible, privately served frontend, open `/setup`. This page belongs to
+the frontend, not to the control-plane API. The first setup request needs:
 
-For the shipped API-only deployment, you can also initialize directly on localhost:
+- **Organization name:** The name of the team or company, 1–256 UTF-8 bytes.
+- **Email:** The first Admin's sign-in address.
+- **Display name (optional):** How the User appears in OpenCluster, up to 256 UTF-8 bytes. If omitted, the email is used.
+- **Password:** Currently, 12–1,024 UTF-8 bytes. Use a long, unique password or passphrase. Byte counts may differ from character counts.
+
+The first successful request creates one Organization and its Admin User. It also
+issues a session cookie to the browser. The initialization endpoint is unavailable
+after an Organization or User exists. **Do not expose an empty database to untrusted
+callers**, even if the frontend has not displayed the setup page.
+
+Set `OPENCLUSTER_PUBLIC_URL` to the frontend's browser-facing origin when using
+its same-origin API proxy. An API-only deployment may initialize directly through
+the private control-plane listener:
 
 ```bash
 umask 077
@@ -85,8 +96,15 @@ curl --fail-with-body --request POST http://localhost:8081/api/v1/auth/local/boo
   --data '{"organizationName":"Platform Team","email":"admin@example.com","password":"<STRONG_PASSWORD>"}'
 ```
 
-Keep passwords private. Browser signup signs you in automatically. The first successful request initializes the
-Organization and Admin atomically. Further signup requests return `409`.
+Keep passwords private and avoid putting real credentials in shell history. An API-only
+request returns `201` and sets a session cookie. Subsequent bootstrap attempts return
+`409`. Sign in again when switching from localhost to your final public hostname.
+
+An Admin can add local Users after setup through `POST /api/v1/local-users` with
+an email, optional display name, initial password, and role (`admin`, `editor`,
+or `viewer`). This creates accounts directly, not email invitations. Give the
+initial credentials to each User through a secure channel and have them change
+their password after sign-in.
 
 ## 4. Public deployment
 
