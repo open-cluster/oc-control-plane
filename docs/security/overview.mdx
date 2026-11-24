@@ -26,12 +26,28 @@ Roles grant fixed Permissions inside an Organization. Missing authentication ret
 `401`, insufficient Permission returns `403`, and inaccessible Organizations and unknown
 tenant records are indistinguishable.
 
-A User has at most one current Organization Membership. Organization Admins can create
-local Users and manage that Membership, but cannot replace an existing User's password. Change your own
-local password with `PUT /api/v1/auth/local/password`, supplying `currentPassword` and
-`newPassword` without an Organization selector. Success deletes all your sessions, including
-the current one, and requires sign-in again. New passwords for bootstrap, local-user creation, password change and recovery accept 12–1024 UTF-8 bytes. The current password must be nonempty and at most 1024 bytes. OpenAPI string lengths count characters. Clients must measure UTF-8 bytes to match validation. Sign-in verifies the stored credential without reapplying creation-length rules.
-OIDC Users manage their credentials through their identity provider.
+A User has at most one current Organization Membership. The Organization has a
+name, while a User has a display name shown to other operators. An Admin can
+create local Users and assign them `admin`, `editor`, or `viewer` roles.
+Local User creation requires the Admin to supply an initial password. It does
+not send an invitation or let the recipient choose a password through an
+invitation link. Provide initial credentials securely and ask the User to
+change their password after signing in.
+
+**Current local password rules:** New passwords for setup, local User creation,
+password changes, and deployment-operator recovery must be 12–1,024 UTF-8 bytes.
+This is a byte limit, not a character limit. A password need not approach the
+maximum. Choose a long, unique passphrase or password and use a password manager.
+The current password used for a password change must be nonempty and at most
+1,024 bytes. Sign-in verifies existing credentials without imposing the
+new-password length rules again. OpenAPI string length constraints count
+characters, so frontend validation must also respect the backend's byte limit.
+
+A User changes their own local password with `PUT /api/v1/auth/local/password`,
+sending `currentPassword` and `newPassword`. Success revokes all their
+sessions and requires sign-in again. An Admin cannot replace another User's
+password through the Membership API. OIDC Users manage credentials through
+their identity provider.
 
 Deployment operators can recover an existing enabled local account using its User UUID:
 
@@ -103,9 +119,10 @@ Tool Runs, cited Findings, audit records, and draft Postmortems in PostgreSQL. T
 Runs retain bounded observations prepared for the model, capped at 64 KiB each. Editors
 and Admins can retrieve one observation on demand. Viewers retain summary and metadata
 access. Ordinary detail requests and activity events omit observation bodies.
-Conversations retain continuity through
-Messages and prior cited Findings. OpenCluster does not persist or expose model
-chain-of-thought.
+Conversations retain user-visible Messages separately from the native AgentScope
+checkpoint used for model context and follow-up replies. Checkpoints and backups
+must be protected as sensitive operational data. The public product API does not
+expose model chain-of-thought.
 
 An Investigation can perform live authorized reads, including bounded Kubernetes
 container logs through Relay and Slack channel or thread messages. A configured Slack App
@@ -139,15 +156,18 @@ credentials unrecoverable. Back it up separately from PostgreSQL.
 
 ## Model-provider boundary
 
-For an Investigation, OpenCluster may send the subject, question, bounded time window,
-connected Tool catalog, normalized alert context, bounded prior cited Findings, and
-summarized Tool results to the configured model provider. It does not send Tool
-credentials or publish model chain-of-thought.
+OpenCluster can send an operator's Chat question or Investigation task, authorized
+Incident context, available read Tool definitions, and relevant bounded Tool results
+to the configured model provider. A Conversation may retain previously collected
+context through its AgentScope checkpoint. Integration credentials are resolved by
+the backend and are not included in Tool definitions.
 
-The provider returns Tool requests or a structured conclusion. OpenCluster validates
-budgets, citations, enums, and result bounds before persistence. Deployment owners must
-review provider retention, training, regional processing, contractual terms, and the
-source content allowed to cross this boundary.
+For Investigations, a separate structured request produces the Conclusion.
+OpenCluster validates the report contract and cited Tool Run provenance before
+committing it. Citation validation does not prove that the model's causal explanation
+is correct. Deployment owners must review model-provider retention, training,
+regional processing, contractual terms, and which operational data may leave
+their environment.
 
 Deployment owners remain responsible for HTTPS, identity-provider policy, provider terms,
 retention, backups, and secret custody. Use [Configuration](/self-hosting/configuration)
