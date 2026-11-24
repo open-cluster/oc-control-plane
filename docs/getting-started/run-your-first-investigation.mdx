@@ -15,11 +15,13 @@ Use [Open conversation](/api-reference/conversations/open-conversation), then [A
 
 An accepted firing alert can open an Incident and automatically queue an Investigation when a model provider is available. Follow that Investigation rather than opening a duplicate. To investigate an existing Incident again, use the [Incident investigation procedure](/api-reference/investigations/open-investigation).
 
-## Review the answer
+## Review the result
 
-Read the summary, cited Findings, and limitations. Citations identify the reads supporting each Finding. Review their timestamps and any incomplete results. Editors and Admins can [inspect a cited observation](/concepts/investigations-and-conversations#inspect-a-cited-observation).
+**Chat** answers an operational question directly and may use connected read Tools. It does not create a structured Investigation Conclusion.
 
-A completed Investigation records whether the evidence supports an explanation or remains inconclusive. Missing access or telemetry can prevent an answer. Review and verify any Action Proposals before making a production change.
+**An Investigation** records a summary, cited Findings, limitations, and recommended next steps. Citations identify the Tool Runs supporting each Finding. Check their sources, timestamps, and whether the observations were incomplete. Editors and Admins can [inspect a cited observation](/concepts/investigations-and-conversations#inspect-a-cited-observation).
+
+An Investigation may conclude that the cause is still unknown. Missing access or telemetry does not prove that an issue did not occur. Review and verify Action Proposals before making a production change.
 
 ## Continue the Conversation
 
