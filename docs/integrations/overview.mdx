@@ -31,11 +31,31 @@ Slack can also provide permitted discussion history as evidence for questions st
 
 Connect [Prometheus Alertmanager](/integrations/alerting/alertmanager) or [Generic Webhook](/integrations/alerting/generic_webhook) to create and update incidents from incoming alerts. Alert sources are optional.
 
-## Access and connection
+## Available types and connected Integrations
 
-An Admin creates an integration or authorizes its provider installation. GitHub and installed Slack apps use provider authorization. Slack also accepts existing tokens for read-only access. Kubernetes requires a Relay, and alert senders need a webhook URL and secret.
+**Integration Types** describe the providers that this OpenCluster version supports.
+They do not mean those providers are connected to your Organization.
+`GET /api/v1/integration-types` returns the catalog, and
+`GET /api/v1/integration-types/{type}` returns details such as configuration fields,
+whether Relay is needed, and whether provider authorization is supported.
 
-Each guide explains required access, connection methods, examples, and limitations. Administration currently uses the API. Follow the operation linked from each provider guide.
+**Integrations** are the actual connections configured for your Organization.
+`GET /api/v1/integrations` returns them with their status and available read
+capabilities. A configured connection is not necessarily verified or currently
+reachable. To connect a source, an Admin can create an Integration or start
+provider authorization using the method described in its guide.
+
+The type catalog is a short, unpaginated list (`types`). Configured Integrations
+use cursor pagination (`items` and `next`), with optional supported filters.
+The default page size is 50 and the maximum is 200. Use the returned `next`
+cursor to request another page, rather than constructing cursors yourself.
+
+GitHub and installed Slack apps use provider authorization. Slack also accepts
+existing tokens for read-only access. Kubernetes requires a Relay, and alert
+senders need a webhook URL and secret.
+
+Each provider guide explains required access, connection methods, and
+limitations. Administration currently uses the API.
 
 A successful connection check confirms access at that time. Source permissions, retention, and availability still affect later reads. Kubernetes needs an explicit Relay capability check during setup. Alert sources can receive alerts before verification, and waiting for a first delivery alone does not indicate an outage.
 
