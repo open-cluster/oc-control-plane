@@ -1,28 +1,57 @@
 ---
 title: "Quickstart"
-description: "Connect a source, ask a question, and review the evidence."
+description: "Create the first account, connect a source, and ask an operational question."
 ---
 
-Start with an operational question. You do not need an alert or an incident.
+OpenCluster lets your team ask about production systems and investigate Incidents using connected evidence. You can start with a question. An alert or Incident is not required.
 
-## 1. Prepare OpenCluster
+The open-source control plane provides an API but does not include a browser console. Use a compatible frontend or the API to complete setup and ask questions.
 
-For a new deployment, follow [Docker Compose setup](/self-hosting/docker-compose) or [Helm](/self-hosting/helm) and configure a model provider. If OpenCluster is already running, ask your administrator which sources are connected.
+## 1. Start the control plane
 
-Administration currently uses the API. Follow the private initialization instructions in the deployment guide to create the initial Admin. For API access, see [Using the API securely](/security/overview#using-the-api-securely). You can ask questions through an installed Slack app or the Conversation API.
+Deploy OpenCluster using [Docker Compose](/self-hosting/docker-compose) or [Helm](/self-hosting/helm). Configure PostgreSQL, the encryption key, and the public browser origin. Configure an AI model provider before sending Chat messages or starting Investigations.
 
-## 2. Connect one relevant source
+Keep a new deployment **private until the first Admin account has been created**. Anyone who can reach the initialization endpoint while the database is empty can claim that account.
 
-Choose a source from the [Integration overview](/integrations/overview). For example, Kubernetes can report the health of a named workload, while Loki can read application logs. An Admin connects the source using its guide and the linked API reference.
+## 2. Create the first Admin and Organization
 
-## 3. Ask a specific question
+In a compatible frontend, open **/setup** over the private connection. Enter:
 
-Try “Is the checkout Deployment healthy in the payments namespace?” with Kubernetes, or “What errors appeared in checkout logs in the last 15 minutes?” with Loki. Include the workload, service, repository, or time interval you care about.
+- **Organization name:** The name of your team or company.
+- **Email:** The address you will use to sign in.
+- **Display name (optional):** The name other operators will see. If omitted, OpenCluster uses your email.
+- **Password:** Currently, 12–1,024 UTF-8 bytes. This is a byte limit, not a character limit. Use a long, unique password or passphrase.
 
-In a channel with the installed Slack app, mention `@OpenCluster` with your question. It replies in a thread. For web Chat, [open a Conversation](/api-reference/conversations/open-conversation), [send a Message](/api-reference/conversations/append-conversation-message), and [read the reply](/api-reference/conversations/list-conversation-messages). Sending a Message requires Editor or Admin access.
+The first successful setup creates the Organization, User, Admin Membership, and browser session. Initialization cannot be repeated while the database retains an Organization or User.
 
-## 4. Review and follow up
+If you are running the API-only distribution, follow the private bootstrap instructions in the [Docker Compose guide](/self-hosting/docker-compose#3-create-the-first-user-and-organization). Do not make the initialization endpoint publicly reachable before this step.
 
-Read the answer's findings, citations, and limitations. Missing evidence may leave a question unanswered. Ask a follow-up, such as “Did the deployment happen before the errors started?” In Slack, mention the app again in the same thread.
+## 3. Add team members when needed
 
-Continue with [Run your first investigation](/getting-started/run-your-first-investigation) for guidance on useful questions and reviewing results.
+An Admin can create additional local Users using **POST /api/v1/local-users** with an email, optional display name, initial password, and one of the roles `admin`, `editor`, or `viewer`.
+
+This creates a local account directly. **It is not an email invitation**: the Admin must securely provide the initial credentials to that person. The new User should change their password after signing in. Admins can list Members, change their roles, and remove Memberships. OpenCluster prevents removing the last Admin.
+
+See the [security model](/security/overview) for access controls and password changes.
+
+## 4. Connect a relevant source
+
+An Admin can browse available [Integration Types](/integrations/overview), choose a provider, and connect it. The Integration Type catalog describes what this version supports. The connected Integrations list shows what your Organization has actually configured.
+
+For example, Kubernetes can describe a named workload, Loki can search application logs, and Prometheus can query metrics. You only need the sources relevant to your first question.
+
+## 5. Ask your first question
+
+In web Chat, [create a Conversation](/api-reference/conversations/open-conversation) without a title, [send a Message](/api-reference/conversations/append-conversation-message), and [read the answer](/api-reference/conversations/list-conversation-messages). Give each submitted Message a `clientMessageId` UUID. Reuse the same ID if you retry that submission.
+
+Try “Is the checkout Deployment healthy in the payments namespace?” or “What errors appeared in checkout logs in the last 15 minutes?”
+
+Web Chat can use authorized read Tools and continue across follow-up messages. It does **not** create an Investigation for every question. Native incremental Chat streaming is still being implemented.
+
+## 6. Start an Investigation when you need a report
+
+An alert can start an Incident Investigation automatically. You can also explicitly [open an Investigation](/api-reference/investigations/open-investigation) for an Incident or an operational question.
+
+Investigations produce structured Findings, supporting Tool Run citations, limitations, and Action Proposals. An inconclusive result is valid when the available evidence cannot establish a cause.
+
+Continue with [Run your first investigation](/getting-started/run-your-first-investigation) for examples and guidance on reviewing evidence.
