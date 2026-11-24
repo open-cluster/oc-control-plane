@@ -19,17 +19,14 @@ import (
 )
 
 const (
-	readTimeout      = 15 * time.Second
-	maxRequestBytes  = 32 << 10
-	transcriptWindow = 100
+	readTimeout     = 15 * time.Second
+	maxRequestBytes = 32 << 10
 )
 
 type Handlers struct {
-	Store           Store
-	Logger          *slog.Logger
-	AgentAvailable  bool
-	WindowLead      time.Duration
-	MaxWaitingTurns int
+	Store          Store
+	Logger         *slog.Logger
+	AgentAvailable bool
 }
 
 func (h Handlers) Routes() []authz.Route {
@@ -54,10 +51,28 @@ func (h Handlers) Routes() []authz.Route {
 			Handler:    http.HandlerFunc(h.read),
 		},
 		{
+			Method:     http.MethodPatch,
+			Pattern:    base + "/{conversation}",
+			Permission: authz.ConversationWrite,
+			Handler:    http.HandlerFunc(h.rename),
+		},
+		{
+			Method:     http.MethodDelete,
+			Pattern:    base + "/{conversation}",
+			Permission: authz.ConversationWrite,
+			Handler:    http.HandlerFunc(h.remove),
+		},
+		{
 			Method:     http.MethodGet,
 			Pattern:    base + "/{conversation}/turns",
 			Permission: authz.ConversationRead,
 			Handler:    http.HandlerFunc(h.turns),
+		},
+		{
+			Method:     http.MethodGet,
+			Pattern:    base + "/{conversation}/messages",
+			Permission: authz.ConversationRead,
+			Handler:    http.HandlerFunc(h.messages),
 		},
 		{
 			Method:     http.MethodPost,
@@ -69,10 +84,8 @@ func (h Handlers) Routes() []authz.Route {
 }
 
 type openRequest struct {
-	windowInput
 	IncidentID string `json:"incidentId"`
-	Subject    string `json:"subject"`
-	Message    string `json:"message"`
+	Title      string `json:"title"`
 }
 
 func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
@@ -82,12 +95,6 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	if !h.decode(writer, request, &asked) {
 		return
 	}
-	window, err := asked.parse(time.Now())
-	if err != nil || (window != nil && strings.TrimSpace(asked.Message) == "") {
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: ErrInvalidWindow.Error()})
-		return
-	}
-
 	incidentID := uuid.Nil
 	if trimmed := strings.TrimSpace(asked.IncidentID); trimmed != "" {
 		parsed, err := uuid.Parse(trimmed)
@@ -99,20 +106,9 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 		incidentID = parsed
 	}
 
-	subject := strings.TrimSpace(asked.Subject)
-	switch {
-	case subject == "":
-		writeJSON(writer, http.StatusBadRequest,
-			errorView{Error: "give a subject for the conversation"})
-		return
-	case len([]rune(subject)) > MaxSubjectLength:
-		writeJSON(writer, http.StatusBadRequest, errorView{
-			Error: "the subject must be at most 512 characters"})
-		return
-	}
-	if strings.TrimSpace(asked.Message) != "" && !h.AgentAvailable {
-		writeJSON(writer, http.StatusServiceUnavailable, errorView{
-			Error: "this deployment has no model provider configured, so it cannot investigate"})
+	title := strings.TrimSpace(asked.Title)
+	if len([]rune(title)) > MaxTitleLength {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: "the title must be at most 512 characters"})
 		return
 	}
 
@@ -122,7 +118,7 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 	openedConversation, err := h.Store.OpenConversation(ctx, principal, organization, NewConversation{
 		IncidentID: incidentID,
 		Source:     SourceWeb,
-		Subject:    subject,
+		Title:      title,
 		CreatedBy:  principal.UserID().String(),
 	})
 	if err != nil {
@@ -133,30 +129,13 @@ func (h Handlers) open(writer http.ResponseWriter, request *http.Request) {
 		slog.String("org_id", organization.String()),
 		slog.String("conversation_id", openedConversation.ID.String()))
 
-	if strings.TrimSpace(asked.Message) == "" {
-		writeJSON(writer, http.StatusCreated, conversationViewOf(openedConversation))
-		return
-	}
-
-	said, turn, queued, err := h.append(ctx, principal, organization, openedConversation.ID,
-		asked.Message, window)
-	if err != nil {
-		h.fail(writer, request, err)
-		return
-	}
-	writeJSON(writer, http.StatusCreated, openedView{
-		conversationView: conversationViewOf(openedConversation),
-		messageAcceptedView: messageAcceptedView{
-			Message: messageViewOf(said),
-			Turn:    turn,
-			Queued:  queued,
-		},
-	})
+	writeJSON(writer, http.StatusCreated, conversationViewOf(openedConversation))
 }
 
 type sayRequest struct {
-	windowInput
-	Message string `json:"message"`
+	WindowInput
+	ClientMessageID uuid.UUID `json:"clientMessageId"`
+	Text            string    `json:"text"`
 }
 
 func (h Handlers) say(writer http.ResponseWriter, request *http.Request) {
@@ -168,13 +147,16 @@ func (h Handlers) say(writer http.ResponseWriter, request *http.Request) {
 	if !h.decode(writer, request, &asked) {
 		return
 	}
-	window, err := asked.parse(time.Now())
+	window, err := asked.Parse(time.Now())
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
 		return
 	}
-	text := strings.TrimSpace(asked.Message)
+	text := strings.TrimSpace(asked.Text)
 	switch {
+	case asked.ClientMessageID == uuid.Nil:
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: "give a clientMessageId"})
+		return
 	case text == "":
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: "give a message"})
 		return
@@ -183,49 +165,22 @@ func (h Handlers) say(writer http.ResponseWriter, request *http.Request) {
 			Error: "the message must be at most 8192 characters"})
 		return
 	}
-	if !h.AgentAvailable {
-		writeJSON(writer, http.StatusServiceUnavailable, errorView{
-			Error: "this deployment has no model provider configured, so it cannot investigate"})
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	said, turn, queued, err := h.append(ctx, principal, organization, id, text, window)
+	accepted, err := h.Store.AdmitConversationMessage(ctx, principal, organization, id, asked.ClientMessageID, NewMessage{
+		Text:   text,
+		Window: window,
+	}, !h.AgentAvailable)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
 	writeJSON(writer, http.StatusAccepted, messageAcceptedView{
-		Message: messageViewOf(said),
-		Turn:    turn,
-		Queued:  queued,
+		Message:     messageViewOf(accepted.Message),
+		ExecutionID: accepted.ExecutionID,
+		Status:      accepted.Status,
 	})
-}
-
-func (h Handlers) append(ctx context.Context,
-	principal authz.Principal,
-	organization uuid.UUID,
-	id uuid.UUID,
-	text string,
-	window *Window,
-) (Message, *turnView, bool, error) {
-	said, turn, opened, err := h.Store.AppendMessageAndOpenTurn(ctx, principal, organization, id, NewMessage{
-		Role:       RoleUser,
-		AuthorID:   boundedRunes(principal.UserID().String(), MaxAuthorIDLength),
-		AuthorName: boundedRunes(principal.Actor().DisplayName, MaxAuthorNameLength),
-		Text:       text,
-		Window:     window,
-	}, h.WindowLead, h.MaxWaitingTurns)
-	if err != nil {
-		return Message{}, nil, false, err
-	}
-	if !opened {
-		return said, nil, true, nil
-	}
-	rendered := turnViewOf(turn)
-	return said, &rendered, false, nil
 }
 
 var listSpec = listing.Spec{
@@ -289,16 +244,26 @@ func (h Handlers) read(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
 
-	detail, err := h.Store.ConversationDetail(ctx, organization, id, transcriptWindow)
+	found, err := h.Store.WebConversation(ctx, organization, id)
 	if err != nil {
 		h.fail(writer, request, err)
 		return
 	}
-	if detail.Conversation.Source != SourceWeb {
-		h.fail(writer, request, ErrUnknown)
+	writeJSON(writer, http.StatusOK, conversationViewOf(found))
+}
+
+func (h Handlers) remove(writer http.ResponseWriter, request *http.Request) {
+	principal, org, id, ok := h.addressed(writer, request)
+	if !ok {
 		return
 	}
-	writeJSON(writer, http.StatusOK, detailViewOf(detail))
+	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
+	defer cancel()
+	if err := h.Store.DeleteConversation(ctx, principal, org, id); err != nil {
+		h.fail(writer, request, err)
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
 }
 
 func (h Handlers) caller(request *http.Request) (authz.Principal, uuid.UUID) {
@@ -346,21 +311,19 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 	switch {
 	case errors.Is(err, ErrInvalidWindow):
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
-	case errors.Is(err, ErrWindowConflict):
-		writeJSON(writer, http.StatusConflict, errorView{Error: err.Error()})
 	case errors.Is(err, authz.ErrNotAMember):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
 	case errors.Is(err, ErrUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "conversation not found"})
 	case errors.Is(err, ErrIncidentUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "incident not found"})
-	case errors.Is(err, ErrSourceMismatch):
-		writeJSON(writer, http.StatusConflict, errorView{
-			Error: "this Conversation belongs to Slack; continue in Slack or create a web Conversation"})
+	case errors.Is(err, ErrClientMessageConflict), errors.Is(err, ErrLegacyHistory):
+		writeJSON(writer, http.StatusConflict, errorView{Error: err.Error()})
+	case errors.Is(err, ErrChatUnavailable):
+		writeJSON(writer, http.StatusServiceUnavailable, errorView{Error: err.Error()})
 	case errors.Is(err, ErrQueueFull):
 		writeJSON(writer, http.StatusTooManyRequests, errorView{
-			Error: "this organization already has its limit of investigations waiting; " +
-				"wait for one to end and send this again"})
+			Error: "this Organization already has its limit of Messages waiting"})
 	case errors.Is(err, ErrBadCursor):
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: ErrBadCursor.Error()})
 	case errors.Is(err, audit.ErrWriteFailed):

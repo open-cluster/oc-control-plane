@@ -114,7 +114,7 @@ func TestConversationAndInvestigationListingsApplyDocumentedCapabilities(t *test
 	open := func(subject, incidentID string) string {
 		t.Helper()
 		status, body := plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/conversations",
-			map[string]any{"subject": subject, "incidentId": incidentID, "message": "investigate"})
+			map[string]any{"title": subject, "incidentId": incidentID})
 		if status != http.StatusCreated {
 			t.Fatalf("opening conversation = %d: %s", status, body)
 		}
@@ -130,7 +130,7 @@ func TestConversationAndInvestigationListingsApplyDocumentedCapabilities(t *test
 	type conversationRow struct {
 		ID         string `json:"id"`
 		IncidentID string `json:"incidentId"`
-		Subject    string `json:"subject"`
+		Title      string `json:"title"`
 	}
 	listConversations := func(query string) []conversationRow {
 		t.Helper()
@@ -146,7 +146,8 @@ func TestConversationAndInvestigationListingsApplyDocumentedCapabilities(t *test
 		return page.Items
 	}
 
-	if rows := listConversations("?search=CHECKOUT"); len(rows) != 1 || rows[0].ID != firstConversation {
+	if rows := listConversations("?search=CHECKOUT"); len(rows) != 1 || rows[0].ID != firstConversation ||
+		rows[0].Title != "Checkout follow-up" {
 		t.Errorf("conversation search returned %+v", rows)
 	}
 	if rows := listConversations("?incidentId=" + firstIncident); len(rows) != 1 || rows[0].IncidentID != firstIncident {

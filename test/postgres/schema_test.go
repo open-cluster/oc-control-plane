@@ -105,6 +105,7 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 		"0012_agent_execution_claim",
 		"0013_tool_run_ownership",
 		"0014_investigation_requester",
+		"0015_web_chat",
 	}) {
 		t.Fatalf("applied migrations = %v", applied)
 	}
@@ -418,6 +419,7 @@ func TestCleanupMigrationValidatesAndConvertsPostmortemReviewers(t *testing.T) {
 		"0012_agent_execution_claim",
 		"0013_tool_run_ownership",
 		"0014_investigation_requester",
+		"0015_web_chat",
 	}) {
 		t.Fatalf("repaired reviewer migration applied %v: %v", applied, err)
 	}
@@ -607,6 +609,7 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 		"0012_agent_execution_claim",
 		"0013_tool_run_ownership",
 		"0014_investigation_requester",
+		"0015_web_chat",
 	}) {
 		t.Fatalf("fresh migration applied %v, want every schema migration", applied)
 	}
@@ -646,8 +649,8 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 			FROM information_schema.columns WHERE table_name='investigation_tool_run' AND column_name='window_applied'`,
 		`SELECT NOT EXISTS (SELECT 1 FROM pg_indexes WHERE tablename='investigation_tool_run' AND indexdef LIKE '%observation_text%')`,
 		`SELECT array_agg(column_name::text ORDER BY ordinal_position) =
-			ARRAY['conversation_id','org_id','incident_id','source','subject',
-			      'created_by','created_at','last_activity_at']
+			ARRAY['conversation_id','org_id','incident_id','source','title',
+			      'created_by','created_at','last_activity_at','custom_title','legacy_history','deleted_at']
 			FROM information_schema.columns WHERE table_schema='public' AND table_name='conversation'`,
 		`SELECT data_type = 'text' AND column_default IS NULL
 			FROM information_schema.columns WHERE table_schema='public' AND table_name='conversation' AND column_name='source'`,
@@ -751,11 +754,11 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 	if generatedID == uuid.Nil || retention != 90 {
 		t.Fatalf("Organization defaults = %s/%d, want generated UUID and 90-day retention", generatedID, retention)
 	}
-	if _, err := connection.Exec(ctx, `INSERT INTO conversation(conversation_id, org_id, subject)
+	if _, err := connection.Exec(ctx, `INSERT INTO conversation(conversation_id, org_id, title)
 		VALUES ($1, $2, 'Missing source')`, uuid.New(), generatedID); err == nil {
 		t.Fatal("Conversation source defaulted instead of being required")
 	}
-	if _, err := connection.Exec(ctx, `INSERT INTO conversation(conversation_id, org_id, source, subject)
+	if _, err := connection.Exec(ctx, `INSERT INTO conversation(conversation_id, org_id, source, title)
 		VALUES ($1, $2, 'email', 'Invalid source')`, uuid.New(), generatedID); err == nil {
 		t.Fatal("Conversation accepted an invalid Source")
 	}

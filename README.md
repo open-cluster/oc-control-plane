@@ -39,18 +39,14 @@ Investigation detail remains lightweight.
 
 ## How it works
 
-1. An alert opens or updates an **Incident**, or an operator starts a **Conversation**.
-2. OpenCluster opens a bounded **Investigation**.
-3. The investigator selects authorized **Tools** from connected **Integrations**.
-4. Tool Runs gather operational context and are recorded as evidence.
-5. The Investigation produces impact, Findings, hypotheses, Action Proposals, and limitations.
-6. Follow-up questions continue through the same Conversation without changing earlier Investigations.
-7. Resolved Incidents can produce reviewed **Postmortems**.
+1. Start a web **Conversation** for an operational question. Its Messages queue individual replies that can use authorized **Tools**.
+2. Open an **Investigation** for an evidence-backed report, or use the one started by a firing alert. The report records Findings, Action Proposals, and limitations.
+3. Review the report's evidence. Resolved Incidents can produce reviewed **Postmortems**.
 
-An Investigation is immutable once completed. Follow-ups create new Investigations and restore
-the Conversation's AgentScope checkpoint. AgentScope compacts model context as it fills, while
-visible Messages and durable evidence remain available independently. New reports cite Tool Run
-UUIDs. The ordinal observation route serves retained historical records.
+Web Chat restores its Conversation checkpoint across replies. AgentScope compacts model context
+while visible Messages remain available. Explicit Investigations own independent checkpoints and
+keep completed reports immutable. New reports cite Tool Run UUIDs. The ordinal observation route
+serves retained records.
 
 ## Integrations
 
@@ -97,19 +93,17 @@ activity in the originating thread.
 PostgreSQL is the durable source of truth. Customer-owned state is explicitly scoped to an
 Organization, and operational mutations are audited.
 
-Investigations run on AgentScope. It handles model calls, Tool scheduling, context
+Chat and Investigations run on AgentScope. It handles model calls, Tool scheduling, context
 management, and reply recovery. PostgreSQL stores checkpoints and fences Tool authorization,
-evidence recording, and report acceptance. Web and Slack Investigation turns use the same runtime.
+evidence recording, and result acceptance. Slack continues to use assigned Investigation turns during the transition.
 After the investigative reply completes, AgentScope makes a separate structured report request.
 OpenCluster validates the Conclusion and commits it with the execution outcome and any linked
-Message. A factual reply to an assigned web or Slack Message can finish without a causal assessment.
-An autonomous Incident Investigation always records an assessment when it concludes. Conversation
-checkpoint promotion updates the matching native assistant Message with the accepted reply and
-preserves its Tool results and compacted context.
+Message for a legacy assigned turn. Explicit and autonomous Investigations record an assessment when
+they conclude. Web Chat commits the assistant Message and Conversation checkpoint together.
 A crash before commit can regenerate the report from the completed checkpoint without resuming
 the investigative reply.
-When upgrading from the previous Investigation engine, stop the old control-plane instances
-before starting this version so each newly admitted Investigation gets a native execution.
+Stop older control-plane instances before applying the web Chat migration. The upgraded
+control plane can resume recoverable legacy Investigation work that was already accepted.
 
 Findings require citations to successful reads. Failed or skipped reads can explain
 limitations. Action Proposals for obtaining missing evidence may omit citations. Startup,

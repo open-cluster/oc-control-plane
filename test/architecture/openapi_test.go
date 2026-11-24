@@ -539,8 +539,12 @@ func TestOpenAPITypesEveryInvestigationResult(t *testing.T) {
 		}
 	}
 	request := document.Components.Schemas["OpenInvestigationRequest"]
-	if !slices.Equal(request.Required, []string{"incidentId"}) || len(request.Properties) != 1 {
-		t.Errorf("direct Investigation creation is not incident-only: %+v", request)
+	if len(request.OneOf) != 2 || !slices.Equal(request.OneOf[0].Required, []string{"incidentId"}) ||
+		!slices.Equal(request.OneOf[1].Required, []string{"question"}) {
+		t.Errorf("direct Investigation creation must accept an Incident or a question: %+v", request.OneOf)
+	}
+	if request.Properties["conversationId"].Ref != "#/components/schemas/UUID" {
+		t.Error("direct Investigation creation omits the optional Conversation link")
 	}
 }
 

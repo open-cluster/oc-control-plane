@@ -176,7 +176,7 @@ func recordTerminalSlackMessageWork(t *testing.T, database *pgx.Conn, integratio
 		INSERT INTO webhook_delivery (delivery_id, org_id, integration_id, content_digest, provider_identity)
 		VALUES ($4, $1, $2, $3, $8) RETURNING delivery_id, org_id, integration_id
 	), chat AS (
-		INSERT INTO conversation (conversation_id, org_id, source, subject)
+		INSERT INTO conversation (conversation_id, org_id, source, title)
 		SELECT $6, org_id, 'slack', 'Slack replay' FROM delivery RETURNING conversation_id, org_id
 	), message AS (
 		INSERT INTO conversation_message
@@ -266,7 +266,7 @@ func TestKubernetesWorkloadToolRunsAcrossTheComposedRelayAndDatabase(t *testing.
 	chatRead := func() (storage.AgentExecution, integrations.ToolRequest) {
 		t.Helper()
 		chat, createErr := database.OpenConversation(ctx, principal, organization, conversation.NewConversation{
-			Source: conversation.SourceWeb, Subject: "checkout",
+			Source: conversation.SourceWeb, Title: "checkout",
 		})
 		if createErr != nil {
 			t.Fatal(createErr)

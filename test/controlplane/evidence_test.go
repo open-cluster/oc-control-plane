@@ -184,11 +184,11 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 		}
 	}
 	privateChat := uuid.New()
-	if _, err := database.Exec(ctx, `INSERT INTO conversation (org_id, conversation_id, source, subject)
+	if _, err := database.Exec(ctx, `INSERT INTO conversation (org_id, conversation_id, source, title)
 		VALUES ($1, $2, 'slack', 'private conversation')`, surfaceOrg, privateChat); err != nil {
 		t.Fatal(err)
 	}
-	for _, suffix := range []string{"", "/turns"} {
+	for _, suffix := range []string{"", "/turns", "/messages"} {
 		path := plane.base(surfaceOrg) + "/conversations/" + privateChat.String() + suffix
 		if status, body := plane.call(t, http.MethodGet, path, nil); status != http.StatusNotFound {
 			t.Fatalf("web Conversation endpoint exposed Slack content: %d %s", status, body)
@@ -229,7 +229,7 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 		t.Fatalf("a UUID-only Slack citation exposed its web report: %d %s", status, body)
 	}
 	webChat, current := uuid.New(), uuid.New()
-	if _, err := database.Exec(ctx, `INSERT INTO conversation (org_id, conversation_id, source, subject)
+	if _, err := database.Exec(ctx, `INSERT INTO conversation (org_id, conversation_id, source, title)
 		VALUES ($1, $2, 'web', 'web conversation')`, surfaceOrg, webChat); err != nil {
 		t.Fatal(err)
 	}
@@ -248,11 +248,11 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 		surfaceOrg, webChat, ids[2]); err != nil {
 		t.Fatal(err)
 	}
-	for _, suffix := range []string{"", "/turns"} {
+	for _, suffix := range []string{"", "/turns", "/messages"} {
 		path := plane.base(surfaceOrg) + "/conversations/" + webChat.String() + suffix
 		status, body := plane.call(t, http.MethodGet, path, nil)
 		if status != http.StatusOK || strings.Contains(body, "prior restricted summary") ||
-			strings.Contains(body, ids[2].String()) || !strings.Contains(body, current.String()) {
+			strings.Contains(body, ids[2].String()) || (suffix == "/turns" && !strings.Contains(body, current.String())) {
 			t.Errorf("web Conversation projection exposed restricted history or lost a visible turn: %d %s", status, body)
 		}
 	}

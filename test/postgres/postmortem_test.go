@@ -60,7 +60,7 @@ func TestPostmortemLifecycleIsIncidentOwnedAndTenantScoped(t *testing.T) {
 	}
 	if _, err = pool.Exec(t.Context(), `
 		WITH chat AS (
-		    INSERT INTO conversation (org_id, conversation_id, incident_id, source, subject)
+		    INSERT INTO conversation (org_id, conversation_id, incident_id, source, title)
 		    VALUES ($1, gen_random_uuid(), $2, 'web', 'checkout discussion') RETURNING conversation_id
 		)
 		INSERT INTO conversation_message (org_id, conversation_id, sequence, role, author_id, author_name,
@@ -117,7 +117,7 @@ func TestPostmortemLifecycleIsIncidentOwnedAndTenantScoped(t *testing.T) {
 	runID, reportID := uuid.New(), uuid.New()
 	if _, err := pool.Exec(ctx, `
 		WITH thread AS (
-		    INSERT INTO conversation (org_id, conversation_id, source, subject)
+		    INSERT INTO conversation (org_id, conversation_id, source, title)
 		    VALUES ($1, gen_random_uuid(), 'slack', 'private thread') RETURNING conversation_id
 		), message AS (
 		    INSERT INTO conversation_message (org_id, conversation_id, sequence, role, text, window_from, window_until)

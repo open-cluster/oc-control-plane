@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/open-cluster/oc-control-plane/internal/api/listing"
 )
 
 type errorView struct {
@@ -16,7 +14,7 @@ type errorView struct {
 
 type conversationView struct {
 	ID             string `json:"id"`
-	Subject        string `json:"subject"`
+	Title          string `json:"title"`
 	Source         string `json:"source"`
 	IncidentID     string `json:"incidentId,omitempty"`
 	CreatedBy      string `json:"createdBy,omitempty"`
@@ -47,28 +45,16 @@ type turnView struct {
 	ConcludedAt     string `json:"concludedAt,omitempty"`
 }
 
-type detailView struct {
-	conversationView
-	Messages  []messageView `json:"messages"`
-	Turns     []turnView    `json:"turns"`
-	TurnsNext *string       `json:"turnsNext"`
-}
-
 type messageAcceptedView struct {
-	Message messageView `json:"message"`
-	Turn    *turnView   `json:"turn,omitempty"`
-	Queued  bool        `json:"queued"`
-}
-
-type openedView struct {
-	conversationView
-	messageAcceptedView
+	Message     messageView `json:"message"`
+	ExecutionID uuid.UUID   `json:"executionId"`
+	Status      string      `json:"status"`
 }
 
 func conversationViewOf(conversation Conversation) conversationView {
 	view := conversationView{
 		ID:             conversation.ID.String(),
-		Subject:        conversation.Subject,
+		Title:          conversation.Title,
 		Source:         conversation.Source.String(),
 		CreatedAt:      stamp(conversation.CreatedAt),
 		LastActivityAt: stamp(conversation.LastActivityAt),
@@ -111,22 +97,6 @@ func turnViewOf(turn Turn) turnView {
 	}
 	if !turn.ConcludedAt.IsZero() {
 		view.ConcludedAt = stamp(turn.ConcludedAt)
-	}
-	return view
-}
-
-func detailViewOf(detail Detail) detailView {
-	view := detailView{
-		conversationView: conversationViewOf(detail.Conversation),
-		Messages:         make([]messageView, 0, len(detail.Messages)),
-		Turns:            make([]turnView, 0, len(detail.Turns)),
-		TurnsNext:        listing.CursorPtr(detail.TurnsNext),
-	}
-	for _, message := range detail.Messages {
-		view.Messages = append(view.Messages, messageViewOf(message))
-	}
-	for _, turn := range detail.Turns {
-		view.Turns = append(view.Turns, turnViewOf(turn))
 	}
 	return view
 }

@@ -668,7 +668,7 @@ func TestSlackMessageWorkerQueuesFollowupUntilTheCurrentTurnEnds(t *testing.T) {
 	if err := seedInvestigationConclusion(ctx, database, organization, first, conclusionSaying("first answer")); err != nil {
 		t.Fatal(err)
 	}
-	if drained, err := database.OpenQueuedConversationTurn(ctx, worker.WindowLead, 0); err != nil || !drained {
+	if drained, err := database.OpenQueuedSlackTurn(ctx, worker.WindowLead, 0); err != nil || !drained {
 		t.Fatalf("draining the queued follow-up: %v, %v", drained, err)
 	}
 	detail, err = database.ConversationDetail(ctx, organization, fixture.conversation, 50)

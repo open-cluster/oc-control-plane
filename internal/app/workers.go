@@ -21,12 +21,11 @@ const auditPruneInterval = time.Hour
 func startWorkers(ctx context.Context, group *errgroup.Group, process assembled) {
 	if process.prepareExecution != nil {
 		group.Go(func() error {
-			RunExecutions(ctx, process.database, process.config.InvestigationWorkers,
-				process.executionWake, process.prepareExecution, process.logger)
+			process.runAgentWorkers(ctx)
 			return nil
 		})
 		group.Go(func() error {
-			admitQueuedTurns(ctx, process)
+			admitQueuedSlackTurns(ctx, process)
 			return nil
 		})
 		startSlackMessageWorker(ctx, group, process)
@@ -37,13 +36,14 @@ func startWorkers(ctx context.Context, group *errgroup.Group, process assembled)
 	startSlackReplyWorker(ctx, group, process)
 }
 
-func admitQueuedTurns(ctx context.Context, process assembled) {
+// Removed with Slack's native Chat admission in #236.
+func admitQueuedSlackTurns(ctx context.Context, process assembled) {
 	tick := time.NewTicker(executionPoll)
 	defer tick.Stop()
 	for ctx.Err() == nil {
-		opened, err := process.database.OpenQueuedConversationTurn(ctx, defaultInvestigationWindowLead, process.config.MaxPendingInvestigations)
+		opened, err := process.database.OpenQueuedSlackTurn(ctx, defaultInvestigationWindowLead, process.config.MaxPendingInvestigations)
 		if err != nil && ctx.Err() == nil {
-			process.logger.WarnContext(ctx, "queued Conversation work could not be admitted")
+			process.logger.WarnContext(ctx, "queued Slack work could not be admitted")
 		}
 		if opened {
 			continue

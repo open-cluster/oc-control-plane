@@ -14,12 +14,9 @@ import (
 func (p *Database) ConversationTurns(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID, limit int, cursor string,
 ) (conversation.TurnPage, error) {
-	found, err := p.conversationByID(ctx, organization, id)
+	_, err := p.WebConversation(ctx, organization, id)
 	if err != nil {
 		return conversation.TurnPage{}, err
-	}
-	if found.Source != conversation.SourceWeb {
-		return conversation.TurnPage{}, conversation.ErrUnknown
 	}
 	pool, err := p.poolForOrganization(organization)
 	if err != nil {
@@ -48,7 +45,9 @@ func readConversationTurns(
 		SELECT investigation_id, turn, status, stopped_by, error, created_at, concluded_at,
 		       `+runningAgentInvestigation+`
 		  FROM investigation i
-		 WHERE org_id = $1 AND conversation_id = $2
+		 WHERE org_id = $1 AND conversation_id = $2 AND turn IS NOT NULL
+		   AND EXISTS (SELECT 1 FROM conversation c
+		                WHERE c.org_id = $1 AND c.conversation_id = $2 AND c.deleted_at IS NULL)
 		   AND NOT EXISTS (`+privateInvestigationSources+` AND private.conversation_id IS DISTINCT FROM $2)
 		   AND ($3::integer = 0 OR (turn, investigation_id) > ($3, $4::uuid))
 		 ORDER BY turn, investigation_id

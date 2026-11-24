@@ -48,9 +48,9 @@ func TestInvestigationDoesNotManufactureAConversationReply(t *testing.T) {
 	if status != http.StatusOK || strings.Count(replay, "event: failed\n") != 1 || strings.Contains(replay, "event: concluded\n") {
 		t.Fatalf("unexpected terminal replay (%d): %s", status, replay)
 	}
-	status, body := plane.call(t, http.MethodGet, base+"/conversations/"+conversationID, nil)
+	status, body := plane.call(t, http.MethodGet, base+"/conversations/"+conversationID+"/messages", nil)
 	var detail struct {
-		Messages []struct{ Role string }
+		Messages []struct{ Role string } `json:"items"`
 	}
 	decodeInto(t, body, &detail)
 	if status != http.StatusOK || len(detail.Messages) != 1 || detail.Messages[0].Role != "user" {

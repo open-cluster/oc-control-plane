@@ -17,6 +17,9 @@ type investigationView struct {
 	Status           string             `json:"status"`
 	Subject          string             `json:"subject"`
 	IncidentID       string             `json:"incidentId,omitempty"`
+	ConversationID   string             `json:"conversationId,omitempty"`
+	ExecutionID      string             `json:"executionId,omitempty"`
+	EventsURL        string             `json:"eventsUrl,omitempty"`
 	WindowFrom       string             `json:"windowFrom"`
 	WindowUntil      string             `json:"windowUntil"`
 	ConclusionStatus ConclusionStatus   `json:"conclusionStatus,omitempty"`
@@ -114,6 +117,9 @@ func investigationViewOf(found Investigation) investigationView {
 	}
 	if found.IncidentID != uuid.Nil {
 		view.IncidentID = found.IncidentID.String()
+	}
+	if found.ConversationID != uuid.Nil {
+		view.ConversationID = found.ConversationID.String()
 	}
 	if !found.ConcludedAt.IsZero() {
 		view.ConcludedAt = found.ConcludedAt.UTC().Format(time.RFC3339Nano)

@@ -102,7 +102,7 @@ func bindThread(
 
 	opened := uuid.New()
 	if _, err := transaction.Exec(ctx, `
-		INSERT INTO conversation (conversation_id, org_id, source, subject, created_by)
+		INSERT INTO conversation (conversation_id, org_id, source, title, created_by)
 		VALUES ($1, $2, $3, $4, $5)`,
 		opened, organization, string(conversation.SourceSlack),
 		said.Subject, said.AuthorID); err != nil {
@@ -138,7 +138,7 @@ func appendSlackMessage(
 	if err := lockConversation(ctx, transaction, organization, conversationID); err != nil {
 		return 0, err
 	}
-	window, err := acceptedWindow(ctx, transaction, organization, conversationID, nil, conversation.DefaultIncidentWindowLead)
+	window, err := slackMessageWindow(ctx, transaction, organization, conversationID, conversation.DefaultIncidentWindowLead)
 	if err != nil {
 		return 0, err
 	}

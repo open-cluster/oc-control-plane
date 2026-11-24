@@ -1,6 +1,7 @@
 package investigation
 
 import (
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -170,6 +171,7 @@ func (u Usage) Add(other Usage) Usage {
 }
 
 type Investigation struct {
+	ExecutionID    uuid.UUID
 	ID             uuid.UUID
 	IncidentID     uuid.UUID
 	ConversationID uuid.UUID
@@ -218,11 +220,20 @@ type ToolRunRead struct {
 }
 
 type NewInvestigation struct {
-	IncidentID  uuid.UUID
-	Subject     string
-	WindowFrom  time.Time
-	WindowUntil time.Time
+	IncidentID     uuid.UUID
+	ConversationID uuid.UUID
+	Subject        string
+	WindowFrom     time.Time
+	WindowUntil    time.Time
+	RequestKey     string
+	RequestHash    [32]byte
+	ReplayOnly     bool
 }
+
+var (
+	ErrRequestConflict  = errors.New("Idempotency-Key already names a different Investigation request")
+	ErrAgentUnavailable = errors.New("this deployment has no model provider configured, so it cannot investigate")
+)
 
 type Trigger struct {
 	IncidentID    uuid.UUID

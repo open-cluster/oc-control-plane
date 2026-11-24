@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
@@ -18,29 +17,34 @@ import (
 
 const ollamaContextSize = 32_768
 
-func prepareInvestigationExecution(
+func prepareAgentExecution(
 	db *storage.Database, catalog integrations.Catalog, sealer seal.Sealer, chatModel model.ChatModel,
 ) PrepareExecution {
 	return func(ctx context.Context, org uuid.UUID, execution storage.AgentExecution) (ExecutionProfile, error) {
-		if execution.InvestigationID == uuid.Nil {
-			return ExecutionProfile{}, errors.New("an Investigation owner is required")
-		}
 		profile := ExecutionProfile{Config: ai.Config{
-			Name:         "investigator",
-			Instructions: ai.InvestigationInstructions,
+			Name:         "chat",
+			Instructions: ai.ChatInstructions,
 			Model:        chatModel,
 		}}
+		profile.Input = func(ctx context.Context) (string, error) {
+			return db.AgentChatInput(ctx, org, execution)
+		}
+		if execution.InvestigationID != uuid.Nil {
+			profile.Name = "investigator"
+			profile.Instructions = ai.InvestigationInstructions
+			profile.Input = func(ctx context.Context) (string, error) {
+				return investigationInput(ctx, db, org, execution)
+			}
+		}
 		if err := profile.UseIntegrationTools(ctx, db, catalog, sealer, org, execution); err != nil {
 			return ExecutionProfile{}, err
-		}
-		profile.Input = func(ctx context.Context) (string, error) {
-			return investigationInput(ctx, db, org, execution.InvestigationID)
 		}
 		return profile, nil
 	}
 }
 
-func investigationInput(ctx context.Context, db *storage.Database, org, id uuid.UUID) (string, error) {
+func investigationInput(ctx context.Context, db *storage.Database, org uuid.UUID, execution storage.AgentExecution) (string, error) {
+	id := execution.InvestigationID
 	opened, err := db.Investigation(ctx, org, id)
 	if err != nil {
 		return "", err
@@ -77,7 +81,7 @@ func investigationInput(ctx context.Context, db *storage.Database, org, id uuid.
 			}
 		}
 	}
-	if opened.ConversationID != uuid.Nil {
+	if execution.HasAssignedInput() {
 		input.Messages, err = db.InvestigationMessages(ctx, org, opened.ConversationID, id)
 		if err != nil {
 			return "", err

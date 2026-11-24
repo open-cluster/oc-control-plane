@@ -202,7 +202,7 @@ func (p *Database) GenerationInput(
 		    ON c.org_id = m.org_id AND c.conversation_id = m.conversation_id
 		  LEFT JOIN investigation i
 		    ON i.org_id = m.org_id AND i.investigation_id = m.investigation_id
-		 WHERE c.incident_id = $1 AND m.org_id = $2 AND c.source = 'web'
+		 WHERE c.incident_id = $1 AND m.org_id = $2 AND c.source = 'web' AND c.deleted_at IS NULL
 		   AND m.role = $3 AND btrim(m.author_id) <> '' AND btrim(m.author_name) <> '' AND `+webInvestigationSource+`
 		 ORDER BY m.created_at, m.conversation_id, m.sequence`,
 		incidentID, organization, int16(conversation.RoleUser))

@@ -145,12 +145,25 @@ func openTurnForTest(
 	database *storage.Database, ctx context.Context, organization, conversationID uuid.UUID,
 	lead time.Duration,
 ) (conversation.Turn, bool, error) {
-	opened, err := database.OpenNextConversationTurn(ctx, organization, conversationID, lead, 1_000_000)
-	if err != nil || !opened {
-		return conversation.Turn{}, opened, err
-	}
 	pool, err := poolForTest(database, organization)
 	if err != nil {
+		return conversation.Turn{}, false, err
+	}
+	var source conversation.Source
+	err = pool.QueryRow(ctx, `SELECT source FROM conversation
+		WHERE org_id = $1 AND conversation_id = $2`, organization, conversationID).Scan(&source)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return conversation.Turn{}, false, conversation.ErrUnknown
+	}
+	if err != nil {
+		return conversation.Turn{}, false, err
+	}
+	if source == conversation.SourceSlack {
+		opened, err := database.OpenQueuedSlackTurn(ctx, lead, 1_000_000)
+		if err != nil || !opened {
+			return conversation.Turn{}, opened, err
+		}
+	} else if err := seedAssignedWebTurn(ctx, pool, organization, conversationID); err != nil {
 		return conversation.Turn{}, false, err
 	}
 	var turn conversation.Turn
@@ -163,17 +176,31 @@ func openTurnForTest(
 	return turn, err == nil, err
 }
 
-func waitingTurnsForTest(
-	database *storage.Database, ctx context.Context, organization uuid.UUID,
-) (int, error) {
-	pool, err := poolForTest(database, organization)
-	if err != nil {
-		return 0, err
-	}
-	var waiting int
-	err = pool.QueryRow(ctx, `SELECT count(*) FROM agent_execution
-		WHERE org_id = $1 AND investigation_id IS NOT NULL AND status = 'queued'`, organization).Scan(&waiting)
-	return waiting, err
+func seedAssignedWebTurn(ctx context.Context, pool *pgxpool.Pool, org, id uuid.UUID) error {
+	return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `UPDATE conversation SET legacy_history = true
+			WHERE org_id = $1 AND conversation_id = $2`, org, id); err != nil {
+			return err
+		}
+		turn := uuid.New()
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO investigation (org_id, investigation_id, conversation_id, incident_id, turn, subject, window_from, window_until)
+			SELECT c.org_id, $3, c.conversation_id, c.incident_id,
+			       (SELECT coalesce(max(turn), 0) + 1 FROM investigation WHERE org_id = $1 AND conversation_id = $2),
+			       c.title, m.window_from, m.window_until
+			FROM conversation c JOIN conversation_message m USING (org_id, conversation_id)
+			WHERE c.org_id = $1 AND c.conversation_id = $2 AND m.investigation_id IS NULL AND m.role = 1
+			ORDER BY m.sequence LIMIT 1 RETURNING investigation_id`, org, id, turn).Scan(&turn); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE conversation_message SET investigation_id = $3
+			WHERE org_id = $1 AND conversation_id = $2 AND investigation_id IS NULL AND role = 1`, org, id, turn); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO agent_execution (org_id, execution_id, investigation_id)
+			VALUES ($1, $2, $3)`, org, uuid.New(), turn)
+		return err
+	})
 }
 
 func slackReplyStateForTest(

@@ -23,7 +23,7 @@ var (
 	ErrAgentLeaseLost            = errors.New("agent execution lease is no longer current")
 	ErrAgentExecutionUnavailable = errors.New("agent execution is unavailable")
 	ErrAgentEvidenceUnavailable  = errors.New("unavailable Tool Run evidence")
-	ErrClientMessageConflict     = errors.New("client message ID already names different input")
+	ErrClientMessageConflict     = conversation.ErrClientMessageConflict
 )
 
 type AgentExecutionStatus string
@@ -46,6 +46,7 @@ type AgentExecution struct {
 	LeaseExpiresAt              *time.Time
 	StartedAt                   *time.Time
 	investigationConversationID uuid.UUID
+	acceptedMessage             conversation.Message
 }
 
 func (execution AgentExecution) SessionID() string {
@@ -62,9 +63,20 @@ func (execution AgentExecution) checkpointConversation() uuid.UUID {
 	return execution.investigationConversationID
 }
 
+func (execution AgentExecution) HasAssignedInput() bool {
+	return execution.investigationConversationID != uuid.Nil
+}
+
+const legacyInvestigationConversation = `CASE WHEN i.turn IS NOT NULL AND EXISTS (
+	SELECT 1 FROM conversation_message m
+	 WHERE m.org_id = i.org_id AND m.conversation_id = i.conversation_id
+	   AND m.investigation_id = i.investigation_id AND m.role = 1
+	   AND m.client_message_id IS NULL AND btrim(m.author_id) <> ''
+) THEN i.conversation_id END`
+
 const agentExecutionColumns = "e.execution_id, e.conversation_id, e.investigation_id, " +
 	"coalesce(e.message_sequence, 0), e.status, e.lease_token, e.lease_expires_at, e.started_at, coalesce(e.reply_message_sequence, 0), " +
-	"(SELECT i.conversation_id FROM investigation i WHERE i.org_id = e.org_id AND i.investigation_id = e.investigation_id)"
+	"(SELECT " + legacyInvestigationConversation + " FROM investigation i WHERE i.org_id = e.org_id AND i.investigation_id = e.investigation_id)"
 
 func scanAgentExecution(row pgx.Row, extra ...any) (AgentExecution, error) {
 	var execution AgentExecution
@@ -82,6 +94,13 @@ func (p *Database) AdmitAgentChat(
 	ctx context.Context, principal authz.Principal, organization, conversationID, clientMessageID uuid.UUID,
 	input conversation.NewMessage,
 ) (AgentExecution, error) {
+	return p.admitChat(ctx, principal, organization, conversationID, clientMessageID, input, false)
+}
+
+func (p *Database) admitChat(
+	ctx context.Context, principal authz.Principal, organization, conversationID, clientMessageID uuid.UUID,
+	input conversation.NewMessage, replayOnly bool,
+) (AgentExecution, error) {
 	if principal.IsEmpty() || principal.Organization() != organization || !principal.HavePermission(authz.ConversationWrite) {
 		return AgentExecution{}, ErrNotAMember
 	}
@@ -96,7 +115,7 @@ func (p *Database) AdmitAgentChat(
 	var execution AgentExecution
 	err = pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
 		var err error
-		execution, err = admitAgentChat(ctx, tx, principal, organization, conversationID, clientMessageID, input)
+		execution, err = admitAgentChat(ctx, tx, principal, organization, conversationID, clientMessageID, input, replayOnly)
 		return err
 	})
 	if err != nil {
@@ -105,18 +124,34 @@ func (p *Database) AdmitAgentChat(
 	return execution, nil
 }
 
+func (p *Database) AdmitConversationMessage(
+	ctx context.Context, principal authz.Principal, org, id, clientMessageID uuid.UUID,
+	input conversation.NewMessage, replayOnly bool,
+) (conversation.AcceptedMessage, error) {
+	execution, err := p.admitChat(ctx, principal, org, id, clientMessageID, input, replayOnly)
+	if err != nil {
+		return conversation.AcceptedMessage{}, err
+	}
+	return conversation.AcceptedMessage{
+		Message:     execution.acceptedMessage,
+		ExecutionID: execution.ID,
+		Status:      string(execution.Status),
+	}, nil
+}
+
 func admitAgentChat(
 	ctx context.Context, tx pgx.Tx, principal authz.Principal, organization, conversationID, clientMessageID uuid.UUID,
-	input conversation.NewMessage,
+	input conversation.NewMessage, replayOnly bool,
 ) (AgentExecution, error) {
-	if err := lockConversationQueue(ctx, tx, organization); err != nil {
+	if err := lockOrganizationAdmissions(ctx, tx, organization); err != nil {
 		return AgentExecution{}, err
 	}
 	var now time.Time
+	var legacy bool
 	err := tx.QueryRow(ctx, `
-		SELECT now() FROM conversation
-		 WHERE org_id = $1 AND conversation_id = $2 AND source = 'web'
-		 FOR UPDATE`, organization, conversationID).Scan(&now)
+		SELECT now(), legacy_history FROM conversation
+		 WHERE org_id = $1 AND conversation_id = $2 AND source = 'web' AND deleted_at IS NULL
+		 FOR UPDATE`, organization, conversationID).Scan(&now, &legacy)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AgentExecution{}, conversation.ErrUnknown
 	}
@@ -149,10 +184,22 @@ func admitAgentChat(
 		if !identical {
 			return AgentExecution{}, ErrClientMessageConflict
 		}
-		return prior, nil
+		prior.acceptedMessage, err = scanMessage(tx.QueryRow(ctx, `
+			SELECT sequence, role, author_id, author_name, text, source_reference,
+			       investigation_id, created_at, window_from, window_until
+			  FROM conversation_message
+			 WHERE org_id = $1 AND conversation_id = $2 AND sequence = $3`,
+			organization, conversationID, prior.MessageSequence))
+		return prior, err
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return AgentExecution{}, fmt.Errorf("reading accepted Chat input: %w", err)
+	}
+	if legacy {
+		return AgentExecution{}, conversation.ErrLegacyHistory
+	}
+	if replayOnly {
+		return AgentExecution{}, conversation.ErrChatUnavailable
 	}
 
 	if err := checkConversationQueueCapacity(ctx, tx, organization); err != nil {
@@ -160,7 +207,7 @@ func admitAgentChat(
 	}
 	input.Role = conversation.RoleUser
 	input.AuthorID = authorID
-	input.AuthorName = principal.DisplayName()
+	input.AuthorName = conversation.Bounded(principal.DisplayName(), conversation.MaxAuthorNameLength)
 	message, err := insertConversationMessage(ctx, tx, organization, conversationID, input, window, &clientMessageID)
 	if err != nil {
 		return AgentExecution{}, err
@@ -184,13 +231,15 @@ func admitAgentChat(
 	}); err != nil {
 		return AgentExecution{}, err
 	}
+	execution.acceptedMessage = message
 	return execution, nil
 }
 
-func queueInvestigation(ctx context.Context, tx pgx.Tx, org, id uuid.UUID) error {
-	_, err := tx.Exec(ctx, `INSERT INTO agent_execution (org_id, execution_id, investigation_id)
-		VALUES ($1, gen_random_uuid(), $2)`, org, id)
-	return err
+func queueInvestigation(ctx context.Context, tx pgx.Tx, org, id uuid.UUID) (uuid.UUID, error) {
+	var executionID uuid.UUID
+	err := tx.QueryRow(ctx, `INSERT INTO agent_execution (org_id, execution_id, investigation_id)
+		VALUES ($1, gen_random_uuid(), $2) RETURNING execution_id`, org, id).Scan(&executionID)
+	return executionID, err
 }
 
 const agentExecutionEligible = `
@@ -217,7 +266,7 @@ func (p *Database) ClaimNextAgentExecution(ctx context.Context, leaseFor time.Du
 			WITH chat AS MATERIALIZED (
 			    SELECT e.org_id, e.execution_id, e.created_at FROM agent_execution e
 			      JOIN conversation c ON c.org_id = e.org_id AND c.conversation_id = e.conversation_id
-			     WHERE e.status IN ('queued', 'running') `+agentExecutionEligible+`
+			     WHERE c.deleted_at IS NULL AND e.status IN ('queued', 'running') `+agentExecutionEligible+`
 			     ORDER BY e.created_at, e.execution_id LIMIT 1 FOR NO KEY UPDATE OF c SKIP LOCKED
 			), investigation_work AS MATERIALIZED (
 			    SELECT e.org_id, e.execution_id, e.created_at FROM agent_execution e
@@ -360,7 +409,7 @@ func useExecutionLease(
 		     FROM agent_execution
 		     WHERE org_id = $1 AND execution_id = $2 AND status = 'running' AND lease_token = $3
 		     FOR UPDATE)
-		SELECT owned.lease_expires_at, owned.conversation_id, owned.investigation_id, owned.message_sequence, i.conversation_id
+	SELECT owned.lease_expires_at, owned.conversation_id, owned.investigation_id, owned.message_sequence, `+legacyInvestigationConversation+`
 		  FROM owned LEFT JOIN investigation i ON i.org_id = $1 AND i.investigation_id = owned.investigation_id
 		 WHERE owned.lease_expires_at > clock_timestamp()`,
 		org, id, token).Scan(&expires, &conversationID, &investigationID, &owned.MessageSequence, &investigationConversation)
@@ -426,6 +475,24 @@ func (p *Database) FinishAgentExecution(ctx context.Context, org uuid.UUID, exec
 	status AgentExecutionStatus, reply string, conclusion *investigation.Conclusion, usage investigation.Usage,
 	checkpoint ...*agent.AgentState,
 ) error {
+	return p.finishAgentExecution(ctx, org, execution, status, reply, conclusion, usage, nil, checkpoint...)
+}
+
+func (p *Database) FinishAgentChat(ctx context.Context, org uuid.UUID, execution AgentExecution,
+	reply string, usage investigation.Usage,
+) (string, error) {
+	var fallback string
+	err := p.finishAgentExecution(ctx, org, execution, AgentExecutionCompleted, reply, nil, usage, &fallback)
+	if err != nil {
+		return "", err
+	}
+	return fallback, nil
+}
+
+func (p *Database) finishAgentExecution(ctx context.Context, org uuid.UUID, execution AgentExecution,
+	status AgentExecutionStatus, reply string, conclusion *investigation.Conclusion, usage investigation.Usage,
+	titleFallback *string, checkpoint ...*agent.AgentState,
+) error {
 	if status != AgentExecutionFailed && status != AgentExecutionCompleted {
 		return errors.New("invalid agent terminal outcome")
 	}
@@ -462,6 +529,11 @@ func (p *Database) FinishAgentExecution(ctx context.Context, org uuid.UUID, exec
 			return err
 		}
 		return useAgentLease(ctx, tx, org, execution, func(tx pgx.Tx) error {
+			if execution.ConversationID != uuid.Nil && status == AgentExecutionCompleted {
+				if _, _, err := agentToolScope(ctx, tx, org, execution); err != nil {
+					return err
+				}
+			}
 			if state != nil {
 				if err := writeAgentCheckpoint(ctx, tx, org, execution, state); err != nil {
 					return err
@@ -474,6 +546,17 @@ func (p *Database) FinishAgentExecution(ctx context.Context, org uuid.UUID, exec
 					sequence, err = insertAgentReply(ctx, tx, org, execution, reply)
 					if err != nil {
 						return err
+					}
+					if titleFallback != nil {
+						var fallback string
+						err := pgx.BeginFunc(ctx, tx, func(savepoint pgx.Tx) error {
+							var err error
+							fallback, err = setChatFallbackTitle(ctx, savepoint, org, execution.ConversationID, execution.MessageSequence)
+							return err
+						})
+						if err == nil {
+							*titleFallback = fallback
+						}
 					}
 				}
 			} else {

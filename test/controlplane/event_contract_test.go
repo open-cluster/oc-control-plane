@@ -208,18 +208,8 @@ func assertModelEventSchema(t *testing.T, model *eventContractModel, want []stri
 			t.Errorf("no %s event validated", kind)
 		}
 	}
-	status, body = plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/conversations/"+conversationID+"/messages",
-		map[string]any{"message": "Which channel did you find?"})
-	if status != http.StatusAccepted {
-		t.Fatalf("follow-up admission = %d: %s", status, body)
-	}
-	var followUp struct {
-		Turn struct {
-			ID string `json:"investigationId"`
-		} `json:"turn"`
-	}
-	decodeInto(t, body, &followUp)
-	if got := plane.awaitInvestigation(t, followUp.Turn.ID); !strings.Contains(got, `"status":"concluded"`) ||
+	followUp := plane.seedLegacyTurn(t, conversationID, "Which channel did you find?")
+	if got := plane.awaitInvestigation(t, followUp); !strings.Contains(got, `"status":"concluded"`) ||
 		!strings.Contains(got, `"evidenceRefs":[{"toolRunId":`) {
 		t.Fatalf("follow-up lost its earlier Tool Run citation: %s", got)
 	}

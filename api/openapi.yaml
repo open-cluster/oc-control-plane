@@ -603,7 +603,13 @@ paths:
       <<: *privileged-write
       operationId: openInvestigation
       summary: Open investigation
+      description: Queue an independent Investigation for an Incident or question. An optional web Conversation link provides navigation context.
       tags: [Investigations]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          description: Required for questions, Conversation links, and custom windows. Reuse the key for identical retries.
+          schema: { type: string, minLength: 1, maxLength: 128 }
       requestBody:
         content:
           application/json:
@@ -614,6 +620,8 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/Unavailable" }
   /api/v1/investigations/{investigation}:
@@ -716,6 +724,7 @@ paths:
       <<: *privileged-write
       operationId: openConversation
       summary: Open conversation
+      description: Create an empty web Conversation. An optional Incident association supplies Chat context.
       tags: [Conversations]
       requestBody:
         content:
@@ -733,9 +742,32 @@ paths:
       <<: *privileged-read
       operationId: getConversation
       summary: Get conversation
+      description: Read Conversation metadata. Use the Messages endpoint for its history.
       tags: [Conversations]
       responses:
         "200": { $ref: "#/components/responses/ConversationDetail" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+    patch:
+      <<: *privileged-write
+      operationId: renameConversation
+      summary: Rename conversation
+      tags: [Conversations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RenameConversationRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/ConversationDetail" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+    delete:
+      <<: *privileged-write
+      operationId: deleteConversation
+      summary: Delete conversation
+      description: Remove Conversation content and stop its work. Linked independent Investigation reports are retained.
+      tags: [Conversations]
+      responses:
+        "204": { description: Conversation deleted. }
         default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/conversations/{conversation}/turns:
     parameters: *conversation-path
@@ -743,7 +775,7 @@ paths:
       <<: *privileged-read
       operationId: listConversationTurns
       summary: List conversation turns
-      description: Returns turns ordered by turn number then Investigation ID, ascending. Cursors are scoped to the Organization, Conversation and ordering. Only limit and cursor are accepted.
+      description: Returns historical turns ordered by turn number then Investigation ID, ascending. Cursors are scoped to the Organization, Conversation and ordering. Only limit and cursor are accepted.
       tags: [Conversations]
       parameters:
         - { $ref: "#/components/parameters/Limit" }
@@ -753,10 +785,23 @@ paths:
         default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/conversations/{conversation}/messages:
     parameters: *conversation-path
+    get:
+      <<: *privileged-read
+      operationId: listConversationMessages
+      summary: List conversation messages
+      description: Returns visible Messages in ascending sequence order. Use the returned cursor with the same Conversation.
+      tags: [Conversations]
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200": { description: A bounded page of Messages., content: { application/json: { schema: { $ref: "#/components/schemas/ConversationMessagePage" } } } }
+        default: { $ref: "#/components/responses/ErrorResponse" }
     post:
       <<: *privileged-write
       operationId: appendConversationMessage
       summary: Append conversation message
+      description: Save the user Message and queue a Chat reply. An identical clientMessageId retry returns the original Message and execution identity.
       tags: [Conversations]
       requestBody:
         content:
@@ -769,6 +814,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/Unavailable" }
   /api/v1/incidents/{incident}/postmortem:
@@ -948,7 +994,7 @@ components:
       name: search
       in: query
       required: false
-      description: Case-insensitive containment search over the Conversation subject.
+      description: Case-insensitive containment search over the Conversation title.
       schema: { type: string, minLength: 1, maxLength: 256 }
     IntegrationSort:
       name: sort
@@ -1102,9 +1148,9 @@ components:
     InvestigationDetail: { description: Investigation with durable Tool Runs., content: { application/json: { schema: { $ref: "#/components/schemas/InvestigationDetail" } } } }
     ToolRunObservation: { description: "One protected prepared observation, with its Tool Run metadata and current Integration name/type.", content: { application/json: { schema: { $ref: "#/components/schemas/ToolRunObservation" } } } }
     ConversationList: { description: Conversations., content: { application/json: { schema: { $ref: "#/components/schemas/ConversationList" } } } }
-    ConversationOpened: { description: "Conversation opened, with an optional first Message and turn.", content: { application/json: { schema: { $ref: "#/components/schemas/ConversationOpened" } } } }
-    ConversationDetail: { description: Conversation with Messages and turns., content: { application/json: { schema: { $ref: "#/components/schemas/ConversationDetail" } } } }
-    ConversationMessageAccepted: { description: Message accepted; turn is absent when queued behind an active turn., content: { application/json: { schema: { $ref: "#/components/schemas/MessageAccepted" } } } }
+    ConversationOpened: { description: Empty Conversation created., content: { application/json: { schema: { $ref: "#/components/schemas/Conversation" } } } }
+    ConversationDetail: { description: Conversation metadata., content: { application/json: { schema: { $ref: "#/components/schemas/Conversation" } } } }
+    ConversationMessageAccepted: { description: Message and Chat execution accepted., content: { application/json: { schema: { $ref: "#/components/schemas/MessageAccepted" } } } }
     Postmortem: { description: Postmortem., content: { application/json: { schema: { $ref: "#/components/schemas/Postmortem" } } } }
     WebhookAccepted: { description: Delivery durably accepted., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
     AlertWebhookAccepted: { description: "Delivery facts and Incident updates committed together. When a model provider is configured, automatic Investigations for newly opened Incidents commit in the same transaction.", content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
@@ -1620,6 +1666,9 @@ components:
         id: { $ref: "#/components/schemas/UUID" }
         status: { type: string, enum: [queued, running, concluded, failed, cancelled] }
         subject: { type: string, minLength: 1, maxLength: 1024 }
+        conversationId: { $ref: "#/components/schemas/UUID" }
+        executionId: { $ref: "#/components/schemas/UUID", description: Included on admission. }
+        eventsUrl: { type: string, description: Investigation event stream path. Included on admission. }
         incidentId: { $ref: "#/components/schemas/UUID" }
         windowFrom: { $ref: "#/components/schemas/Timestamp" }
         windowUntil: { $ref: "#/components/schemas/Timestamp" }
@@ -1834,40 +1883,50 @@ components:
     OpenInvestigationRequest:
       type: object
       additionalProperties: false
-      required: [incidentId]
-      properties:
-        incidentId: { $ref: "#/components/schemas/UUID" }
-    OpenConversationRequest:
-      type: object
-      additionalProperties: false
-      required: [subject]
-      dependentRequired:
-        windowFrom: [windowUntil, message]
-        windowUntil: [windowFrom, message]
-      properties:
-        incidentId: { $ref: "#/components/schemas/UUID" }
-        subject: { type: string, minLength: 1, maxLength: 512 }
-        message: { type: string, minLength: 1, maxLength: 8192 }
-        windowFrom: { $ref: "#/components/schemas/Timestamp", description: "Inclusive start, before windowUntil. Normalized to UTC microseconds." }
-        windowUntil: { $ref: "#/components/schemas/Timestamp", description: "Exclusive end, no later than acceptance time. Requires a first Message." }
-    ConversationMessageRequest:
-      type: object
-      additionalProperties: false
-      required: [message]
+      oneOf:
+        - required: [incidentId]
+        - required: [question]
       dependentRequired:
         windowFrom: [windowUntil]
         windowUntil: [windowFrom]
       properties:
-        message: { type: string, minLength: 1, maxLength: 8192 }
-        windowFrom: { $ref: "#/components/schemas/Timestamp", description: "Inclusive start, before windowUntil. Normalized to UTC microseconds. Must match an existing queued batch." }
-        windowUntil: { $ref: "#/components/schemas/Timestamp", description: "Exclusive end, no later than acceptance time. Omit both bounds to inherit the queued batch or use the default window." }
+        incidentId: { $ref: "#/components/schemas/UUID" }
+        conversationId: { $ref: "#/components/schemas/UUID" }
+        question: { type: string, minLength: 1, maxLength: 1024 }
+        windowFrom: { $ref: "#/components/schemas/Timestamp" }
+        windowUntil: { $ref: "#/components/schemas/Timestamp" }
+    OpenConversationRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        incidentId: { $ref: "#/components/schemas/UUID" }
+        title: { type: string, maxLength: 512, description: Omit for automatic naming. }
+    RenameConversationRequest:
+      type: object
+      additionalProperties: false
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 512 }
+    ConversationMessageRequest:
+      type: object
+      description: The JSON body is limited to 32 KiB.
+      additionalProperties: false
+      required: [clientMessageId, text]
+      dependentRequired:
+        windowFrom: [windowUntil]
+        windowUntil: [windowFrom]
+      properties:
+        clientMessageId: { $ref: "#/components/schemas/UUID" }
+        text: { type: string, minLength: 1, maxLength: 8192 }
+        windowFrom: { $ref: "#/components/schemas/Timestamp", description: "Inclusive start, before windowUntil. Normalized to UTC microseconds." }
+        windowUntil: { $ref: "#/components/schemas/Timestamp", description: "Exclusive end, no later than acceptance time. Omit both bounds for the default window." }
     Conversation:
       type: object
       additionalProperties: false
-      required: [id, subject, source, createdAt, lastActivityAt]
+      required: [id, title, source, createdAt, lastActivityAt]
       properties:
         id: { $ref: "#/components/schemas/UUID" }
-        subject: { type: string, minLength: 1, maxLength: 512 }
+        title: { type: string, maxLength: 512 }
         source: { type: string, enum: [web, slack] }
         incidentId: { $ref: "#/components/schemas/UUID" }
         createdBy: { type: string, maxLength: 256 }
@@ -1914,31 +1973,21 @@ components:
       properties:
         turns: { type: array, maxItems: 200, items: { $ref: "#/components/schemas/ConversationTurn" } }
         next: { oneOf: [{ type: string, maxLength: 512 }, { type: "null" }] }
-    ConversationDetail:
-      allOf:
-        - { $ref: "#/components/schemas/Conversation" }
-        - type: object
-          required: [messages, turns, turnsNext]
-          properties:
-            messages: { type: array, items: { $ref: "#/components/schemas/ConversationMessage" } }
-            turns: { type: array, maxItems: 50, description: First page ordered by turn number then Investigation ID ascending., items: { $ref: "#/components/schemas/ConversationTurn" } }
-            turnsNext: { description: Pass as cursor to the Conversation turns endpoint; null when exhausted., oneOf: [{ type: string, maxLength: 512 }, { type: "null" }] }
-    ConversationOpened:
-      allOf:
-        - { $ref: "#/components/schemas/Conversation" }
-        - type: object
-          properties:
-            message: { $ref: "#/components/schemas/ConversationMessage" }
-            turn: { $ref: "#/components/schemas/ConversationTurn" }
-            queued: { type: boolean }
+    ConversationMessagePage:
+      type: object
+      additionalProperties: false
+      required: [items, next, total]
+      properties:
+        <<: *page-metadata
+        items: { type: array, maxItems: 200, items: { $ref: "#/components/schemas/ConversationMessage" } }
     MessageAccepted:
       type: object
       additionalProperties: false
-      required: [message, queued]
+      required: [message, executionId, status]
       properties:
         message: { $ref: "#/components/schemas/ConversationMessage" }
-        turn: { $ref: "#/components/schemas/ConversationTurn" }
-        queued: { type: boolean }
+        executionId: { $ref: "#/components/schemas/UUID" }
+        status: { type: string, enum: [queued, running, needs_input, completed, failed, cancelled] }
     PostmortemHumanInput:
       type: object
       additionalProperties: false

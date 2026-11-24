@@ -7,8 +7,7 @@ import (
 )
 
 var (
-	ErrInvalidWindow  = errors.New("windowFrom and windowUntil must be paired RFC3339 timestamps with an offset, windowFrom before windowUntil, and windowUntil not in the future")
-	ErrWindowConflict = errors.New("the queued batch has a different window; retry after it opens")
+	ErrInvalidWindow = errors.New("windowFrom and windowUntil must be paired RFC3339 timestamps with an offset, windowFrom before windowUntil, and windowUntil not in the future")
 )
 
 const MinimumQuestionWindow = 24 * time.Hour
@@ -30,12 +29,12 @@ func (w Window) Valid(now time.Time) bool {
 	return w.From.Year() >= 1 && w.From.Before(w.Until) && !w.Until.After(now)
 }
 
-type windowInput struct {
+type WindowInput struct {
 	WindowFrom  json.RawMessage `json:"windowFrom"`
 	WindowUntil json.RawMessage `json:"windowUntil"`
 }
 
-func (input windowInput) parse(now time.Time) (*Window, error) {
+func (input WindowInput) Parse(now time.Time) (*Window, error) {
 	if len(input.WindowFrom) == 0 && len(input.WindowUntil) == 0 {
 		return nil, nil
 	}

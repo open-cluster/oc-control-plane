@@ -205,7 +205,7 @@ func TestAConversationOutsideSlackOwesNothing(t *testing.T) {
 	ctx := context.Background()
 	opened, err := database.OpenConversation(ctx, ownerOf(t, organization), organization,
 		conversation.NewConversation{
-			Source: conversation.SourceWeb, Subject: "asked in the console",
+			Source: conversation.SourceWeb, Title: "asked in the console",
 			CreatedBy: "user-under-test",
 		})
 	if err != nil {

@@ -33,46 +33,6 @@ const runningAgentInvestigation = `EXISTS (
 	SELECT 1 FROM agent_execution e
 	 WHERE e.org_id = i.org_id AND e.investigation_id = i.investigation_id AND e.status = 'running')`
 
-func (p *Database) CreateInvestigation(
-	ctx context.Context, principal authz.Principal, organization uuid.UUID,
-	wanted investigation.NewInvestigation, maxPending int,
-) (investigation.Investigation, error) {
-	return audited(ctx, p, principal, organization, audit.ActionInvestigationOpened,
-		func(ctx context.Context, transaction pgx.Tx) (
-			investigation.Investigation, audit.Target, audit.Detail, error,
-		) {
-			if err := reserveWaitingInvestigations(ctx, transaction, organization, maxPending, 1); err != nil {
-				if errors.Is(err, ErrInvestigationCapacity) {
-					return investigation.Investigation{}, audit.Target{}, nil, investigation.ErrQueueFull
-				}
-				return investigation.Investigation{}, audit.Target{}, nil, err
-			}
-			row := transaction.QueryRow(ctx, `
-				INSERT INTO investigation AS i (investigation_id, org_id, incident_id,
-				                                subject, window_from, window_until, requested_by)
-				VALUES ($1, $2, $3, $4, $5, $6, $7)
-				RETURNING `+investigationColumns,
-				uuid.New(), organization, nullableUUID(wanted.IncidentID), wanted.Subject,
-				wanted.WindowFrom, wanted.WindowUntil, nullableUUID(principal.UserID()))
-
-			created, err := scanInvestigation(row)
-			if err != nil {
-				if isForeignKeyViolation(err) {
-					return investigation.Investigation{}, audit.Target{}, nil,
-						investigation.ErrIncidentUnknown
-				}
-				return investigation.Investigation{}, audit.Target{}, nil,
-					fmt.Errorf("creating an investigation: %w", err)
-			}
-			if err := queueInvestigation(ctx, transaction, organization, created.ID); err != nil {
-				return investigation.Investigation{}, audit.Target{}, nil, err
-			}
-			return created,
-				audit.Target{Kind: audit.TargetInvestigation, ID: created.ID.String()},
-				audit.Detail{"subject": created.Subject}, nil
-		})
-}
-
 func (p *Database) Investigation(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 ) (investigation.Investigation, error) {
@@ -269,10 +229,6 @@ func (p *Database) QueryInvestigations(
 func (p *Database) CancelInvestigation(
 	ctx context.Context, principal authz.Principal, organization uuid.UUID, id uuid.UUID,
 ) (investigation.Investigation, error) {
-	payload, err := json.Marshal(investigation.CancelledPayload())
-	if err != nil {
-		return investigation.Investigation{}, err
-	}
 	return audited(ctx, p, principal, organization, audit.ActionInvestigationCancelled,
 		func(ctx context.Context, transaction pgx.Tx) (
 			investigation.Investigation, audit.Target, audit.Detail, error,
@@ -302,33 +258,27 @@ func (p *Database) CancelInvestigation(
 				return investigation.Investigation{}, audit.Target{}, nil,
 					fmt.Errorf("cancelling an investigation: %w", err)
 			}
-			if _, err := revokeAgentExecution(ctx, transaction, organization, uuid.Nil, uuid.Nil, id); err != nil {
-				return investigation.Investigation{}, audit.Target{}, nil, fmt.Errorf("revoking the Investigation agent lease: %w", err)
-			}
-			if _, err = transaction.Exec(ctx, `
-				UPDATE relay_job
-				   SET status = CASE WHEN status = 0 THEN 4 ELSE status END,
-				       terminal_at = CASE WHEN status = 0 THEN now() ELSE terminal_at END,
-				       cancel_requested_at = coalesce(cancel_requested_at, now())
-				 WHERE org_id = $1 AND investigation_id = $2 AND status IN (0, 1)`,
-				organization, id); err != nil {
-				return investigation.Investigation{}, audit.Target{}, nil,
-					fmt.Errorf("cancelling investigation-owned Relay work: %w", err)
-			}
-			if _, err = transaction.Exec(ctx, `
-				INSERT INTO investigation_event
-				    (investigation_id, org_id, sequence, at, type, payload)
-				SELECT $1, $2, coalesce(max(sequence), 0) + 1, now(), $3,
-				       $4
-				  FROM investigation_event
-				 WHERE investigation_id = $1 AND org_id = $2`,
-				id, organization, int16(investigation.EventCancelled), payload); err != nil {
-				return investigation.Investigation{}, audit.Target{}, nil,
-					fmt.Errorf("recording an investigation cancellation event: %w", err)
+			if err := cancelInvestigationWork(ctx, transaction, organization, id); err != nil {
+				return investigation.Investigation{}, audit.Target{}, nil, err
 			}
 			return ended, audit.Target{Kind: audit.TargetInvestigation, ID: id.String()},
-				audit.Detail{"subject": ended.Subject}, nil
+				nil, nil
 		})
+}
+
+func cancelInvestigationWork(ctx context.Context, tx pgx.Tx, org, id uuid.UUID) error {
+	if _, err := revokeAgentExecution(ctx, tx, org, uuid.Nil, uuid.Nil, id); err != nil {
+		return fmt.Errorf("revoking the Investigation lease: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE relay_job
+		   SET status = CASE WHEN status = 0 THEN 4 ELSE status END,
+		       terminal_at = CASE WHEN status = 0 THEN now() ELSE terminal_at END,
+		       cancel_requested_at = coalesce(cancel_requested_at, now())
+		 WHERE org_id = $1 AND investigation_id = $2 AND status IN (0, 1)`, org, id); err != nil {
+		return fmt.Errorf("cancelling Investigation-owned Relay work: %w", err)
+	}
+	return appendInvestigationEvent(ctx, tx, org, id, investigation.CancelledPayload())
 }
 
 func insertInvestigationReply(ctx context.Context, transaction pgx.Tx, organization, conversationID, id uuid.UUID, assistantReply string) error {
@@ -517,15 +467,21 @@ func reserveWaitingInvestigations(
 	if maximum <= 0 {
 		return nil
 	}
-	if _, err := transaction.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
-		organization.String()); err != nil {
-		return fmt.Errorf("locking organization waiting-investigation capacity: %w", err)
+	if err := lockOrganizationAdmissions(ctx, transaction, organization); err != nil {
+		return err
+	}
+	return checkWaitingInvestigationCapacity(ctx, transaction, organization, maximum, requested)
+}
+
+func checkWaitingInvestigationCapacity(ctx context.Context, tx pgx.Tx, org uuid.UUID, maximum, requested int) error {
+	if maximum <= 0 {
+		return nil
 	}
 	var waiting int
-	if err := transaction.QueryRow(ctx, `
+	if err := tx.QueryRow(ctx, `
 		SELECT count(*) FROM investigation i
 		 WHERE i.org_id = $1 AND i.status = 1 AND NOT `+runningAgentInvestigation,
-		organization).Scan(&waiting); err != nil {
+		org).Scan(&waiting); err != nil {
 		return fmt.Errorf("counting organization waiting investigations: %w", err)
 	}
 	if requested > maximum-waiting {

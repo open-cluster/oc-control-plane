@@ -43,19 +43,19 @@ func agentToolScope(
 	var window conversation.Window
 	if execution.InvestigationID != uuid.Nil {
 		var automatic bool
-		var conversationID, requester uuid.NullUUID
-		if err := tx.QueryRow(ctx, `SELECT window_from, window_until, automatic_incident, conversation_id, requested_by
+		var requester uuid.NullUUID
+		if err := tx.QueryRow(ctx, `SELECT window_from, window_until, automatic_incident, requested_by
 			FROM investigation WHERE org_id = $1 AND investigation_id = $2`, org, execution.InvestigationID).
-			Scan(&window.From, &window.Until, &automatic, &conversationID, &requester); err != nil {
+			Scan(&window.From, &window.Until, &automatic, &requester); err != nil {
 			return window, nil, err
 		}
-		if !conversationID.Valid {
+		if !execution.HasAssignedInput() {
 			if automatic {
 				return window, nil, nil
 			}
 			return window, nil, authorizeAgentActors(ctx, tx, org, authz.InvestigationOpen, []string{requester.UUID.String()})
 		}
-		origin, err := conversationOrigin(ctx, tx, org, conversationID.UUID, true)
+		origin, err := conversationOrigin(ctx, tx, org, execution.investigationConversationID, true)
 		if errors.Is(err, errConversationOrigin) {
 			return window, nil, ErrAgentToolRunUnavailable
 		}
@@ -65,17 +65,22 @@ func agentToolScope(
 		var authors []string
 		if err := tx.QueryRow(ctx, `SELECT array_agg(DISTINCT author_id) FROM conversation_message
 			WHERE org_id = $1 AND conversation_id = $2 AND investigation_id = $3 AND role = $4`,
-			org, conversationID.UUID, execution.InvestigationID, int16(conversation.RoleUser)).Scan(&authors); err != nil {
+			org, execution.investigationConversationID, execution.InvestigationID, int16(conversation.RoleUser)).Scan(&authors); err != nil {
 			return window, nil, err
 		}
 		return window, nil, authorizeAgentActors(ctx, tx, org, authz.ConversationWrite, authors)
 	}
 	var author string
 	if err := tx.QueryRow(ctx, `
-		SELECT author_id, window_from, window_until FROM conversation_message
-		 WHERE org_id = $1 AND conversation_id = $2 AND sequence = $3 AND role = $4`,
+		SELECT m.author_id, m.window_from, m.window_until FROM conversation_message m
+		  JOIN conversation c USING (org_id, conversation_id)
+		 WHERE m.org_id = $1 AND m.conversation_id = $2 AND m.sequence = $3 AND m.role = $4
+		   AND c.deleted_at IS NULL AND NOT c.legacy_history`,
 		org, execution.ConversationID, execution.MessageSequence, int16(conversation.RoleUser)).
 		Scan(&author, &window.From, &window.Until); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return window, nil, ErrAgentToolRunUnavailable
+		}
 		return window, nil, err
 	}
 	origin, err := conversationOrigin(ctx, tx, org, execution.ConversationID, true)

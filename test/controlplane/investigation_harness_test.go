@@ -9,6 +9,8 @@ import (
 
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
@@ -151,23 +153,58 @@ func (p *integrationPlane) awaitInvestigation(t *testing.T, id string) string {
 
 func (p *integrationPlane) openConversation(t *testing.T, subject, message string) (string, string) {
 	t.Helper()
-	body := map[string]any{"subject": subject}
-	if message != "" {
-		body["message"] = message
-	}
+	body := map[string]any{"title": subject}
 	status, answer := p.call(t, http.MethodPost, p.base(surfaceOrg)+"/conversations", body)
 	if status != http.StatusCreated {
 		t.Fatalf("opening conversation = %d: %s", status, answer)
 	}
 	var opened struct {
-		ID   string `json:"id"`
-		Turn *struct {
-			InvestigationID string `json:"investigationId"`
-		} `json:"turn"`
+		ID string `json:"id"`
 	}
 	decodeInto(t, answer, &opened)
-	if opened.Turn == nil {
+	if message == "" {
 		return opened.ID, ""
 	}
-	return opened.ID, opened.Turn.InvestigationID
+	return opened.ID, p.seedLegacyTurn(t, opened.ID, message)
+}
+
+// seedLegacyTurn reproduces a record admitted before the web Chat cutover.
+func (p *integrationPlane) seedLegacyTurn(t *testing.T, id, question string) string {
+	t.Helper()
+	ctx := t.Context()
+	conn, err := pgx.Connect(ctx, p.databaseDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	turn := uuid.NewString()
+	err = pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `UPDATE conversation SET legacy_history = true
+			WHERE org_id = $1 AND conversation_id = $2`, surfaceOrg, id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO investigation (org_id, investigation_id, conversation_id, turn, subject, window_from, window_until)
+			SELECT c.org_id, $3, c.conversation_id,
+			       (SELECT coalesce(max(turn), 0) + 1 FROM investigation WHERE org_id = $1 AND conversation_id = $2),
+			       c.title, now() - interval '1 day', now()
+			  FROM conversation c WHERE c.org_id = $1 AND c.conversation_id = $2`, surfaceOrg, id, turn); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO conversation_message
+			(org_id, conversation_id, sequence, role, author_id, author_name, text, investigation_id, window_from, window_until)
+			SELECT c.org_id, c.conversation_id,
+			       (SELECT coalesce(max(sequence), 0) + 1 FROM conversation_message WHERE org_id = $1 AND conversation_id = $2),
+			       1, c.created_by, 'Test Administrator', $4, i.investigation_id, i.window_from, i.window_until
+			FROM conversation c JOIN investigation i USING (org_id, conversation_id)
+			WHERE c.org_id = $1 AND c.conversation_id = $2 AND i.investigation_id = $3`, surfaceOrg, id, turn, question); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO agent_execution (org_id, execution_id, investigation_id) VALUES ($1, $2, $3)`,
+			surfaceOrg, uuid.New(), turn)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return turn
 }

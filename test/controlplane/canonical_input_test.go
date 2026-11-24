@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"encoding/json"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -48,11 +47,7 @@ func TestAssignedMessageBeyondPreviewReachesModel(t *testing.T) {
 		t.Fatal("Investigation did not invoke the model")
 	}
 	const followUp = "Check the same region for errors."
-	status, body := plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/conversations/"+conversationID+"/messages",
-		map[string]any{"message": followUp})
-	if status != http.StatusAccepted {
-		t.Fatalf("open follow-up = %d: %s", status, body)
-	}
+	plane.seedLegacyTurn(t, conversationID, followUp)
 	select {
 	case prompt := <-prompts:
 		var priorRequest, currentRequest bool

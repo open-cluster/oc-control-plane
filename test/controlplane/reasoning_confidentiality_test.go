@@ -82,7 +82,7 @@ func TestPrivateModelReasoningNeverCrossesTheProviderBoundary(t *testing.T) {
 		t.Fatalf("the Investigation did not commit a report: %s", final)
 	}
 	status, transcript := plane.call(t, http.MethodGet,
-		plane.base(surfaceOrg)+"/conversations/"+conversation, nil)
+		plane.base(surfaceOrg)+"/conversations/"+conversation+"/messages", nil)
 	if status != http.StatusOK {
 		t.Fatalf("reading the conversation = %d: %s", status, transcript)
 	}

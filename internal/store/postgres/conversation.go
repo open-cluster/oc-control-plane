@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,7 +17,7 @@ import (
 
 var _ conversation.Store = (*Database)(nil)
 
-const conversationColumns = `conversation_id, incident_id, source, subject,
+const conversationColumns = `conversation_id, incident_id, source, title,
 	       created_by, created_at, last_activity_at`
 
 func (p *Database) OpenConversation(
@@ -29,11 +30,11 @@ func (p *Database) OpenConversation(
 		) {
 			row := transaction.QueryRow(ctx, `
 				INSERT INTO conversation (conversation_id, org_id, incident_id, source,
-				                          subject, created_by)
-				VALUES ($1, $2, $3, $4, $5, $6)
+				                          title, created_by, custom_title)
+				VALUES ($1, $2, $3, $4, $5, $6, $5 <> '')
 				RETURNING `+conversationColumns,
 				uuid.New(), organization, nullableUUID(wanted.IncidentID),
-				string(wanted.Source), wanted.Subject, wanted.CreatedBy)
+				string(wanted.Source), wanted.Title, wanted.CreatedBy)
 
 			opened, err := scanConversation(row)
 			if err != nil {
@@ -46,7 +47,7 @@ func (p *Database) OpenConversation(
 			}
 			return opened,
 				audit.Target{Kind: audit.TargetConversation, ID: opened.ID.String()},
-				audit.Detail{"subject": opened.Subject}, nil
+				nil, nil
 		})
 }
 
@@ -60,7 +61,7 @@ func (p *Database) conversationByID(
 	row := pool.QueryRow(ctx, `
 		SELECT `+conversationColumns+`
 		  FROM conversation
-		 WHERE conversation_id = $1 AND org_id = $2`, id, organization)
+		 WHERE conversation_id = $1 AND org_id = $2 AND deleted_at IS NULL`, id, organization)
 	found, err := scanConversation(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return conversation.Conversation{}, conversation.ErrUnknown
@@ -69,6 +70,14 @@ func (p *Database) conversationByID(
 		return conversation.Conversation{}, fmt.Errorf("reading a conversation: %w", err)
 	}
 	return found, nil
+}
+
+func (p *Database) WebConversation(ctx context.Context, org, id uuid.UUID) (conversation.Conversation, error) {
+	found, err := p.conversationByID(ctx, org, id)
+	if err == nil && found.Source != conversation.SourceWeb {
+		return conversation.Conversation{}, conversation.ErrUnknown
+	}
+	return found, err
 }
 
 func (p *Database) QueryConversations(
@@ -112,7 +121,7 @@ func (p *Database) QueryConversations(
 	}
 	if page.Search != "" {
 		arguments = append(arguments, "%"+page.Search+"%")
-		narrowing += fmt.Sprintf(" AND subject ILIKE $%d", len(arguments))
+		narrowing += fmt.Sprintf(" AND title ILIKE $%d", len(arguments))
 	}
 	if page.Incident != uuid.Nil {
 		arguments = append(arguments, page.Incident)
@@ -125,7 +134,7 @@ func (p *Database) QueryConversations(
 	rows, err := pool.Query(ctx, fmt.Sprintf(`
 		SELECT `+conversationColumns+`
 		  FROM conversation
-		 WHERE org_id = $1 AND source = 'web'`+narrowing+`
+		 WHERE org_id = $1 AND source = 'web' AND deleted_at IS NULL`+narrowing+`
 		 ORDER BY last_activity_at %s, conversation_id %s
 		 LIMIT $2`, direction, direction), arguments...)
 	if err != nil {
@@ -166,7 +175,7 @@ func (p *Database) ConversationDetail(
 		return conversation.Detail{}, err
 	}
 
-	said, err := conversationMessages(ctx, pool, organization, id, messages, found.Source)
+	said, err := conversationMessages(ctx, pool, organization, id, messages)
 	if err != nil {
 		return conversation.Detail{}, err
 	}
@@ -178,122 +187,15 @@ func (p *Database) ConversationDetail(
 	return conversation.Detail{Conversation: found, Messages: said, Turns: turns.Turns, TurnsNext: turns.Next}, nil
 }
 
-func conversationMessages(
-	ctx context.Context,
-	queries querier,
-	organization uuid.UUID,
-	id uuid.UUID, limit int, source conversation.Source,
-) ([]conversation.Message, error) {
+func conversationMessages(ctx context.Context, queries querier, org, id uuid.UUID, limit int) ([]conversation.Message, error) {
 	if limit <= 0 {
 		limit = defaultPageSize
 	}
-	rows, err := queries.Query(ctx, `
-		SELECT sequence, role, author_id, author_name, text, source_reference,
-		       investigation_id, created_at, window_from, window_until
-		  FROM (SELECT m.sequence, m.role, m.author_id, m.author_name, m.text, m.source_reference,
-		               m.investigation_id, m.created_at, m.window_from, m.window_until
-		          FROM conversation_message m
-		          LEFT JOIN investigation i ON i.org_id = m.org_id AND i.investigation_id = m.investigation_id
-		         WHERE m.org_id = $1 AND m.conversation_id = $2
-		           AND ($4 <> 'web' OR m.role <> $5 OR `+webInvestigationSource+`)
-		         ORDER BY m.sequence DESC
-		         LIMIT $3) newest
-		 ORDER BY sequence`, organization, id, limit, source, int16(conversation.RoleAssistant))
-	if err != nil {
-		return nil, fmt.Errorf("reading a conversation's messages: %w", err)
-	}
-	defer rows.Close()
-
-	said := make([]conversation.Message, 0, limit)
-	for rows.Next() {
-		message, scanErr := scanMessage(rows)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		said = append(said, message)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("reading a conversation's messages: %w", err)
-	}
-	return said, nil
-}
-
-type acceptedMessage struct {
-	message conversation.Message
-	turn    conversation.Turn
-	opened  bool
-}
-
-func (p *Database) AppendMessageAndOpenTurn(
-	ctx context.Context, principal authz.Principal, organization uuid.UUID,
-	id uuid.UUID, said conversation.NewMessage, lead time.Duration, maxPending int,
-) (conversation.Message, conversation.Turn, bool, error) {
-
-	accepted, err := audited(ctx, p, principal, organization, audit.ActionConversationMessage,
-		func(ctx context.Context, transaction pgx.Tx) (
-			acceptedMessage, audit.Target, audit.Detail, error,
-		) {
-			if err := validateAuthenticatedAppend(ctx, transaction, organization, id); err != nil {
-				return acceptedMessage{}, audit.Target{}, nil, err
-			}
-			if err := reserveWaitingInvestigations(ctx, transaction, organization, maxPending, 1); err != nil {
-				if errors.Is(err, ErrInvestigationCapacity) {
-					return acceptedMessage{}, audit.Target{}, nil, conversation.ErrQueueFull
-				}
-				return acceptedMessage{}, audit.Target{}, nil, err
-			}
-			written, err := appendMessage(ctx, transaction, organization, id, said, lead)
-			if err != nil {
-				return acceptedMessage{}, audit.Target{}, nil, err
-			}
-			turn, opened, err := openTurn(ctx, transaction, organization, id, lead)
-			if err != nil {
-				return acceptedMessage{}, audit.Target{}, nil, err
-			}
-			return acceptedMessage{message: written, turn: turn, opened: opened},
-				audit.Target{Kind: audit.TargetConversation, ID: id.String()},
-				audit.Detail{"sequence": written.Sequence}, nil
-		})
-	return accepted.message, accepted.turn, accepted.opened, err
-}
-
-func validateAuthenticatedAppend(
-	ctx context.Context, transaction pgx.Tx, organization, id uuid.UUID,
-) error {
-	var source conversation.Source
-	err := transaction.QueryRow(ctx, `
-		SELECT source
-		  FROM conversation
-		 WHERE conversation_id = $1 AND org_id = $2`, id, organization).Scan(&source)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return conversation.ErrUnknown
-	}
-	if err != nil {
-		return fmt.Errorf("validating an authenticated append: %w", err)
-	}
-	if source != conversation.SourceWeb {
-		return conversation.ErrSourceMismatch
-	}
-	return nil
-}
-
-func appendMessage(
-	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
-	id uuid.UUID, said conversation.NewMessage, lead time.Duration,
-) (conversation.Message, error) {
-	if said.Role == conversation.RoleUser {
-		if err := reserveQueuedMessage(ctx, transaction, organization); err != nil {
-			return conversation.Message{}, err
-		}
-	}
-	if err := lockConversation(ctx, transaction, organization, id); err != nil {
-		return conversation.Message{}, err
-	}
-	window, err := acceptedWindow(ctx, transaction, organization, id, said.Window, lead)
-	if err != nil {
-		return conversation.Message{}, err
-	}
-	return insertConversationMessage(ctx, transaction, organization, id, said, window, nil)
+	messages, err := readConversationMessages(ctx, queries, limit,
+		`SELECT `+conversationMessageColumns+visibleConversationMessages+` ORDER BY m.sequence DESC LIMIT $3`,
+		org, id, limit)
+	slices.Reverse(messages)
+	return messages, err
 }
 
 func insertConversationMessage(
@@ -323,36 +225,7 @@ func insertConversationMessage(
 	return written, nil
 }
 
-func (p *Database) OpenNextConversationTurn(
-	ctx context.Context, organization uuid.UUID, id uuid.UUID,
-	lead time.Duration, maxPending int,
-) (bool, error) {
-	pool, err := p.poolForOrganization(organization)
-	if err != nil {
-		return false, err
-	}
-	transaction, err := pool.Begin(ctx)
-	if err != nil {
-		return false, fmt.Errorf("begin: %w", err)
-	}
-	defer func() { _ = transaction.Rollback(ctx) }()
-	if err = reserveWaitingInvestigations(ctx, transaction, organization, maxPending, 1); err != nil {
-		if errors.Is(err, ErrInvestigationCapacity) {
-			return false, conversation.ErrQueueFull
-		}
-		return false, err
-	}
-	_, opened, err := openTurn(ctx, transaction, organization, id, lead)
-	if err != nil || !opened {
-		return false, err
-	}
-	if err = transaction.Commit(ctx); err != nil {
-		return false, fmt.Errorf("commit: %w", err)
-	}
-	return true, nil
-}
-
-func (p *Database) OpenQueuedConversationTurn(
+func (p *Database) OpenQueuedSlackTurn(
 	ctx context.Context, lead time.Duration, maxPending int,
 ) (bool, error) {
 	transaction, err := p.pool.Begin(ctx)
@@ -370,7 +243,7 @@ func (p *Database) OpenQueuedConversationTurn(
 		    ON message.org_id = conversation.org_id
 		   AND message.conversation_id = conversation.conversation_id
 		   AND message.investigation_id IS NULL AND message.client_message_id IS NULL AND message.role = 1
-		 WHERE NOT EXISTS (
+		 WHERE conversation.source = 'slack' AND NOT EXISTS (
 		       SELECT 1 FROM investigation
 		        WHERE investigation.org_id = conversation.org_id
 		          AND investigation.conversation_id = conversation.conversation_id
@@ -385,7 +258,7 @@ func (p *Database) OpenQueuedConversationTurn(
 		return false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("finding queued Conversation work: %w", err)
+		return false, fmt.Errorf("finding queued Slack work: %w", err)
 	}
 	if err = reserveWaitingInvestigations(ctx, transaction, organization, maxPending, 1); err != nil {
 		if errors.Is(err, ErrInvestigationCapacity) {
@@ -393,7 +266,7 @@ func (p *Database) OpenQueuedConversationTurn(
 		}
 		return false, err
 	}
-	_, opened, err := openTurn(ctx, transaction, organization, conversationID, lead)
+	_, opened, err := openSlackTurn(ctx, transaction, organization, conversationID, lead)
 	if err != nil || !opened {
 		return false, err
 	}
@@ -403,7 +276,7 @@ func (p *Database) OpenQueuedConversationTurn(
 	return true, nil
 }
 
-func openTurn(
+func openSlackTurn(
 	ctx context.Context, transaction pgx.Tx, organization uuid.UUID,
 	id uuid.UUID, lead time.Duration,
 ) (conversation.Turn, bool, error) {
@@ -412,9 +285,9 @@ func openTurn(
 		subject    string
 	)
 	if err := transaction.QueryRow(ctx, `
-		SELECT incident_id, subject
+		SELECT incident_id, title
 		  FROM conversation
-		 WHERE conversation_id = $1 AND org_id = $2
+		 WHERE conversation_id = $1 AND org_id = $2 AND source = 'slack'
 		   FOR UPDATE`, id, organization).Scan(&incidentID, &subject); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return conversation.Turn{}, false, conversation.ErrUnknown
@@ -426,7 +299,7 @@ func openTurn(
 		SELECT EXISTS (SELECT 1 FROM investigation
 		 WHERE org_id = $1 AND conversation_id = $2 AND status = 1)`,
 		organization, id).Scan(&running); err != nil {
-		return conversation.Turn{}, false, fmt.Errorf("checking active turn: %w", err)
+		return conversation.Turn{}, false, fmt.Errorf("checking active Slack turn: %w", err)
 	}
 	if running {
 		return conversation.Turn{}, false, nil
@@ -476,7 +349,7 @@ func openTurn(
 		investigationID, organization, id, lastSequence); err != nil {
 		return conversation.Turn{}, false, fmt.Errorf("attaching queued messages: %w", err)
 	}
-	if err := queueInvestigation(ctx, transaction, organization, investigationID); err != nil {
+	if _, err := queueInvestigation(ctx, transaction, organization, investigationID); err != nil {
 		return conversation.Turn{}, false, err
 	}
 
@@ -564,7 +437,7 @@ func lockConversation(
 	if err := transaction.QueryRow(ctx, `
 		SELECT 1
 		  FROM conversation
-		 WHERE conversation_id = $1 AND org_id = $2
+		 WHERE conversation_id = $1 AND org_id = $2 AND deleted_at IS NULL
 		   FOR NO KEY UPDATE`, id, organization).Scan(&found); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return conversation.ErrUnknown
@@ -580,7 +453,7 @@ func scanConversation(row scanned) (conversation.Conversation, error) {
 		incidentID *uuid.UUID
 		source     conversation.Source
 	)
-	if err := row.Scan(&found.ID, &incidentID, &source, &found.Subject,
+	if err := row.Scan(&found.ID, &incidentID, &source, &found.Title,
 		&found.CreatedBy, &found.CreatedAt, &found.LastActivityAt); err != nil {
 		return conversation.Conversation{}, err
 	}
@@ -616,15 +489,15 @@ func scanMessage(row scanned) (conversation.Message, error) {
 const maxQueuedMessages = 100
 
 func reserveQueuedMessage(ctx context.Context, tx pgx.Tx, organization uuid.UUID) error {
-	if err := lockConversationQueue(ctx, tx, organization); err != nil {
+	if err := lockOrganizationAdmissions(ctx, tx, organization); err != nil {
 		return err
 	}
 	return checkConversationQueueCapacity(ctx, tx, organization)
 }
 
-func lockConversationQueue(ctx context.Context, tx pgx.Tx, org uuid.UUID) error {
+func lockOrganizationAdmissions(ctx context.Context, tx pgx.Tx, org uuid.UUID) error {
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, org.String()); err != nil {
-		return fmt.Errorf("locking organization Message capacity: %w", err)
+		return fmt.Errorf("locking Organization work admission: %w", err)
 	}
 	return nil
 }
@@ -632,8 +505,9 @@ func lockConversationQueue(ctx context.Context, tx pgx.Tx, org uuid.UUID) error 
 func checkConversationQueueCapacity(ctx context.Context, tx pgx.Tx, organization uuid.UUID) error {
 	var queued int
 	if err := tx.QueryRow(ctx, `SELECT
-	    (SELECT count(*) FROM conversation_message
-	        WHERE org_id = $1 AND investigation_id IS NULL AND client_message_id IS NULL AND role = 1) +
+	    (SELECT count(*) FROM conversation_message m JOIN conversation c USING (org_id, conversation_id)
+	        WHERE m.org_id = $1 AND c.source = 'slack'
+	          AND m.investigation_id IS NULL AND m.client_message_id IS NULL AND m.role = 1) +
 	    (SELECT count(*) FROM agent_execution WHERE org_id = $1 AND status = 'queued' AND conversation_id IS NOT NULL)`,
 		organization).Scan(&queued); err != nil {
 		return fmt.Errorf("counting queued Messages: %w", err)
@@ -644,21 +518,13 @@ func checkConversationQueueCapacity(ctx context.Context, tx pgx.Tx, organization
 	return nil
 }
 
-func acceptedWindow(
+func slackMessageWindow(
 	ctx context.Context,
 	tx pgx.Tx,
 	org uuid.UUID,
 	id uuid.UUID,
-	requested *conversation.Window,
 	lead time.Duration,
 ) (conversation.Window, error) {
-	if requested != nil {
-		normalized := requested.Normalized()
-		requested = &normalized
-	}
-	if requested != nil && !requested.Valid(time.Now()) {
-		return conversation.Window{}, conversation.ErrInvalidWindow
-	}
 	var from, until *time.Time
 	err := tx.QueryRow(ctx, `SELECT window_from, window_until FROM conversation_message
 		WHERE org_id = $1 AND conversation_id = $2 AND investigation_id IS NULL AND client_message_id IS NULL AND role = 1
@@ -667,13 +533,7 @@ func acceptedWindow(
 		return conversation.Window{}, err
 	}
 	if from != nil {
-		if requested != nil && (!requested.From.Equal(*from) || !requested.Until.Equal(*until)) {
-			return conversation.Window{}, conversation.ErrWindowConflict
-		}
 		return conversation.Window{From: *from, Until: *until}, nil
-	}
-	if requested != nil {
-		return *requested, nil
 	}
 	var incident *uuid.UUID
 	if err = tx.QueryRow(ctx, `SELECT incident_id FROM conversation WHERE org_id = $1 AND conversation_id = $2`, org, id).Scan(&incident); err != nil {
