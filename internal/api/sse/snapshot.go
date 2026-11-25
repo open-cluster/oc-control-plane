@@ -61,6 +61,12 @@ func Stream[T interface{ Terminal() bool }](writer http.ResponseWriter, request 
 	controller := http.NewResponseController(writer)
 	var last []byte
 	var lastWrite time.Time
+	defer func() {
+		if last != nil {
+			// net/http still needs a deadline for the closing chunk after an idle stream.
+			_ = controller.SetWriteDeadline(time.Now().Add(writeTimeout))
+		}
+	}()
 	for stillAuthorized() {
 		readCtx, stop := context.WithTimeout(ctx, readTimeout)
 		snapshot, err := read(readCtx)
