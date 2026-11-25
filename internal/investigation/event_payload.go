@@ -99,15 +99,3 @@ func FailedPayload(reason string) FailedEventPayload {
 		Reason: bounded(reason, maxRunErrorLength),
 	}
 }
-
-type CancelledEventPayload struct {
-	Message string `json:"message"`
-}
-
-func (CancelledEventPayload) EventType() EventType { return EventCancelled }
-
-func CancelledPayload() CancelledEventPayload {
-	return CancelledEventPayload{
-		Message: "Investigation cancelled by an operator",
-	}
-}

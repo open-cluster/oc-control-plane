@@ -333,7 +333,7 @@ func claimEligibleAgentExecution(
 ) (AgentExecution, error) {
 	execution, err := scanAgentExecution(tx.QueryRow(ctx, `
 		UPDATE agent_execution AS e
-		   SET status = 'running', lease_token = $3, lease_expires_at = clock_timestamp() + $4::interval,
+		   SET status = 'running', lease_token = $3, lease_expires_at = clock_timestamp() + $4::interval, draft_text = NULL,
 		       started_at = coalesce(e.started_at, clock_timestamp())
 		 WHERE e.org_id = $1 AND e.execution_id = $2
 		   `+agentExecutionEligible+`
@@ -347,10 +347,11 @@ func claimEligibleAgentExecution(
 	if err := interruptAgentToolRuns(ctx, tx, organization, id); err != nil {
 		return AgentExecution{}, err
 	}
-	if execution.InvestigationID != uuid.Nil {
+	if execution.HasAssignedInput() {
 		_, err = tx.Exec(ctx, `INSERT INTO investigation_event (org_id, investigation_id, sequence, type, payload)
 			SELECT $1, $2, 1, $3, jsonb_build_object('text', $4::text)
-			WHERE NOT EXISTS (SELECT 1 FROM investigation_event WHERE org_id = $1 AND investigation_id = $2)`,
+			WHERE `+slackInvestigationOwner+`
+			  AND NOT EXISTS (SELECT 1 FROM investigation_event WHERE org_id = $1 AND investigation_id = $2)`,
 			organization, execution.InvestigationID, int16(investigation.EventStarted),
 			"Reviewing this request and available evidence sources.")
 	}
@@ -359,7 +360,8 @@ func claimEligibleAgentExecution(
 
 func endAgentLease(ctx context.Context, tx pgx.Tx, organization uuid.UUID, execution AgentExecution, status AgentExecutionStatus, replySequence int64) error {
 	if _, err := tx.Exec(ctx, `
-		UPDATE agent_execution SET status = $3, lease_token = NULL, lease_expires_at = NULL, reply_message_sequence = nullif($4::bigint, 0)
+		UPDATE agent_execution SET status = $3, lease_token = NULL, lease_expires_at = NULL, draft_text = NULL,
+		       reply_message_sequence = nullif($4::bigint, 0)
 		 WHERE org_id = $1 AND execution_id = $2`, organization, execution.ID, status, replySequence); err != nil {
 		return err
 	}
@@ -479,10 +481,10 @@ func (p *Database) FinishAgentExecution(ctx context.Context, org uuid.UUID, exec
 }
 
 func (p *Database) FinishAgentChat(ctx context.Context, org uuid.UUID, execution AgentExecution,
-	reply string, usage investigation.Usage,
+	reply string, usage investigation.Usage, checkpoint ...*agent.AgentState,
 ) (string, error) {
 	var fallback string
-	err := p.finishAgentExecution(ctx, org, execution, AgentExecutionCompleted, reply, nil, usage, &fallback)
+	err := p.finishAgentExecution(ctx, org, execution, AgentExecutionCompleted, reply, nil, usage, &fallback, checkpoint...)
 	if err != nil {
 		return "", err
 	}
@@ -598,7 +600,6 @@ func finishAgentInvestigation(ctx context.Context, tx pgx.Tx, org uuid.UUID, exe
 ) error {
 	ended := investigation.StatusFailed
 	reason := "agent reply failed"
-	var payload investigation.EventPayload = investigation.FailedPayload(reason)
 	result := []byte("{}")
 	if status == AgentExecutionCompleted {
 		if conclusion == nil {
@@ -644,7 +645,6 @@ func finishAgentInvestigation(ctx context.Context, tx pgx.Tx, org uuid.UUID, exe
 			return err
 		}
 		ended, reason, result = investigation.StatusConcluded, "", encoded
-		payload = investigation.ConcludedPayload(*conclusion)
 	}
 	tag, err := tx.Exec(ctx, `
 		UPDATE investigation SET status = $3, conclusion = $4::jsonb, error = $5, concluded_at = now(),
@@ -658,29 +658,21 @@ func finishAgentInvestigation(ctx context.Context, tx pgx.Tx, org uuid.UUID, exe
 	if tag.RowsAffected() != 1 {
 		return ErrAgentLeaseLost
 	}
-	return appendInvestigationEvent(ctx, tx, org, execution.InvestigationID, payload)
-}
-
-func (p *Database) CancelAgentChatExecution(ctx context.Context, org, conversationID, id uuid.UUID) error {
-	pool, err := p.poolForOrganization(org)
-	if err != nil {
-		return err
+	if !execution.HasAssignedInput() {
+		return nil
 	}
-	return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
-		found, err := revokeAgentExecution(ctx, tx, org, conversationID, id, uuid.Nil)
-		if err == nil && !found {
-			return ErrAgentExecutionUnavailable
-		}
-		return err
-	})
+	var payload investigation.EventPayload = investigation.FailedPayload(reason)
+	if ended == investigation.StatusConcluded {
+		payload = investigation.ConcludedPayload(*conclusion)
+	}
+	return appendSlackInvestigationEvent(ctx, tx, org, execution.InvestigationID, payload)
 }
 
-func revokeAgentExecution(ctx context.Context, tx pgx.Tx, org, conversationID, id, investigationID uuid.UUID) (bool, error) {
-	var found bool
+func revokeAgentExecution(ctx context.Context, tx pgx.Tx, org, conversationID, id, investigationID uuid.UUID) (found, changed bool, err error) {
 	var revoked uuid.NullUUID
-	err := tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		WITH revoked AS (
-		    UPDATE agent_execution SET status = 'cancelled', lease_token = NULL, lease_expires_at = NULL
+		    UPDATE agent_execution SET status = 'cancelled', lease_token = NULL, lease_expires_at = NULL, draft_text = NULL
 		     WHERE org_id = $1 AND ((conversation_id = $2 AND execution_id = $3) OR investigation_id = $4)
 		       AND status IN ('queued', 'running', 'needs_input')
 		     RETURNING execution_id
@@ -694,5 +686,5 @@ func revokeAgentExecution(ctx context.Context, tx pgx.Tx, org, conversationID, i
 	if err == nil && revoked.Valid {
 		err = interruptAgentToolRuns(ctx, tx, org, revoked.UUID)
 	}
-	return found, err
+	return found, revoked.Valid, err
 }

@@ -129,8 +129,9 @@ require a fresh application database and complete setup.
 Update API clients before the new Pods start. Conversations now expose `source` (`web` or
 `slack`) instead of `surface` and have no lifecycle `state`. Message roles are `user` and
 `assistant`, attribution uses `authorId` and `authorName`, and replies are assistant Messages
-rather than Turn answers. Final hypotheses have no ID or `exploring` status. Investigation event envelopes use
-`schemaVersion: 2` with seven compact payloads.
+rather than Turn answers. Final hypotheses have no ID or `exploring` status. Chat and
+Investigation streams send the current state in a `snapshot` event. Clients reconnect
+without a replay cursor and replace their previous snapshot.
 
 ## Common failure and recovery
 

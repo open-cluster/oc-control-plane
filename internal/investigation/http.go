@@ -46,7 +46,7 @@ type HTTPStore interface {
 	CancelInvestigation(context.Context, authz.Principal, uuid.UUID,
 		uuid.UUID) (Investigation, error)
 	TriggerIncident(context.Context, uuid.UUID, uuid.UUID) (Trigger, error)
-	WebEvents(context.Context, uuid.UUID, uuid.UUID, int64, int) ([]Event, error)
+	InvestigationExecutionSnapshot(context.Context, uuid.UUID, uuid.UUID) (conversation.ExecutionSnapshot, error)
 }
 
 func (h Handlers) Routes() []authz.Route {

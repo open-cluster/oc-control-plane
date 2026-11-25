@@ -165,8 +165,50 @@ func TestSlackRetriesTerminalCloseAfterCursorAdvanced(t *testing.T) {
 		_, _ = io.WriteString(w, `{"ok":true,"ts":"1700000100.1"}`)
 	}))
 	ctx := context.Background()
-	if err := seedInvestigationConclusion(ctx, database, org, id, conclusionSaying("durable answer")); err != nil {
+	pool, err := poolForTest(database, org)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE integration i SET verification_status = 'verified', verified_at = now()
+		  FROM investigation v JOIN slack_conversation s USING (org_id, conversation_id)
+		 WHERE v.org_id = $1 AND v.investigation_id = $2
+		   AND i.org_id = s.org_id AND i.integration_id = s.integration_id`, org, id); err != nil {
+		t.Fatal(err)
+	}
+	owner, claim, err := database.ClaimNextAgentExecution(ctx, time.Minute)
+	if err != nil || owner != org || claim.InvestigationID != id {
+		t.Fatalf("claim Slack Investigation: %v", err)
+	}
+	now := time.Now()
+	run, err := database.BeginAgentToolRun(ctx, org, claim, investigation.ToolRun{
+		Tool: "query_metrics", WindowFrom: now.Add(-time.Hour), WindowUntil: now,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.CompleteAgentToolRun(ctx, org, claim, investigation.ToolRun{
+		ID: run, Outcome: investigation.RunSucceeded, Summary: "Checked the metrics.",
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	conclusion := conclusionSaying("durable answer")
+	if err := database.FinishAgentExecution(ctx, org, claim, storage.AgentExecutionCompleted,
+		conclusion.Summary, &conclusion, investigation.Usage{}); err != nil {
+		t.Fatal(err)
+	}
+	activity, err := database.Events(ctx, org, id, 0, 20)
+	want := []investigation.EventType{
+		investigation.EventStarted, investigation.EventToolStarted,
+		investigation.EventToolCompleted, investigation.EventConcluded,
+	}
+	if err != nil || len(activity) != len(want) {
+		t.Fatalf("Slack reply events = %+v: %v", activity, err)
+	}
+	for index, kind := range want {
+		if activity[index].Type != kind {
+			t.Fatalf("Slack reply event %d = %s, want %s", index, activity[index].Type, kind)
+		}
 	}
 	runSlackWorker(t, worker)
 	deadline := time.Now().Add(8 * time.Second)

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -140,6 +141,14 @@ func TestNativeToolkitCommitsFastReadBeforeTheBatchCompletes(t *testing.T) {
 	}
 	if id == uuid.Nil || !strings.Contains(observation, "checkout") || strings.Contains(observation, toolkitCredential) || requests.Load() != 1 {
 		t.Fatal("the fast observation was not committed safely before native batch publication")
+	}
+	snapshot, err := database.ChatExecutionSnapshot(ctx, org, chat.ID, execution.ID)
+	if err != nil || !slices.ContainsFunc(snapshot.Tools, func(run conversation.ToolActivity) bool {
+		return run.ToolRunID == id && run.Status == "succeeded" && run.FinishedAt != nil
+	}) || !slices.ContainsFunc(snapshot.Tools, func(run conversation.ToolActivity) bool {
+		return run.ToolRunID != id && run.Status == "running" && run.FinishedAt == nil
+	}) {
+		t.Fatalf("snapshot did not expose the fast result alongside the blocked read: %+v, %v", snapshot.Tools, err)
 	}
 	close(slow)
 	awaitAgentResult(t, ctx, pool, org, execution.ID, "Reads completed.", &requests, 2)
@@ -359,7 +368,7 @@ func TestNativeToolkitRevalidatesAuthorityAndFailsClosed(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("the last approved read did not start")
 	}
-	if err := database.CancelAgentChatExecution(ctx, org, chat.ID, claim.ID); err != nil {
+	if _, err := database.CancelChatExecution(ctx, principal, org, chat.ID, claim.ID); err != nil {
 		t.Fatal(err)
 	}
 	release <- struct{}{}

@@ -133,8 +133,9 @@ the new version. Do not delete individual rows merely to force startup.
 This migration changes the API contract: Conversations expose `source` (`web` or `slack`)
 instead of `surface` and no lifecycle `state`. Message roles are `user` and `assistant`,
 Message attribution uses `authorId` and `authorName`, and replies are assistant Messages
-rather than Turn answers. Final hypotheses have no ID or `exploring` status. Investigation event
-envelopes use `schemaVersion: 2` with the seven payloads documented in the API reference.
+rather than Turn answers. Final hypotheses have no ID or `exploring` status. Chat and
+Investigation streams send the current state in a `snapshot` event. Clients reconnect
+without a replay cursor and replace their previous snapshot.
 Update clients before bringing the new replicas online.
 
 ## Failure states

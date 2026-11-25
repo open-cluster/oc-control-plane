@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -45,7 +44,7 @@ func TestInvestigationDoesNotManufactureAConversationReply(t *testing.T) {
 		t.Fatalf("assigned turn without a native assistant Message ended as %q after %d report requests", result.Status, model.reports.Load())
 	}
 	status, replay := plane.call(t, http.MethodGet, base+"/investigations/"+turn+"/events", nil)
-	if status != http.StatusOK || strings.Count(replay, "event: failed\n") != 1 || strings.Contains(replay, "event: concluded\n") {
+	if status != http.StatusOK || !strings.Contains(replay, `"status":"failed"`) {
 		t.Fatalf("unexpected terminal replay (%d): %s", status, replay)
 	}
 	status, body := plane.call(t, http.MethodGet, base+"/conversations/"+conversationID+"/messages", nil)
@@ -81,37 +80,14 @@ func TestCompletedInvestigationReplaysOneCanonicalEnding(t *testing.T) {
 	}, app.Options{Model: concludingModel{}})
 	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
 	_, turn := plane.openConversation(t, "terminal replay", "what happened?")
-	final := plane.awaitInvestigation(t, turn)
-	var result struct {
-		Summary string `json:"summary"`
-	}
-	decodeInto(t, final, &result)
+	plane.awaitInvestigation(t, turn)
 	status, replay := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/investigations/"+turn+"/events", nil)
 	if status != http.StatusOK {
-		t.Fatalf("replay = %d: %s", status, replay)
+		t.Fatalf("reconnect = %d: %s", status, replay)
 	}
-	endings := 0
-	for _, line := range strings.Split(replay, "\n") {
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		var event struct {
-			Type    string `json:"type"`
-			Payload struct {
-				Summary string `json:"summary"`
-			} `json:"payload"`
-		}
-		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event); err != nil {
-			t.Fatal(err)
-		}
-		if event.Type == "concluded" {
-			endings++
-			if event.Payload.Summary != result.Summary {
-				t.Fatalf("replay summary=%q, result=%q", event.Payload.Summary, result.Summary)
-			}
-		}
-	}
-	if endings != 1 {
-		t.Fatalf("terminal events=%d, want one: %s", endings, replay)
+	snapshots := assertSerializedSnapshots(t, replay)
+	if len(snapshots) != 1 || snapshots[0]["status"] != "completed" ||
+		snapshots[0]["conclusionUrl"] != "/api/v1/investigations/"+turn {
+		t.Fatalf("reconnect did not return one canonical ending: %s", replay)
 	}
 }

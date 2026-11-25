@@ -82,6 +82,7 @@ type Message struct {
 	Text                    string
 	SourceReference         string
 	InvestigationID         uuid.UUID
+	ExecutionID             uuid.UUID
 	CreatedAt               time.Time
 }
 
@@ -169,6 +170,8 @@ type Store interface {
 	ConversationTurns(ctx context.Context, org uuid.UUID, id uuid.UUID,
 		limit int, cursor string) (TurnPage, error)
 	AdmitConversationMessage(ctx context.Context, who authz.Principal, org, id, clientMessageID uuid.UUID, input NewMessage, replayOnly bool) (AcceptedMessage, error)
+	ChatExecutionSnapshot(ctx context.Context, org, chat, id uuid.UUID) (ExecutionSnapshot, error)
+	CancelChatExecution(ctx context.Context, who authz.Principal, org, chat, id uuid.UUID) (ExecutionSnapshot, error)
 }
 
 func Bounded(text string, limit int) string { return boundedRunes(text, limit) }

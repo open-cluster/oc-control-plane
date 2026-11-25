@@ -170,6 +170,7 @@ var enumColumns = map[string]map[string][]int{
 		"status": investigationStatusValues, "role": conversationRoleValues,
 	},
 	"agent_execution.go":       {"status": investigationStatusValues, "role": conversationRoleValues},
+	"execution_snapshot.go":    {"outcome": {int(investigation.RunSucceeded), int(investigation.RunFailed)}, "role": conversationRoleValues},
 	"conversation_delete.go":   {"status": investigationStatusValues},
 	"conversation_messages.go": {"role": conversationRoleValues},
 	"investigation_lease.go":   {"status": investigationStatusValues},

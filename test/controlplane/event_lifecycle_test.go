@@ -3,7 +3,6 @@ package controlplane
 import (
 	"bufio"
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -35,7 +34,7 @@ func TestLiveEventStreamClosesWhenSessionAccessEnds(t *testing.T) {
 			case <-time.After(10 * time.Second):
 				t.Fatal("the model did not start before stream access changed")
 			}
-			response := openEventStream(t, plane, turn, "")
+			response := openEventStream(t, plane, turn)
 			defer func() { _ = response.Body.Close() }()
 			conn, err := pgx.Connect(t.Context(), plane.dsn)
 			if err != nil {
@@ -77,11 +76,11 @@ func TestLiveEventStreamClosesWhenSessionAccessEnds(t *testing.T) {
 				if code != http.StatusOK {
 					t.Fatalf("cancel after signing in = %d: %s", code, body)
 				}
-				// Replay from the beginning so the stream includes the terminal event.
-				replay := openEventStream(t, plane, turn, "", http.Header{"Last-Event-Id": {"0"}})
+				// A reconnect immediately returns the current terminal state.
+				replay := openEventStream(t, plane, turn, http.Header{"Last-Event-Id": {"0"}})
 				defer func() { _ = replay.Body.Close() }()
 				events, err := io.ReadAll(replay.Body)
-				if err != nil || !strings.Contains(string(events), "event: cancelled") {
+				if err != nil || !strings.Contains(string(events), `"status":"cancelled"`) {
 					t.Fatalf("replay after signing in = %q: %v", events, err)
 				}
 			}
@@ -89,7 +88,7 @@ func TestLiveEventStreamClosesWhenSessionAccessEnds(t *testing.T) {
 	}
 }
 
-func TestEventStreamClosesAfterTerminalCursor(t *testing.T) {
+func TestSnapshotStreamClosesAfterTerminalState(t *testing.T) {
 	model := &blockingModel{started: make(chan uuid.UUID, 1)}
 	plane, _ := agentPlane(t, model)
 	_, turn := plane.openConversation(t, "replayed stream", "investigate checkout")
@@ -102,30 +101,22 @@ func TestEventStreamClosesAfterTerminalCursor(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("cancel = %d: %s", status, body)
 	}
-	response := openEventStream(t, plane, turn, "?after=2")
+	response := openEventStream(t, plane, turn, http.Header{"Last-Event-Id": {"99"}})
 	defer func() { _ = response.Body.Close() }()
-	finished := make(chan error, 1)
-	go func() {
-		written, err := io.Copy(io.Discard, response.Body)
-		if err == nil && written != 0 {
-			err = errors.New("a terminal cursor replayed event data")
-		}
-		finished <- err
-	}()
-	select {
-	case err := <-finished:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("a cursor after the terminal event left the stream open")
+	ending, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshots := assertSerializedSnapshots(t, string(ending))
+	if len(snapshots) != 1 || snapshots[0]["status"] != "cancelled" || strings.Contains(string(ending), "id: ") {
+		t.Fatalf("terminal reconnect = %s", ending)
 	}
 }
 
 func TestEventStreamClosesDuringGracefulShutdown(t *testing.T) {
 	plane, _ := agentPlane(t, &blockingModel{})
 	_, turn := plane.openConversation(t, "shutdown stream", "investigate checkout")
-	response := openEventStream(t, plane, turn, "")
+	response := openEventStream(t, plane, turn)
 	defer func() { _ = response.Body.Close() }()
 	plane.shutdown()
 	if plane.exitErr != nil {
@@ -149,7 +140,7 @@ func TestEventStreamThroughReverseProxy(t *testing.T) {
 	proxied.api = startEventProxy(t, plane.api)
 	assertLiveEventStream(t, plane, &proxied)
 	_, turn := plane.openConversation(t, "proxy shutdown", "investigate checkout")
-	response := openEventStream(t, &proxied, turn, "")
+	response := openEventStream(t, &proxied, turn)
 	defer func() { _ = response.Body.Close() }()
 	plane.shutdown()
 	if plane.exitErr != nil {
@@ -163,7 +154,7 @@ func TestEventStreamThroughReverseProxy(t *testing.T) {
 func assertLiveEventStream(t *testing.T, plane, streamed *integrationPlane) {
 	t.Helper()
 	_, turn := plane.openConversation(t, "live stream", "investigate checkout")
-	response := openEventStream(t, streamed, turn, "")
+	response := openEventStream(t, streamed, turn)
 	defer func() { _ = response.Body.Close() }()
 	scanner := bufio.NewScanner(response.Body)
 	heartbeats := 0
@@ -182,32 +173,34 @@ func assertLiveEventStream(t *testing.T, plane, streamed *integrationPlane) {
 	if status != http.StatusOK {
 		t.Fatalf("cancel = %d: %s", status, body)
 	}
-	var cursor, terminalCursor string
+	var terminal string
 	for scanner.Scan() {
-		if id, present := strings.CutPrefix(scanner.Text(), "id: "); present {
-			cursor = id
-		}
-		if scanner.Text() == "event: cancelled" {
-			terminalCursor = cursor
+		if data, ok := strings.CutPrefix(scanner.Text(), "data: "); ok && strings.Contains(data, `"status":"cancelled"`) {
+			terminal = data
 		}
 	}
-	if scanner.Err() != nil || terminalCursor == "" {
-		t.Fatalf("cancelled stream did not close with a terminal cursor: cursor=%q, error=%v", terminalCursor, scanner.Err())
+	if scanner.Err() != nil || terminal == "" {
+		t.Fatalf("cancelled stream did not close with terminal state: %v", scanner.Err())
 	}
-	replay := openEventStream(t, streamed, turn, "", http.Header{"Last-Event-Id": {terminalCursor}})
+	replay := openEventStream(t, streamed, turn)
 	defer func() { _ = replay.Body.Close() }()
 	bodyBytes, err := io.ReadAll(replay.Body)
-	if err != nil || len(bodyBytes) != 0 {
-		t.Fatalf("terminal cursor replay = %q, error=%v", bodyBytes, err)
+	if err != nil || !strings.Contains(string(bodyBytes), terminal) {
+		t.Fatalf("terminal reconnect = %q, error=%v", bodyBytes, err)
 	}
 }
 
-func openEventStream(t *testing.T, plane *integrationPlane, turn, query string, headers ...http.Header) *http.Response {
+func openEventStream(t *testing.T, plane *integrationPlane, turn string, headers ...http.Header) *http.Response {
+	t.Helper()
+	return openSnapshotStream(t, plane, "/api/v1/investigations/"+turn+"/events", headers...)
+}
+
+func openSnapshotStream(t *testing.T, plane *integrationPlane, path string, headers ...http.Header) *http.Response {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 65*time.Second)
 	t.Cleanup(cancel)
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		plane.base(surfaceOrg)+"/investigations/"+turn+"/events"+query, nil)
+		"http://"+plane.api+path, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -63,8 +63,31 @@ func TestAgentRecoveryKeepsLastCompletedConversation(t *testing.T) {
 	if err := database.AgentStateSaver(org, interrupted).SaveState(ctx, interrupted.SessionID(), snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.CancelAgentChatExecution(ctx, org, chat.ID, interrupted.ID); err != nil {
+	if err := database.SaveChatDraft(ctx, org, interrupted, "An unfinished reply"); err != nil {
 		t.Fatal(err)
+	}
+	for range 2 {
+		state, err := database.CancelChatExecution(ctx, principal, org, chat.ID, interrupted.ID)
+		if err != nil || state.Status != "cancelled" || state.DraftText != "" || state.Message != nil {
+			t.Fatalf("cancelled execution = %+v: %v", state, err)
+		}
+	}
+	if err := database.SaveChatDraft(ctx, org, interrupted, "A stale reply"); !errors.Is(err, storage.ErrAgentLeaseLost) {
+		t.Fatalf("draft write after cancellation = %v", err)
+	}
+	state, err := database.CancelChatExecution(ctx, principal, org, chat.ID, first.ID)
+	if err != nil || state.Status != "completed" || state.Message == nil || state.Message.Text != "Port saved." {
+		t.Fatalf("cancel after completion = %+v: %v", state, err)
+	}
+	pool, err := poolForTest(database, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var audits int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_event
+		WHERE org_id = $1 AND target_id = $2 AND action = 'conversation.execution-cancelled'`,
+		org, chat.ID.String()).Scan(&audits); err != nil || audits != 1 {
+		t.Fatalf("cancellation recorded %d audit entries: %v", audits, err)
 	}
 	next := admitAndClaim("What was the checkout port?")
 	restored, writer, err := database.AgentStateSaver(org, next).Restore(ctx)
@@ -231,10 +254,10 @@ func TestAgentExecutionCannotPublishAfterOwnershipEnds(t *testing.T) {
 			}
 			switch change {
 			case "cancel":
-				if err := database.CancelAgentChatExecution(ctx, foreignOrg, chat.ID, stale.ID); !errors.Is(err, storage.ErrAgentExecutionUnavailable) {
+				if _, err := database.CancelChatExecution(ctx, ownerOf(t, foreignOrg), foreignOrg, chat.ID, stale.ID); !errors.Is(err, conversation.ErrUnknown) {
 					t.Fatalf("foreign cancellation error = %v", err)
 				}
-				if err := database.CancelAgentChatExecution(ctx, org, chat.ID, stale.ID); err != nil {
+				if _, err := database.CancelChatExecution(ctx, ownerOf(t, org), org, chat.ID, stale.ID); err != nil {
 					t.Fatal(err)
 				}
 			case "reclaim":
@@ -622,9 +645,9 @@ func TestInvestigationConclusionSurvivesProcessCrashes(t *testing.T) {
 	if _, err := database.ClaimAgentExecution(ctx, org, execution, time.Minute); !errors.Is(err, storage.ErrAgentExecutionUnavailable) {
 		t.Fatalf("execution could be claimed after commit: %v", err)
 	}
-	events, err := database.Events(ctx, org, opened, 0, 10)
-	if err != nil || len(events) != 2 || events[1].Type != investigation.EventConcluded {
-		t.Fatalf("expected one committed terminal event, got %+v, %v", events, err)
+	terminal, err := database.InvestigationExecutionSnapshot(ctx, org, opened)
+	if err != nil || terminal.Status != "completed" || terminal.ConclusionURL != "/api/v1/investigations/"+opened.String() {
+		t.Fatalf("expected a committed terminal snapshot, got %+v, %v", terminal, err)
 	}
 	var visibleCount int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM conversation_message
@@ -1040,18 +1063,18 @@ func TestAgentCoordinatorFinishesAndCancelsInvestigationThroughProductStorage(t 
 		var status storage.AgentExecutionStatus
 		var result investigation.Status
 		var summary string
-		var terminalEvents int
+		var legacyEvents int
 		var usage investigation.Usage
 		err := pool.QueryRow(ctx, `SELECT e.status, i.status, coalesce(i.conclusion->>'summary', ''), i.spend_input_tokens, i.spend_output_tokens,
-		   (SELECT count(*) FROM investigation_event v WHERE v.org_id = e.org_id AND v.investigation_id = e.investigation_id AND v.type = $3)
+		   (SELECT count(*) FROM investigation_event v WHERE v.org_id = e.org_id AND v.investigation_id = e.investigation_id)
 		    FROM agent_execution e JOIN investigation i USING (org_id, investigation_id)
-		   WHERE e.org_id = $1 AND e.execution_id = $2`, org, work, int16(investigation.EventConcluded)).Scan(&status, &result, &summary, &usage.InputTokens, &usage.OutputTokens, &terminalEvents)
+		   WHERE e.org_id = $1 AND e.execution_id = $2`, org, work).Scan(&status, &result, &summary, &usage.InputTokens, &usage.OutputTokens, &legacyEvents)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if status == storage.AgentExecutionCompleted {
-			if result != investigation.StatusConcluded || summary != answer || terminalEvents != 1 || usage != (investigation.Usage{InputTokens: 17, OutputTokens: 3}) {
-				t.Fatalf("expected an atomic Investigation conclusion, got %s, %q, %d terminal events and usage %+v", result, summary, terminalEvents, usage)
+			if result != investigation.StatusConcluded || summary != answer || legacyEvents != 0 || usage != (investigation.Usage{InputTokens: 17, OutputTokens: 3}) {
+				t.Fatalf("expected an atomic Investigation conclusion, got %s, %q, %d legacy events and usage %+v", result, summary, legacyEvents, usage)
 			}
 			break
 		}
@@ -1108,7 +1131,7 @@ func TestAgentCoordinatorCancelsDuringPreparation(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("profile preparation never began")
 	}
-	if err := db.CancelAgentChatExecution(ctx, org, chat.ID, execution.ID); err != nil {
+	if _, err := db.CancelChatExecution(ctx, ownerOf(t, org), org, chat.ID, execution.ID); err != nil {
 		t.Fatal(err)
 	}
 	select {

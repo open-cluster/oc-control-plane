@@ -144,7 +144,7 @@ func TestCompletionSurvivesProcessInterruption(t *testing.T) {
 		t.Fatal(err)
 	}
 	plane.api, kill = startCompletionProcess(t, cfg)
-	response := openEventStream(t, plane, interrupted, "")
+	response := openEventStream(t, plane, interrupted)
 	_, err = io.Copy(io.Discard, response.Body)
 	_ = response.Body.Close()
 	if err != nil {
@@ -168,17 +168,11 @@ func assertOneEnding(t *testing.T, plane *integrationPlane, turn, ending string)
 	if status != http.StatusOK {
 		t.Fatalf("replay = %d: %s", status, body)
 	}
-	endings := 0
-	for _, event := range assertSerializedEvents(t, body) {
-		kind := event["type"]
-		if kind == "concluded" || kind == "failed" || kind == "cancelled" {
-			endings++
-			if kind != ending {
-				t.Errorf("ending=%v, want %s", kind, ending)
-			}
-		}
+	if ending == "concluded" {
+		ending = "completed"
 	}
-	if endings != 1 {
-		t.Fatalf("terminal events=%d, want one", endings)
+	snapshots := assertSerializedSnapshots(t, body)
+	if len(snapshots) != 1 || snapshots[0]["status"] != ending {
+		t.Fatalf("expected one %s snapshot after restart: %s", ending, body)
 	}
 }

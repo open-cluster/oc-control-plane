@@ -6,26 +6,39 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
 const maxEventPage = 500
 
+const slackInvestigationOwner = `EXISTS (
+	SELECT 1 FROM investigation i
+	JOIN conversation c ON c.org_id = i.org_id AND c.conversation_id = i.conversation_id
+	WHERE i.org_id = $1 AND i.investigation_id = $2 AND i.turn IS NOT NULL AND c.source = 'slack'
+)`
+
+func appendSlackInvestigationEvent(ctx context.Context, tx pgx.Tx, org, id uuid.UUID, payload investigation.EventPayload) error {
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("encoding Slack Investigation event: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO investigation_event (org_id, investigation_id, sequence, type, payload)
+		SELECT $1, $2, coalesce(max(sequence), 0) + 1, $3, $4
+		  FROM investigation_event
+		 WHERE org_id = $1 AND investigation_id = $2
+		HAVING `+slackInvestigationOwner,
+		org, id, int16(payload.EventType()), encoded); err != nil {
+		return fmt.Errorf("recording Slack Investigation event: %w", err)
+	}
+	return nil
+}
+
 func (p *Database) Events(
 	ctx context.Context, organization uuid.UUID, id uuid.UUID,
 	after int64, limit int,
-) ([]investigation.Event, error) {
-	return p.events(ctx, organization, id, after, limit, false)
-}
-
-func (p *Database) WebEvents(
-	ctx context.Context, organization, id uuid.UUID, after int64, limit int,
-) ([]investigation.Event, error) {
-	return p.events(ctx, organization, id, after, limit, true)
-}
-
-func (p *Database) events(
-	ctx context.Context, organization, id uuid.UUID, after int64, limit int, webOnly bool,
 ) ([]investigation.Event, error) {
 	pool, err := p.poolForOrganization(organization)
 	if err != nil {
@@ -37,11 +50,10 @@ func (p *Database) events(
 	rows, err := pool.Query(ctx, `
 		SELECT v.sequence, v.at, v.type, v.payload
 		  FROM investigation_event v
-		  JOIN investigation i ON i.org_id = v.org_id AND i.investigation_id = v.investigation_id
 		 WHERE v.org_id = $1 AND v.investigation_id = $2 AND v.sequence > $3
-		   AND v.type NOT IN (5, 8, 10) AND (NOT $5 OR `+webInvestigationSource+`)
+		   AND v.type NOT IN (5, 8, 10)
 		 ORDER BY v.sequence
-		 LIMIT $4`, organization, id, after, limit, webOnly)
+		 LIMIT $4`, organization, id, after, limit)
 	if err != nil {
 		return nil, fmt.Errorf("reading investigation events: %w", err)
 	}

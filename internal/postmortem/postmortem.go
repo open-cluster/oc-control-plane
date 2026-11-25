@@ -119,26 +119,21 @@ type HumanInput struct {
 }
 
 type GenerationInput struct {
-	IncidentID  uuid.UUID
-	Title       string
-	FirstSeenAt time.Time
-	ResolvedAt  time.Time
-	AlertEvents []AlertEvent
-	Runs        []RunEvidence
-	Events      []EventEvidence
-	Results     []InvestigationResult
-	Messages    []Message
-	Human       HumanInput
+	IncidentID            uuid.UUID
+	Title                 string
+	FirstSeenAt           time.Time
+	ResolvedAt            time.Time
+	AlertEvents           []AlertEvent
+	Runs                  []RunEvidence
+	InvestigationTimeline []TimelineEntry
+	Results               []InvestigationResult
+	Messages              []Message
+	Human                 HumanInput
 }
 
 type RunEvidence struct {
 	InvestigationID uuid.UUID
 	Run             investigation.ToolRun
-}
-
-type EventEvidence struct {
-	InvestigationID uuid.UUID
-	Event           investigation.Event
 }
 
 type InvestigationResult struct {

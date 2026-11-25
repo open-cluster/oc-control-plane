@@ -210,6 +210,7 @@ var postgresServer = sync.OnceValues(func() (string, error) {
 		tcpostgres.WithDatabase("controlplane"),
 		tcpostgres.WithUsername("controlplane"),
 		tcpostgres.WithPassword("controlplane"),
+		testcontainers.WithCmdArgs("-c", "shared_preload_libraries=pg_stat_statements"),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).

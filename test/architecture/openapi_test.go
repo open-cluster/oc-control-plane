@@ -548,45 +548,30 @@ func TestOpenAPITypesEveryInvestigationResult(t *testing.T) {
 	}
 }
 
-func TestOpenAPIDiscriminatesEveryShippedInvestigationEvent(t *testing.T) {
+func TestOpenAPIUsesOneExecutionSnapshotForBothStreams(t *testing.T) {
 	t.Parallel()
 
 	contents, err := os.ReadFile("../../api/openapi.yaml")
 	if err != nil {
-		t.Fatalf("read the canonical OpenAPI document: %v", err)
+		t.Fatal(err)
 	}
 	var document openAPIDocument
-	if err = yaml.Unmarshal(contents, &document); err != nil {
-		t.Fatalf("parse the canonical OpenAPI document: %v", err)
+	if err := yaml.Unmarshal(contents, &document); err != nil {
+		t.Fatal(err)
 	}
-
-	event := document.Components.Schemas["InvestigationEvent"]
-	if len(event.OneOf) != 8 {
-		t.Fatalf("InvestigationEvent has %d variants, want seven active events and one fallback", len(event.OneOf))
-	}
-	for _, name := range []string{
-		"StartedInvestigationEvent", "ProgressInvestigationEvent", "ToolStartedInvestigationEvent",
-		"ToolCompletedInvestigationEvent", "ConcludedInvestigationEvent",
-		"FailedInvestigationEvent", "CancelledInvestigationEvent", "UnknownInvestigationEvent",
+	for _, path := range []string{
+		"/api/v1/investigations/{investigation}/events",
+		"/api/v1/conversations/{conversation}/executions/{execution}/events",
 	} {
-		found := false
-		for _, variant := range event.OneOf {
-			found = found || variant.Ref == "#/components/schemas/"+name
+		operation := document.Paths[path].Get
+		if operation == nil || operation.Responses["200"].Ref != "#/components/responses/ExecutionSnapshotStream" {
+			t.Errorf("%s does not use the shared snapshot response", path)
 		}
-		if !found {
-			t.Errorf("InvestigationEvent is missing %s", name)
-		}
-		variant := document.Components.Schemas[name]
-		for _, field := range []string{
-			"schemaVersion", "organizationId", "investigationId", "sequence", "at", "type", "payload",
-		} {
-			if _, present := variant.Properties[field]; !present {
-				t.Errorf("%s omits shipped envelope field %s", name, field)
-			}
-			if !slices.Contains(variant.Required, field) {
-				t.Errorf("%s does not require shipped envelope field %s", name, field)
-			}
-		}
+	}
+	snapshot := document.Components.Schemas["ExecutionSnapshot"]
+	if !slices.Contains(snapshot.Required, "status") || !slices.Contains(snapshot.Required, "tools") ||
+		snapshot.AdditionalProperties != false {
+		t.Fatal("snapshot schema does not enforce the public projection")
 	}
 }
 

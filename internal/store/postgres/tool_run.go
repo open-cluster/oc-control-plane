@@ -189,7 +189,7 @@ func (p *Database) BeginAgentToolRun(
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp())`,
 			org, id, execution.ID, nullableUUID(run.IntegrationID), run.Tool, run.Purpose,
 			arguments, run.WindowFrom, run.WindowUntil)
-		if err != nil || execution.InvestigationID == uuid.Nil {
+		if err != nil || !execution.HasAssignedInput() {
 			return err
 		}
 		run.ID = id
@@ -197,7 +197,7 @@ func (p *Database) BeginAgentToolRun(
 		if access != nil {
 			name = access.Integration.Name
 		}
-		return appendInvestigationEvent(ctx, tx, org, execution.InvestigationID,
+		return appendSlackInvestigationEvent(ctx, tx, org, execution.InvestigationID,
 			investigation.ToolStartedPayload(run, run.IntegrationID.String(), name))
 	})
 	if err != nil {
@@ -241,10 +241,10 @@ func (p *Database) CompleteAgentToolRun(
 		if err != nil {
 			return err
 		}
-		if execution.InvestigationID == uuid.Nil {
+		if !execution.HasAssignedInput() {
 			return nil
 		}
-		return appendInvestigationEvent(ctx, tx, org, execution.InvestigationID, investigation.ToolCompletedPayload(run))
+		return appendSlackInvestigationEvent(ctx, tx, org, execution.InvestigationID, investigation.ToolCompletedPayload(run))
 	})
 }
 

@@ -66,7 +66,7 @@ func cancelConversationWork(ctx context.Context, tx pgx.Tx, org, id uuid.UUID) e
 		return err
 	}
 	for _, executionID := range executions {
-		if _, err := revokeAgentExecution(ctx, tx, org, id, executionID, uuid.Nil); err != nil {
+		if _, _, err := revokeAgentExecution(ctx, tx, org, id, executionID, uuid.Nil); err != nil {
 			return err
 		}
 	}

@@ -44,28 +44,28 @@ type PrepareExecution func(context.Context, uuid.UUID, storage.AgentExecution) (
 
 // RunExecutions owns worker lifetime. A wakeup after admission accelerates polling.
 func RunExecutions(ctx context.Context, db *storage.Database, workers int, wake <-chan struct{}, prepare PrepareExecution, logger *slog.Logger) {
-	runExecutions(ctx, db, workers, wake, prepare, logger, nil)
+	runExecutions(ctx, db, workers, wake, prepare, logger, nil, "")
 }
 
 func runExecutions(ctx context.Context, db *storage.Database, workers int, wake <-chan struct{}, prepare PrepareExecution,
-	logger *slog.Logger, suggestTitle func(uuid.UUID, uuid.UUID, string),
+	logger *slog.Logger, suggestTitle func(uuid.UUID, uuid.UUID, string), modelSecret string,
 ) {
 	var running sync.WaitGroup
 	for range max(1, workers) {
 		running.Go(func() {
-			runExecutionWorker(ctx, db, wake, prepare, logger, suggestTitle)
+			runExecutionWorker(ctx, db, wake, prepare, logger, suggestTitle, modelSecret)
 		})
 	}
 	running.Wait()
 }
 
 func runExecutionWorker(ctx context.Context, db *storage.Database, wake <-chan struct{}, prepare PrepareExecution,
-	logger *slog.Logger, suggestTitle func(uuid.UUID, uuid.UUID, string),
+	logger *slog.Logger, suggestTitle func(uuid.UUID, uuid.UUID, string), modelSecret string,
 ) {
 	for ctx.Err() == nil {
 		org, execution, err := db.ClaimNextAgentExecution(ctx, executionLease)
 		if err == nil {
-			err = runClaimedExecution(ctx, db, org, execution, prepare, suggestTitle)
+			err = runClaimedExecution(ctx, db, org, execution, prepare, suggestTitle, modelSecret)
 			if err == nil || errors.Is(err, storage.ErrAgentLeaseLost) {
 				continue
 			}
@@ -88,7 +88,7 @@ func runExecutionWorker(ctx context.Context, db *storage.Database, wake <-chan s
 }
 
 func runClaimedExecution(processCtx context.Context, db *storage.Database, org uuid.UUID, execution storage.AgentExecution,
-	prepare PrepareExecution, suggestTitle func(uuid.UUID, uuid.UUID, string),
+	prepare PrepareExecution, suggestTitle func(uuid.UUID, uuid.UUID, string), modelSecret string,
 ) error {
 	var fallback string
 	defer func() {
@@ -108,7 +108,7 @@ func runClaimedExecution(processCtx context.Context, db *storage.Database, org u
 	}()
 	finishChat := func(checkpoint *agent.AgentState, usage investigation.Usage) error {
 		var err error
-		fallback, err = finishAgentReply(ctx, db, org, execution, checkpoint, usage)
+		fallback, err = finishAgentReply(ctx, db, org, execution, checkpoint, usage, modelSecret)
 		return err
 	}
 
@@ -193,7 +193,13 @@ func runClaimedExecution(processCtx context.Context, db *storage.Database, org u
 	if err != nil {
 		return failAgentExecution(ctx, db, org, execution, investigation.Usage{})
 	}
-	outcome, runErr := drainExecution(runCtx, stream)
+	var saveDraft func(context.Context, string) error
+	if execution.ConversationID != uuid.Nil {
+		saveDraft = func(ctx context.Context, text string) error {
+			return db.SaveChatDraft(ctx, org, execution, text)
+		}
+	}
+	outcome, runErr := drainExecution(runCtx, stream, saveDraft, modelSecret)
 	outcome.usage = recoveredUsage.Add(outcome.usage)
 	if outcome.unsupportedInput {
 		stop()
@@ -318,14 +324,24 @@ type executionOutcome struct {
 	usage            investigation.Usage
 }
 
-func drainExecution(ctx context.Context, stream <-chan event.Event) (executionOutcome, error) {
+func drainExecution(ctx context.Context, stream <-chan event.Event, saveDraft func(context.Context, string) error,
+	modelSecret string,
+) (executionOutcome, error) {
 	var outcome executionOutcome
+	draft := executionDraft{save: saveDraft, secret: modelSecret}
+	defer draft.stopTimer()
 	for {
 		select {
 		case <-ctx.Done():
 			return outcome, context.Cause(ctx)
+		case <-draft.flushAt:
+			draft.flushAt = nil
+			draft.flush(ctx)
 		case item, open := <-stream:
 			if !open {
+				if outcome.completed {
+					draft.flush(ctx)
+				}
 				return outcome, nil
 			}
 			switch item := item.(type) {
@@ -334,6 +350,10 @@ func drainExecution(ctx context.Context, stream <-chan event.Event) (executionOu
 				return outcome, nil
 			case event.ReplyEndEvent:
 				outcome.completed = item.FinishedReason == types.ReplyCompleted && item.Error == nil
+			case event.ModelCallStartEvent:
+				draft.reset(ctx)
+			case event.TextBlockDeltaEvent:
+				draft.append(ctx, item.Delta)
 			case event.ModelCallEndEvent:
 				outcome.usage.InputTokens += int64(item.InputTokens) + int64(item.CacheCreationTokens) + int64(item.CacheReadTokens)
 				outcome.usage.OutputTokens += int64(item.OutputTokens)
@@ -343,14 +363,30 @@ func drainExecution(ctx context.Context, stream <-chan event.Event) (executionOu
 }
 
 func finishAgentReply(ctx context.Context, db *storage.Database, org uuid.UUID, execution storage.AgentExecution,
-	checkpoint *agent.AgentState, usage investigation.Usage,
+	checkpoint *agent.AgentState, usage investigation.Usage, modelSecret string,
 ) (string, error) {
-	reply := finalReplyContent(checkpoint)
-	if strings.TrimSpace(reply) == "" ||
-		execution.ConversationID != uuid.Nil && utf8.RuneCountInString(reply) > conversation.MaxMessageTextLength {
+	index, start := terminalReply(checkpoint)
+	if index < 0 {
 		return "", failAgentExecution(ctx, db, org, execution, usage)
 	}
-	fallback, err := db.FinishAgentChat(ctx, org, execution, reply, usage)
+	nativeMessage := checkpoint.Context[index]
+	var text strings.Builder
+	for _, block := range nativeMessage.Content[start:] {
+		if part, ok := block.(message.TextBlock); ok {
+			text.WriteString(part.Text)
+		}
+	}
+	native := text.String()
+	reply := redactModelSecret(strings.ReplaceAll(native, "\x00", ""), modelSecret)
+	if strings.TrimSpace(reply) == "" || utf8.RuneCountInString(reply) > conversation.MaxMessageTextLength {
+		return "", failAgentExecution(ctx, db, org, execution, usage)
+	}
+	var promoted []*agent.AgentState
+	if reply != native {
+		checkpoint.Context[index] = replaceFinalReply(nativeMessage, start, reply)
+		promoted = append(promoted, checkpoint)
+	}
+	fallback, err := db.FinishAgentChat(ctx, org, execution, reply, usage, promoted...)
 	if errors.Is(err, authz.ErrNotAMember) || errors.Is(err, storage.ErrAgentToolRunUnavailable) {
 		return "", failAgentExecution(ctx, db, org, execution, usage)
 	}
@@ -379,20 +415,6 @@ func terminalReply(state *agent.AgentState) (int, int) {
 		return index, start
 	}
 	return -1, 0
-}
-
-func finalReplyContent(state *agent.AgentState) string {
-	index, start := terminalReply(state)
-	if index < 0 {
-		return ""
-	}
-	var text strings.Builder
-	for _, block := range state.Context[index].Content[start:] {
-		if part, ok := block.(message.TextBlock); ok {
-			text.WriteString(part.Text)
-		}
-	}
-	return text.String()
 }
 
 func replaceFinalReply(native *message.Msg, start int, answer string) *message.Msg {

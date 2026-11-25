@@ -23,16 +23,17 @@ type conversationView struct {
 }
 
 type messageView struct {
-	WindowFrom      string `json:"windowFrom"`
-	WindowUntil     string `json:"windowUntil"`
-	Sequence        int64  `json:"sequence"`
-	Role            string `json:"role"`
-	AuthorID        string `json:"authorId,omitempty"`
-	AuthorName      string `json:"authorName,omitempty"`
-	Text            string `json:"text"`
-	SourceReference string `json:"sourceReference,omitempty"`
-	InvestigationID string `json:"investigationId,omitempty"`
-	CreatedAt       string `json:"createdAt"`
+	WindowFrom      string    `json:"windowFrom"`
+	WindowUntil     string    `json:"windowUntil"`
+	Sequence        int64     `json:"sequence"`
+	Role            string    `json:"role"`
+	AuthorID        string    `json:"authorId,omitempty"`
+	AuthorName      string    `json:"authorName,omitempty"`
+	Text            string    `json:"text"`
+	SourceReference string    `json:"sourceReference,omitempty"`
+	InvestigationID string    `json:"investigationId,omitempty"`
+	ExecutionID     uuid.UUID `json:"executionId,omitzero"`
+	CreatedAt       string    `json:"createdAt"`
 }
 
 type turnView struct {
@@ -49,6 +50,7 @@ type messageAcceptedView struct {
 	Message     messageView `json:"message"`
 	ExecutionID uuid.UUID   `json:"executionId"`
 	Status      string      `json:"status"`
+	EventsURL   string      `json:"eventsUrl"`
 }
 
 func conversationViewOf(conversation Conversation) conversationView {
@@ -73,6 +75,7 @@ func messageViewOf(message Message) messageView {
 		AuthorID:        message.AuthorID,
 		AuthorName:      message.AuthorName,
 		Text:            message.Text,
+		ExecutionID:     message.ExecutionID,
 		SourceReference: message.SourceReference,
 		CreatedAt:       stamp(message.CreatedAt),
 	}

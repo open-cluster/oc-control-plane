@@ -50,25 +50,7 @@ func DraftFrom(input GenerationInput) Postmortem {
 			draft.Timeline = append(draft.Timeline, entry)
 		}
 	}
-	for _, evidence := range input.Events {
-		description := ""
-		switch evidence.Event.Type {
-		case investigation.EventStarted:
-			description = "Investigation started"
-		case investigation.EventConcluded:
-			description = "Investigation concluded"
-		case investigation.EventCancelled:
-			description = "Investigation cancelled"
-		case investigation.EventFailed:
-			description = "Investigation failed"
-		}
-		if description != "" {
-			draft.Timeline = append(draft.Timeline, TimelineEntry{
-				At: evidence.Event.At, Description: description,
-				InvestigationID: evidence.InvestigationID.String(),
-			})
-		}
-	}
+	draft.Timeline = append(draft.Timeline, input.InvestigationTimeline...)
 	if !input.ResolvedAt.IsZero() {
 		draft.Timeline = append(draft.Timeline, TimelineEntry{
 			At: input.ResolvedAt, Description: "Incident alerts resolved",

@@ -405,7 +405,7 @@ func TestKubernetesWorkloadToolRunsAcrossTheComposedRelayAndDatabase(t *testing.
 		other <- err
 	}()
 	otherAssignment := awaitAssignment(t, stream)
-	if err := database.CancelAgentChatExecution(ctx, organization, cancelledClaim.ConversationID, cancelledClaim.ID); err != nil {
+	if _, err := database.CancelChatExecution(ctx, principal, organization, cancelledClaim.ConversationID, cancelledClaim.ID); err != nil {
 		t.Fatal(err)
 	}
 	cancellation := awaitCancellation(t, stream)

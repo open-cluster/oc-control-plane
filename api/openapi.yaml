@@ -682,26 +682,16 @@ paths:
   /api/v1/investigations/{investigation}/events:
     parameters:
       - { $ref: "#/components/parameters/InvestigationID" }
-      - { $ref: "#/components/parameters/LastEventID" }
     get:
       <<: *privileged-read
       operationId: streamInvestigationEvents
-      summary: Stream investigation events
+      summary: Stream investigation snapshots
       description: >
         OpenCluster periodically checks session validity and access to the Investigation.
-        The stream closes when access ends. After signing in again, reconnect with the last
-        event identifier to resume. The Investigation continues if the connection closes.
+        Reconnect to receive the current snapshot. Disconnecting leaves the Investigation running.
       tags: [Investigations]
       responses:
-        "200":
-          description: Increasing event identifiers, named events, and comment heartbeats. Last-Event-ID resumes after the named event.
-          headers:
-            X-Accel-Buffering:
-              schema: { type: string, const: "no" }
-          content:
-            text/event-stream:
-              schema: { type: string }
-              example: "id: 1\nevent: started\ndata: {\"organizationId\":\"11111111-1111-4111-8111-111111111111\",\"investigationId\":\"22222222-2222-4222-8222-222222222222\",\"sequence\":1,\"at\":\"2026-10-07T12:00:00Z\",\"schemaVersion\":2,\"type\":\"started\",\"payload\":{\"text\":\"Reviewing this request and available evidence sources.\"}}\n\n: heartbeat\n\n"
+        "200": { $ref: "#/components/responses/ExecutionSnapshotStream" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -817,6 +807,40 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/Unavailable" }
+  /api/v1/conversations/{conversation}/executions/{execution}:
+    parameters: &chat-execution-path
+      - { $ref: "#/components/parameters/ConversationID" }
+      - { $ref: "#/components/parameters/ExecutionID" }
+    get:
+      <<: *privileged-read
+      operationId: getChatExecution
+      summary: Get Chat execution
+      tags: [Conversations]
+      responses:
+        "200": { $ref: "#/components/responses/ExecutionSnapshot" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/conversations/{conversation}/executions/{execution}/events:
+    parameters: *chat-execution-path
+    get:
+      <<: *privileged-read
+      operationId: streamChatExecution
+      summary: Stream Chat snapshots
+      description: Reconnect to receive the current snapshot. Disconnecting leaves the execution running.
+      tags: [Conversations]
+      responses:
+        "200": { $ref: "#/components/responses/ExecutionSnapshotStream" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/conversations/{conversation}/executions/{execution}/cancel:
+    parameters: *chat-execution-path
+    post:
+      <<: *privileged-write
+      operationId: cancelChatExecution
+      summary: Cancel Chat execution
+      description: Return the terminal state. Repeated cancellation preserves any already committed reply.
+      tags: [Conversations]
+      responses:
+        "200": { $ref: "#/components/responses/ExecutionSnapshot" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/incidents/{incident}/postmortem:
     parameters: *incident-path
     get:
@@ -1063,11 +1087,11 @@ components:
       in: query
       required: false
       schema: { $ref: "#/components/schemas/UUID" }
-    LastEventID:
-      name: Last-Event-ID
-      in: header
-      required: false
-      schema: { type: integer, format: int64, minimum: 0 }
+    ExecutionID:
+      name: execution
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/UUID" }
     OAuthCode:
       name: code
       in: query
@@ -1151,6 +1175,19 @@ components:
     ConversationOpened: { description: Empty Conversation created., content: { application/json: { schema: { $ref: "#/components/schemas/Conversation" } } } }
     ConversationDetail: { description: Conversation metadata., content: { application/json: { schema: { $ref: "#/components/schemas/Conversation" } } } }
     ConversationMessageAccepted: { description: Message and Chat execution accepted., content: { application/json: { schema: { $ref: "#/components/schemas/MessageAccepted" } } } }
+    ExecutionSnapshot: { description: Current execution state., content: { application/json: { schema: { $ref: "#/components/schemas/ExecutionSnapshot" } } } }
+    ExecutionSnapshotStream:
+      description: >
+        Each snapshot event carries a complete ExecutionSnapshot JSON object. Replace the previous
+        snapshot and use the committed Message sequence when available. The stream also sends comment
+        heartbeats and closes after sending terminal state or when access ends.
+      headers:
+        X-Accel-Buffering:
+          schema: { type: string, const: "no" }
+      content:
+        text/event-stream:
+          schema: { type: string }
+          example: "event: snapshot\ndata: {\"investigationId\":\"22222222-2222-4222-8222-222222222222\",\"status\":\"running\",\"tools\":[]}\n\n: keep-alive\n\n"
     Postmortem: { description: Postmortem., content: { application/json: { schema: { $ref: "#/components/schemas/Postmortem" } } } }
     WebhookAccepted: { description: Delivery durably accepted., content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
     AlertWebhookAccepted: { description: "Delivery facts and Incident updates committed together. When a model provider is configured, automatic Investigations for newly opened Incidents commit in the same transaction.", content: { application/json: { schema: { $ref: "#/components/schemas/WebhookStatus" } } } }
@@ -1739,140 +1776,40 @@ components:
           required: [runs]
           properties:
             runs: { type: array, items: { $ref: "#/components/schemas/ToolRun" } }
-    StartedInvestigationEvent:
+    ExecutionSnapshot:
       type: object
       additionalProperties: false
-      required: &investigation-event-required [schemaVersion, organizationId, investigationId, sequence, at, type, payload]
-      properties: &investigation-event-properties
-        schemaVersion: { type: integer, const: 2 }
-        organizationId: { $ref: "#/components/schemas/OrganizationID" }
+      required: [status, tools]
+      properties:
+        executionId: { $ref: "#/components/schemas/UUID" }
         conversationId: { $ref: "#/components/schemas/UUID" }
         investigationId: { $ref: "#/components/schemas/UUID" }
-        sequence: { type: integer, format: int64, minimum: 1 }
-        at: { $ref: "#/components/schemas/Timestamp" }
-        type: { type: string, const: started }
-        payload:
+        status: { type: string, enum: [queued, running, needs_input, completed, failed, cancelled] }
+        draftText: { type: string, maxLength: 8192, description: Provisional Chat text. Replace it on each snapshot. }
+        message:
           type: object
           additionalProperties: false
+          required: [sequence, text]
           properties:
-            text: { type: string, maxLength: 512, description: Initial activity. Optional for previously recorded events. }
-    ProgressInvestigationEvent:
+            sequence: { type: integer, format: int64, minimum: 1 }
+            text: { type: string, minLength: 1, maxLength: 8192 }
+        conclusionUrl: { type: string, description: Path to the committed Investigation detail. }
+        failureCode: { type: string, const: execution_failed }
+        tools:
+          type: array
+          maxItems: 32
+          items: { $ref: "#/components/schemas/ExecutionToolActivity" }
+    ExecutionToolActivity:
       type: object
       additionalProperties: false
-      required: *investigation-event-required
+      required: [toolRunId, tool, status, startedAt, truncated]
       properties:
-        <<: *investigation-event-properties
-        type: { type: string, const: progress }
-        payload:
-          type: object
-          additionalProperties: false
-          required: [text]
-          properties: { text: { type: string, minLength: 1, maxLength: 512 } }
-    ToolStartedInvestigationEvent:
-      type: object
-      additionalProperties: false
-      required: *investigation-event-required
-      properties:
-        <<: *investigation-event-properties
-        type: { type: string, const: tool_started }
-        payload:
-          type: object
-          additionalProperties: false
-          required: [tool, integrationId, integration, purpose]
-          anyOf:
-            - required: [toolRunId]
-            - required: [ordinal]
-          properties:
-            toolRunId: { $ref: "#/components/schemas/UUID" }
-            ordinal: { type: integer, minimum: 1 }
-            tool: { type: string, minLength: 1, maxLength: 512 }
-            integrationId: { $ref: "#/components/schemas/UUID" }
-            integration: { type: string, minLength: 1, maxLength: 512 }
-            purpose: { type: string, maxLength: 512 }
-    ToolCompletedInvestigationEvent:
-      type: object
-      additionalProperties: false
-      required: *investigation-event-required
-      properties:
-        <<: *investigation-event-properties
-        type: { type: string, const: tool_completed }
-        payload:
-          type: object
-          additionalProperties: false
-          required: [outcome, durationMs, summary, truncated]
-          anyOf:
-            - required: [toolRunId]
-            - required: [ordinal]
-          properties:
-            toolRunId: { $ref: "#/components/schemas/UUID" }
-            ordinal: { type: integer, minimum: 1 }
-            outcome: { type: string, enum: [succeeded, failed] }
-            durationMs: { type: integer, format: int64, minimum: 0 }
-            summary: { type: string, minLength: 1, maxLength: 512 }
-            truncated: { type: boolean }
-    ConcludedInvestigationEvent:
-      type: object
-      additionalProperties: false
-      required: *investigation-event-required
-      properties:
-        <<: *investigation-event-properties
-        type: { type: string, const: concluded }
-        payload:
-          type: object
-          additionalProperties: false
-          required: [summary]
-          properties:
-            status: { type: string, enum: [verified_cause, supported_explanation, inconclusive, answer_only], description: "Assessment outcome. Omitted for an unassessed factual Conversation reply. verified_cause and answer_only are historical values." }
-            summary: { type: string, minLength: 1, maxLength: 4096 }
-    FailedInvestigationEvent:
-      type: object
-      additionalProperties: false
-      required: *investigation-event-required
-      properties:
-        <<: *investigation-event-properties
-        type: { type: string, const: failed }
-        payload:
-          type: object
-          additionalProperties: false
-          required: [reason]
-          properties: { reason: { type: string, minLength: 1, maxLength: 1024 } }
-    CancelledInvestigationEvent:
-      type: object
-      additionalProperties: false
-      required: *investigation-event-required
-      properties:
-        <<: *investigation-event-properties
-        type: { type: string, const: cancelled }
-        payload:
-          type: object
-          additionalProperties: false
-          required: [message]
-          properties:
-            message: { type: string, minLength: 1, maxLength: 512 }
-    UnknownInvestigationEvent:
-      type: object
-      additionalProperties: false
-      required: *investigation-event-required
-      properties:
-        <<: *investigation-event-properties
-        type:
-          type: string
-          minLength: 1
-          maxLength: 128
-          not: { enum: [started, progress, tool_started, tool_completed, hypotheses_updated, concluded, failed, cancelled] }
-        payload: { type: object, additionalProperties: true }
-    InvestigationEvent:
-      oneOf:
-        - { $ref: "#/components/schemas/StartedInvestigationEvent" }
-        - { $ref: "#/components/schemas/ProgressInvestigationEvent" }
-        - { $ref: "#/components/schemas/ToolStartedInvestigationEvent" }
-        - { $ref: "#/components/schemas/ToolCompletedInvestigationEvent" }
-        - { $ref: "#/components/schemas/ConcludedInvestigationEvent" }
-        - { $ref: "#/components/schemas/FailedInvestigationEvent" }
-        - { $ref: "#/components/schemas/CancelledInvestigationEvent" }
-        - { $ref: "#/components/schemas/UnknownInvestigationEvent" }
-      discriminator:
-        propertyName: type
+        toolRunId: { $ref: "#/components/schemas/UUID" }
+        tool: { type: string }
+        status: { type: string, enum: [running, succeeded, failed] }
+        startedAt: { $ref: "#/components/schemas/Timestamp" }
+        finishedAt: { $ref: "#/components/schemas/Timestamp" }
+        truncated: { type: boolean }
     MergeIncidentRequest:
       type: object
       additionalProperties: false
@@ -1946,6 +1883,7 @@ components:
         text: { type: string, minLength: 1, maxLength: 8192 }
         sourceReference: { type: string, maxLength: 1024 }
         investigationId: { $ref: "#/components/schemas/UUID" }
+        executionId: { $ref: "#/components/schemas/UUID", description: Execution for a user Message in native Chat. }
         createdAt: { $ref: "#/components/schemas/Timestamp" }
     ConversationTurn:
       type: object
@@ -1983,11 +1921,12 @@ components:
     MessageAccepted:
       type: object
       additionalProperties: false
-      required: [message, executionId, status]
+      required: [message, executionId, status, eventsUrl]
       properties:
         message: { $ref: "#/components/schemas/ConversationMessage" }
         executionId: { $ref: "#/components/schemas/UUID" }
         status: { type: string, enum: [queued, running, needs_input, completed, failed, cancelled] }
+        eventsUrl: { type: string, description: Path to the Chat execution snapshot stream. }
     PostmortemHumanInput:
       type: object
       additionalProperties: false

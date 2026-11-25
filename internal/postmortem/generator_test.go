@@ -31,10 +31,11 @@ func TestDraftGeneratorKeepsMissingHumanFactsExplicit(t *testing.T) {
 				FinishedAt: time.Date(2026, 8, 27, 9, 4, 0, 0, time.UTC),
 			},
 		}},
-		Events: []EventEvidence{{InvestigationID: uuid.New(), Event: investigation.Event{
-			At:   time.Date(2026, 8, 27, 9, 2, 0, 0, time.UTC),
-			Type: investigation.EventStarted,
-		}}},
+		InvestigationTimeline: []TimelineEntry{{
+			InvestigationID: priorID.String(),
+			At:              time.Date(2026, 8, 27, 9, 2, 0, 0, time.UTC),
+			Description:     "Investigation started",
+		}},
 		Messages: []Message{{Author: "On-call", Text: "the deploy may have caused this",
 			At: time.Date(2026, 8, 27, 9, 3, 0, 0, time.UTC)}},
 		Results: []InvestigationResult{{InvestigationID: priorID, Conclusion: investigation.Conclusion{
