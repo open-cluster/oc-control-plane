@@ -1026,7 +1026,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
       operationId: streamInvestigationEvents
-      summary: Stream investigation snapshots
+      summary: Stream investigation events
       description: |
         OpenCluster periodically checks session validity and access to the Investigation. Reconnect to receive the current snapshot. Disconnecting leaves the Investigation running.
       tags:
