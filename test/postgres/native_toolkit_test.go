@@ -25,6 +25,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
+	executionview "github.com/open-cluster/oc-control-plane/internal/execution"
 	"github.com/open-cluster/oc-control-plane/internal/integrations"
 	"github.com/open-cluster/oc-control-plane/internal/integrations/prometheus"
 	"github.com/open-cluster/oc-control-plane/internal/seal"
@@ -143,9 +144,9 @@ func TestNativeToolkitCommitsFastReadBeforeTheBatchCompletes(t *testing.T) {
 		t.Fatal("the fast observation was not committed safely before native batch publication")
 	}
 	snapshot, err := database.ChatExecutionSnapshot(ctx, org, chat.ID, execution.ID)
-	if err != nil || !slices.ContainsFunc(snapshot.Tools, func(run conversation.ToolActivity) bool {
+	if err != nil || !slices.ContainsFunc(snapshot.Tools, func(run executionview.ToolActivity) bool {
 		return run.ToolRunID == id && run.Status == "succeeded" && run.FinishedAt != nil
-	}) || !slices.ContainsFunc(snapshot.Tools, func(run conversation.ToolActivity) bool {
+	}) || !slices.ContainsFunc(snapshot.Tools, func(run executionview.ToolActivity) bool {
 		return run.ToolRunID != id && run.Status == "running" && run.FinishedAt == nil
 	}) {
 		t.Fatalf("snapshot did not expose the fast result alongside the blocked read: %+v, %v", snapshot.Tools, err)

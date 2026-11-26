@@ -95,7 +95,7 @@ func TestInvestigationCancellationIsTerminalAttributedAndAudited(t *testing.T) {
 		t.Fatalf("investigation status = %s, want cancelled", ended.Status)
 	}
 	snapshot, err := database.InvestigationExecutionSnapshot(t.Context(), organization, turn.InvestigationID)
-	if err != nil || snapshot.Status != "cancelled" || !snapshot.Terminal() || snapshot.ConclusionURL != "" {
+	if err != nil || snapshot.Status != "cancelled" || !snapshot.Terminal() || snapshot.InvestigationID != turn.InvestigationID {
 		t.Fatalf("cancellation did not expose terminal state: %+v, %v", snapshot, err)
 	}
 	if _, _, err := database.ClaimNextAgentExecution(context.Background(), time.Minute); !errors.Is(err, storage.ErrAgentExecutionUnavailable) {

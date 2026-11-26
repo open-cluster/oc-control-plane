@@ -1019,6 +1019,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/ExecutionSnapshotStream'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1251,6 +1253,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/ExecutionSnapshotStream'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         default:
           $ref: '#/components/responses/ErrorResponse'
       operationId: streamChatExecution
@@ -1980,7 +1984,7 @@ components:
             $ref: '#/components/schemas/ExecutionSnapshot'
     ExecutionSnapshotStream:
       description: |
-        Each snapshot event carries a complete ExecutionSnapshot JSON object. Replace the previous snapshot and use the committed Message sequence when available. The stream also sends comment heartbeats and closes after sending terminal state or when access ends.
+        Each snapshot event carries a complete ExecutionSnapshot JSON object. Replace the previous snapshot on reconnect without query parameters. The stream ignores Last-Event-ID. Use the committed Message sequence when available. The stream also sends comment heartbeats and closes after sending terminal state or when access ends.
       headers:
         X-Accel-Buffering:
           schema:
@@ -3745,6 +3749,7 @@ components:
             - completed
             - failed
             - cancelled
+          description: An expired execution available for another claim appears as queued.
         draftText:
           type: string
           maxLength: 8192
@@ -3767,12 +3772,10 @@ components:
         conclusionUrl:
           type: string
           description: Path to the committed Investigation detail.
-        failureCode:
-          type: string
-          const: execution_failed
         tools:
           type: array
           maxItems: 32
+          description: Active Tools first, then newest activity by start or finish time.
           items:
             $ref: '#/components/schemas/ExecutionToolActivity'
     ExecutionToolActivity:
@@ -3795,6 +3798,7 @@ components:
             - running
             - succeeded
             - failed
+            - interrupted
         startedAt:
           $ref: '#/components/schemas/Timestamp'
         finishedAt:

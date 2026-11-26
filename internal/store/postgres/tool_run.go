@@ -248,12 +248,14 @@ func (p *Database) CompleteAgentToolRun(
 	})
 }
 
+const interruptedToolRunReason = "execution ended before Tool completion"
+
 func interruptAgentToolRuns(ctx context.Context, tx pgx.Tx, org, executionID uuid.UUID) error {
 	// A later claim can replay the read but must allocate a new attempt.
 	_, err := tx.Exec(ctx, `
 		WITH interrupted AS (
 		    UPDATE investigation_tool_run SET outcome = $3, finished_at = clock_timestamp(),
-		           error = 'execution ended before Tool completion'
+		           error = $7
 		     WHERE org_id = $1 AND execution_id = $2 AND outcome IS NULL
 		)
 		UPDATE relay_job job
@@ -264,6 +266,6 @@ func interruptAgentToolRuns(ctx context.Context, tx pgx.Tx, org, executionID uui
 		 WHERE job.org_id = $1 AND run.org_id = job.org_id AND run.tool_run_id = job.tool_run_id
 		   AND run.execution_id = $2 AND job.status IN ($4, $5)`,
 		org, executionID, int16(investigation.RunFailed),
-		int16(JobPending), int16(JobLeased), int16(JobCancelled))
+		int16(JobPending), int16(JobLeased), int16(JobCancelled), interruptedToolRunReason)
 	return err
 }

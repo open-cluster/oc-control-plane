@@ -328,14 +328,14 @@ func drainExecution(ctx context.Context, stream <-chan event.Event, saveDraft fu
 	modelSecret string,
 ) (executionOutcome, error) {
 	var outcome executionOutcome
-	draft := executionDraft{save: saveDraft, secret: modelSecret}
+	draft := executionDraft{save: saveDraft, secrets: modelSecretForms(modelSecret), published: new("")}
 	defer draft.stopTimer()
 	for {
 		select {
 		case <-ctx.Done():
 			return outcome, context.Cause(ctx)
-		case <-draft.flushAt:
-			draft.flushAt = nil
+		case <-draft.ready():
+			draft.timer = nil
 			draft.flush(ctx)
 		case item, open := <-stream:
 			if !open {
@@ -377,7 +377,7 @@ func finishAgentReply(ctx context.Context, db *storage.Database, org uuid.UUID, 
 		}
 	}
 	native := text.String()
-	reply := redactModelSecret(strings.ReplaceAll(native, "\x00", ""), modelSecret)
+	reply := redactModelSecret(strings.ReplaceAll(native, "\x00", ""), modelSecretForms(modelSecret))
 	if strings.TrimSpace(reply) == "" || utf8.RuneCountInString(reply) > conversation.MaxMessageTextLength {
 		return "", failAgentExecution(ctx, db, org, execution, usage)
 	}
@@ -418,15 +418,36 @@ func terminalReply(state *agent.AgentState) (int, int) {
 }
 
 func replaceFinalReply(native *message.Msg, start int, answer string) *message.Msg {
-	// Keep the native message identity and provider continuation data.
+	// Preserve native block IDs and the order of provider continuation blocks.
 	msg := *native
 	content := slices.Clone(msg.Content[:start])
-	for _, block := range msg.Content[start:] {
-		if _, ok := block.(message.TextBlock); !ok {
-			content = append(content, block)
+	suffix := msg.Content[start:]
+	lastText := -1
+	for i, block := range slices.Backward(suffix) {
+		if _, ok := block.(message.TextBlock); ok {
+			lastText = i
+			break
 		}
 	}
-	content = append(content, message.TextBlock{Type: "text", Text: answer})
+	for i, block := range suffix {
+		text, ok := block.(message.TextBlock)
+		if !ok {
+			content = append(content, block)
+			continue
+		}
+		piece := answer
+		if i != lastText {
+			piece = conversation.Bounded(answer, utf8.RuneCountInString(text.Text))
+		}
+		if piece != "" {
+			text.Text = piece
+			content = append(content, text)
+			answer = answer[len(piece):]
+		}
+	}
+	if lastText < 0 {
+		content = append(content, message.TextBlock{Type: "text", Text: answer})
+	}
 	msg.Content = content
 	return &msg
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/execution"
 )
 
 const (
@@ -22,10 +23,16 @@ const (
 )
 
 // Stream writes changed snapshots. Its request context never owns the execution.
-func Stream[T interface{ Terminal() bool }](writer http.ResponseWriter, request *http.Request, shutdown context.Context,
+func Stream(writer http.ResponseWriter, request *http.Request, shutdown context.Context,
 	resolve func(*http.Request) (authz.Principal, error), permission authz.Permission,
-	read func(context.Context) (T, error), fail func(http.ResponseWriter, *http.Request, error),
+	read func(context.Context) (execution.Snapshot, error), fail func(http.ResponseWriter, *http.Request, error),
 ) {
+	if request.URL.RawQuery != "" {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprintln(writer, `{"error":"snapshot streams do not accept query parameters"}`)
+		return
+	}
 	if resolve == nil {
 		http.Error(writer, "stream unavailable", http.StatusServiceUnavailable)
 		return
@@ -81,7 +88,8 @@ func Stream[T interface{ Terminal() bool }](writer http.ResponseWriter, request 
 		if err != nil || !stillAuthorized() {
 			return
 		}
-		if !bytes.Equal(last, body) || time.Since(lastWrite) >= heartbeat {
+		changed := !bytes.Equal(last, body)
+		if changed || time.Since(lastWrite) >= heartbeat {
 			if err := controller.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
 				if last == nil {
 					http.Error(writer, "stream unavailable", http.StatusInternalServerError)
@@ -93,7 +101,7 @@ func Stream[T interface{ Terminal() bool }](writer http.ResponseWriter, request 
 				writer.Header().Set("Cache-Control", "no-cache")
 				writer.Header().Set("X-Accel-Buffering", "no")
 			}
-			if !bytes.Equal(last, body) {
+			if changed {
 				_, err = fmt.Fprintf(writer, "event: snapshot\ndata: %s\n\n", body)
 				last = body
 			} else {

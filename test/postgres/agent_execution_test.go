@@ -13,6 +13,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
+	"github.com/open-cluster/oc-control-plane/internal/execution"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -65,26 +66,29 @@ func TestAgentToolRunsSurviveLeaseTakeover(t *testing.T) {
 	if err := database.SaveChatDraft(ctx, org, claim, "Provisional"); err != nil {
 		t.Fatal(err)
 	}
-	assertActivity := func(draft, status string) {
+	assertActivity := func(draft, executionStatus, toolStatus string) {
 		t.Helper()
 		snapshot, err := database.ChatExecutionSnapshot(ctx, org, chat.ID, claim.ID)
-		if err != nil || snapshot.DraftText != draft || len(snapshot.Tools) != 3 {
+		if err != nil || snapshot.Status != executionStatus || snapshot.DraftText != draft || len(snapshot.Tools) != 3 {
 			t.Fatalf("unexpected execution snapshot: %+v, %v", snapshot, err)
 		}
 		for _, check := range []struct {
 			id     uuid.UUID
 			status string
 		}{
-			{first, "succeeded"}, {second, "succeeded"}, {interrupted, status},
+			{first, "succeeded"}, {second, "succeeded"}, {interrupted, toolStatus},
 		} {
-			if !slices.ContainsFunc(snapshot.Tools, func(run conversation.ToolActivity) bool {
+			if !slices.ContainsFunc(snapshot.Tools, func(run execution.ToolActivity) bool {
 				return run.ToolRunID == check.id && run.Status == check.status
 			}) {
 				t.Fatalf("Tool Run %s did not appear as %s: %+v", check.id, check.status, snapshot.Tools)
 			}
 		}
+		if toolStatus == "running" && snapshot.Tools[0].ToolRunID != interrupted {
+			t.Fatalf("active Tool missing from the top of the activity: %+v", snapshot.Tools)
+		}
 	}
-	assertActivity("Provisional", "running")
+	assertActivity("Provisional", "running", "running")
 	pool, err := poolForTest(database, org)
 	if err != nil {
 		t.Fatal(err)
@@ -93,7 +97,7 @@ func TestAgentToolRunsSurviveLeaseTakeover(t *testing.T) {
 		WHERE org_id = $1 AND execution_id = $2`, org, claim.ID); err != nil {
 		t.Fatal(err)
 	}
-	assertActivity("", "failed")
+	assertActivity("", "queued", "interrupted")
 	if err := database.SaveChatDraft(ctx, org, claim, "Stale draft"); !errors.Is(err, storage.ErrAgentLeaseLost) {
 		t.Fatalf("expired draft write = %v", err)
 	}
@@ -101,7 +105,7 @@ func TestAgentToolRunsSurviveLeaseTakeover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertActivity("", "failed")
+	assertActivity("", "running", "interrupted")
 	if _, err := pool.Exec(ctx, `UPDATE organization_membership SET role = 'viewer'
 		WHERE org_id = $1 AND user_id = $2`, org, principal.UserID()); err != nil {
 		t.Fatal(err)

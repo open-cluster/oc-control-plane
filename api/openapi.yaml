@@ -692,6 +692,7 @@ paths:
       tags: [Investigations]
       responses:
         "200": { $ref: "#/components/responses/ExecutionSnapshotStream" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -829,6 +830,7 @@ paths:
       tags: [Conversations]
       responses:
         "200": { $ref: "#/components/responses/ExecutionSnapshotStream" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/conversations/{conversation}/executions/{execution}/cancel:
     parameters: *chat-execution-path
@@ -1179,7 +1181,8 @@ components:
     ExecutionSnapshotStream:
       description: >
         Each snapshot event carries a complete ExecutionSnapshot JSON object. Replace the previous
-        snapshot and use the committed Message sequence when available. The stream also sends comment
+        snapshot on reconnect without query parameters. The stream ignores Last-Event-ID.
+        Use the committed Message sequence when available. The stream also sends comment
         heartbeats and closes after sending terminal state or when access ends.
       headers:
         X-Accel-Buffering:
@@ -1784,7 +1787,7 @@ components:
         executionId: { $ref: "#/components/schemas/UUID" }
         conversationId: { $ref: "#/components/schemas/UUID" }
         investigationId: { $ref: "#/components/schemas/UUID" }
-        status: { type: string, enum: [queued, running, needs_input, completed, failed, cancelled] }
+        status: { type: string, enum: [queued, running, needs_input, completed, failed, cancelled], description: An expired execution available for another claim appears as queued. }
         draftText: { type: string, maxLength: 8192, description: Provisional Chat text. Replace it on each snapshot. }
         message:
           type: object
@@ -1794,10 +1797,10 @@ components:
             sequence: { type: integer, format: int64, minimum: 1 }
             text: { type: string, minLength: 1, maxLength: 8192 }
         conclusionUrl: { type: string, description: Path to the committed Investigation detail. }
-        failureCode: { type: string, const: execution_failed }
         tools:
           type: array
           maxItems: 32
+          description: Active Tools first, then newest activity by start or finish time.
           items: { $ref: "#/components/schemas/ExecutionToolActivity" }
     ExecutionToolActivity:
       type: object
@@ -1806,7 +1809,7 @@ components:
       properties:
         toolRunId: { $ref: "#/components/schemas/UUID" }
         tool: { type: string }
-        status: { type: string, enum: [running, succeeded, failed] }
+        status: { type: string, enum: [running, succeeded, failed, interrupted] }
         startedAt: { $ref: "#/components/schemas/Timestamp" }
         finishedAt: { $ref: "#/components/schemas/Timestamp" }
         truncated: { type: boolean }

@@ -101,6 +101,10 @@ func TestSnapshotStreamClosesAfterTerminalState(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("cancel = %d: %s", status, body)
 	}
+	if status, body := plane.call(t, http.MethodGet,
+		plane.base(surfaceOrg)+"/investigations/"+turn+"/events?after=99", nil); status != http.StatusBadRequest {
+		t.Fatalf("obsolete replay cursor = %d: %s", status, body)
+	}
 	response := openEventStream(t, plane, turn, http.Header{"Last-Event-Id": {"99"}})
 	defer func() { _ = response.Body.Close() }()
 	ending, err := io.ReadAll(response.Body)

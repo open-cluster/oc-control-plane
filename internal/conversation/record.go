@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/execution"
 )
 
 type Source string
@@ -170,8 +171,8 @@ type Store interface {
 	ConversationTurns(ctx context.Context, org uuid.UUID, id uuid.UUID,
 		limit int, cursor string) (TurnPage, error)
 	AdmitConversationMessage(ctx context.Context, who authz.Principal, org, id, clientMessageID uuid.UUID, input NewMessage, replayOnly bool) (AcceptedMessage, error)
-	ChatExecutionSnapshot(ctx context.Context, org, chat, id uuid.UUID) (ExecutionSnapshot, error)
-	CancelChatExecution(ctx context.Context, who authz.Principal, org, chat, id uuid.UUID) (ExecutionSnapshot, error)
+	ChatExecutionSnapshot(ctx context.Context, org, chat, id uuid.UUID) (execution.Snapshot, error)
+	CancelChatExecution(ctx context.Context, who authz.Principal, org, chat, id uuid.UUID) (execution.Snapshot, error)
 }
 
 func Bounded(text string, limit int) string { return boundedRunes(text, limit) }

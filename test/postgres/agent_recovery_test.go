@@ -646,7 +646,7 @@ func TestInvestigationConclusionSurvivesProcessCrashes(t *testing.T) {
 		t.Fatalf("execution could be claimed after commit: %v", err)
 	}
 	terminal, err := database.InvestigationExecutionSnapshot(ctx, org, opened)
-	if err != nil || terminal.Status != "completed" || terminal.ConclusionURL != "/api/v1/investigations/"+opened.String() {
+	if err != nil || terminal.Status != "completed" || terminal.InvestigationID != opened {
 		t.Fatalf("expected a committed terminal snapshot, got %+v, %v", terminal, err)
 	}
 	var visibleCount int

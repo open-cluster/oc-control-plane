@@ -109,7 +109,9 @@ Findings require citations to successful reads. Failed or skipped reads can expl
 limitations. Action Proposals for obtaining missing evidence may omit citations. Chat and
 Investigation streams send the current execution snapshot on connect. Chat can show
 provisional text from the current model call. A terminal snapshot links to the committed
-Investigation or includes the committed Chat Message. Tool completion appears after the
+Investigation or includes the committed Chat Message. Expired executions available for
+another claim appear as queued. Active Tools stay above recent results, and interrupted
+attempts are distinguishable from failed reads. Tool completion appears after the
 Tool Run's provenance is recorded.
 Operational JSON logs correlate Investigations and Tool executions with trace identifiers.
 Routine requests and successful health probes log at DEBUG, with durations in milliseconds.

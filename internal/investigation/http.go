@@ -18,6 +18,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/correlation"
+	"github.com/open-cluster/oc-control-plane/internal/execution"
 	observability "github.com/open-cluster/oc-control-plane/internal/telemetry"
 )
 
@@ -46,7 +47,7 @@ type HTTPStore interface {
 	CancelInvestigation(context.Context, authz.Principal, uuid.UUID,
 		uuid.UUID) (Investigation, error)
 	TriggerIncident(context.Context, uuid.UUID, uuid.UUID) (Trigger, error)
-	InvestigationExecutionSnapshot(context.Context, uuid.UUID, uuid.UUID) (conversation.ExecutionSnapshot, error)
+	InvestigationExecutionSnapshot(context.Context, uuid.UUID, uuid.UUID) (execution.Snapshot, error)
 }
 
 func (h Handlers) Routes() []authz.Route {

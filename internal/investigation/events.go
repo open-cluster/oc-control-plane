@@ -7,7 +7,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/api/sse"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
-	"github.com/open-cluster/oc-control-plane/internal/conversation"
+	"github.com/open-cluster/oc-control-plane/internal/execution"
 )
 
 type EventType int16
@@ -69,7 +69,11 @@ func (h Handlers) streamEvents(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	sse.Stream(writer, request, h.StreamContext, h.Resolve, authz.InvestigationRead,
-		func(ctx context.Context) (conversation.ExecutionSnapshot, error) {
-			return h.Store.InvestigationExecutionSnapshot(ctx, organization, id)
+		func(ctx context.Context) (execution.Snapshot, error) {
+			snapshot, err := h.Store.InvestigationExecutionSnapshot(ctx, organization, id)
+			if err == nil && snapshot.Status == "completed" {
+				snapshot.ConclusionURL = "/api/v1/investigations/" + id.String()
+			}
+			return snapshot, err
 		}, h.fail)
 }

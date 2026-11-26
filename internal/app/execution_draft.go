@@ -3,86 +3,101 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
-	"unicode/utf8"
 
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
+	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
 
 const draftFlushInterval = 250 * time.Millisecond
 
 type executionDraft struct {
 	save      func(context.Context, string) error
-	secret    string
-	raw       strings.Builder
-	length    int
-	published string
-	lastWrite time.Time
+	secrets   []string
+	raw       []rune
+	published *string
+	nextWrite time.Time
 	timer     *time.Timer
-	flushAt   <-chan time.Time
 }
 
 func (d *executionDraft) reset(ctx context.Context) {
 	d.stopTimer()
-	d.raw.Reset()
-	d.length = 0
+	d.raw = d.raw[:0]
 	d.flush(ctx)
 }
 
 func (d *executionDraft) append(ctx context.Context, delta string) {
-	remaining := conversation.MaxMessageTextLength - d.length
-	if d.save == nil || remaining == 0 {
+	if d.save == nil || len(d.raw) == conversation.MaxMessageTextLength {
 		return
 	}
-	text := conversation.Bounded(strings.ReplaceAll(delta, "\x00", ""), remaining)
-	d.raw.WriteString(text)
-	d.length += utf8.RuneCountInString(text)
-	if d.flushAt != nil {
+	for _, r := range delta {
+		if r != 0 {
+			d.raw = append(d.raw, r)
+			if len(d.raw) == conversation.MaxMessageTextLength {
+				break
+			}
+		}
+	}
+	if d.timer != nil {
 		return
 	}
-	wait := time.Until(d.lastWrite.Add(draftFlushInterval))
-	if d.published == "" || wait <= 0 {
-		d.flush(ctx)
-		return
-	}
-	if d.timer == nil {
+	if wait := time.Until(d.nextWrite); wait > 0 {
 		d.timer = time.NewTimer(wait)
 	} else {
-		d.timer.Reset(wait)
+		d.flush(ctx)
 	}
-	d.flushAt = d.timer.C
+}
+
+func (d *executionDraft) ready() <-chan time.Time {
+	if d.timer != nil {
+		return d.timer.C
+	}
+	return nil
 }
 
 func (d *executionDraft) stopTimer() {
 	if d.timer != nil {
 		d.timer.Stop()
+		d.timer = nil
 	}
-	d.flushAt = nil
 }
 
 func (d *executionDraft) flush(ctx context.Context) {
 	if d.save == nil {
 		return
 	}
-	text := conversation.Bounded(safeDraftText(d.raw.String(), d.secret), conversation.MaxMessageTextLength)
-	if text == d.published {
+	text := conversation.Bounded(safeDraftText(string(d.raw), d.secrets), conversation.MaxMessageTextLength)
+	if d.published != nil && text == *d.published {
 		return
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	if err := d.save(writeCtx, text); err != nil {
-		d.save = nil
+		// An error can leave the result of a commit unknown.
+		d.published = nil
+		if errors.Is(err, storage.ErrAgentLeaseLost) || errors.Is(err, authz.ErrNotAMember) ||
+			errors.Is(err, storage.ErrAgentToolRunUnavailable) {
+			d.save = nil
+		} else if ctx.Err() == nil && d.timer == nil {
+			d.timer = time.NewTimer(draftFlushInterval)
+		}
 		return
 	}
-	d.published, d.lastWrite = text, time.Now()
+	d.published = &text
+	d.nextWrite = time.Now().Add(draftFlushInterval)
+	if text == "" {
+		d.nextWrite = time.Time{}
+	}
 }
 
-func safeDraftText(raw, secret string) string {
+func safeDraftText(raw string, secrets []string) string {
 	// A trailing proper prefix may complete into a secret in the next delta.
-	raw = redactModelSecret(raw, secret)
+	raw = redactModelSecret(raw, secrets)
 	withhold := 0
-	for _, value := range modelSecretForms(secret) {
+	for _, value := range secrets {
 		for length := min(len(value)-1, len(raw)); length > withhold; length-- {
 			if strings.HasSuffix(raw, value[:length]) {
 				withhold = length
@@ -93,14 +108,15 @@ func safeDraftText(raw, secret string) string {
 	return raw[:len(raw)-withhold]
 }
 
-func redactModelSecret(text, secret string) string {
-	for _, value := range modelSecretForms(secret) {
+func redactModelSecret(text string, secrets []string) string {
+	for _, value := range secrets {
 		text = strings.ReplaceAll(text, value, "[redacted]")
 	}
 	return text
 }
 
 func modelSecretForms(secret string) []string {
+	secret = strings.TrimSpace(secret)
 	if secret == "" {
 		return nil
 	}

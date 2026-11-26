@@ -11,37 +11,44 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
+	"github.com/open-cluster/oc-control-plane/internal/execution"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 )
 
 const activeSnapshotLease = `(e.status = 'running' AND e.lease_expires_at > statement_timestamp())`
+
+const snapshotExecutionStatus = `CASE WHEN e.status = 'running' AND e.lease_expires_at <= statement_timestamp()
+                                     THEN 'queued' ELSE e.status END`
 
 const snapshotTools = `
 	CROSS JOIN LATERAL (
 		SELECT coalesce(jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
 		    'toolRunId', r.tool_run_id, 'tool', r.tool,
 		    'status', CASE WHEN r.outcome = 1 THEN 'succeeded'
-		                   WHEN r.outcome IS NULL AND ` + activeSnapshotLease + ` THEN 'running'
+		                   WHEN r.active THEN 'running'
+		                   WHEN r.outcome IS NULL OR r.error = '` + interruptedToolRunReason + `' THEN 'interrupted'
 		                   ELSE 'failed' END,
 		    'startedAt', r.started_at, 'finishedAt', r.finished_at, 'truncated', r.truncated
-		)) ORDER BY greatest(r.started_at, r.finished_at) DESC, r.tool_run_id DESC), '[]'::jsonb) AS tools
-		FROM (`
+		)) ORDER BY r.active DESC NULLS LAST, greatest(r.started_at, r.finished_at) DESC, r.tool_run_id DESC), '[]'::jsonb) AS tools
+		FROM (
+			SELECT r.tool_run_id, r.tool, r.outcome, r.error, r.started_at, r.finished_at, r.truncated,
+			       (r.outcome IS NULL AND ` + activeSnapshotLease + `) AS active
+			FROM investigation_tool_run r`
 
 const snapshotToolLimit = `
-			ORDER BY greatest(r.started_at, r.finished_at) DESC, r.tool_run_id DESC LIMIT 32
+			ORDER BY active DESC NULLS LAST, greatest(r.started_at, r.finished_at) DESC, r.tool_run_id DESC LIMIT 32
 		) r
 	) activity`
 
 const chatSnapshotQuery = `
-	SELECT e.execution_id, c.conversation_id, NULL::uuid, e.status,
+	SELECT e.execution_id, c.conversation_id, NULL::uuid, ` + snapshotExecutionStatus + `,
 	       CASE WHEN ` + activeSnapshotLease + ` THEN e.draft_text END,
 	       m.sequence, m.text, activity.tools
 	  FROM agent_execution e
 	  JOIN conversation c ON c.org_id = e.org_id AND c.conversation_id = e.conversation_id
 	  LEFT JOIN conversation_message m ON m.org_id = c.org_id AND m.conversation_id = c.conversation_id
 	      AND m.sequence = e.reply_message_sequence AND m.role = 2 AND e.status = 'completed'` + snapshotTools + `
-			SELECT r.tool_run_id, r.tool, r.outcome, r.started_at, r.finished_at, r.truncated
-			FROM investigation_tool_run r WHERE r.org_id = e.org_id AND r.execution_id = e.execution_id` + snapshotToolLimit + `
+			WHERE r.org_id = e.org_id AND r.execution_id = e.execution_id` + snapshotToolLimit + `
 	 WHERE e.org_id = $1 AND e.conversation_id = $2 AND e.execution_id = $3
 	   AND c.source = 'web' AND c.deleted_at IS NULL`
 
@@ -49,28 +56,27 @@ const investigationSnapshotQuery = `
 	SELECT e.execution_id, CASE WHEN c.source = 'web' AND c.deleted_at IS NULL THEN c.conversation_id END,
 	       i.investigation_id,
 	       CASE i.status WHEN 2 THEN 'completed' WHEN 3 THEN 'failed' WHEN 4 THEN 'cancelled'
-	                     ELSE coalesce(e.status, 'queued') END,
+	                     ELSE coalesce(` + snapshotExecutionStatus + `, 'queued') END,
 	       NULL::text, NULL::bigint, NULL::text, activity.tools
 	  FROM investigation i
 	  LEFT JOIN agent_execution e ON e.org_id = i.org_id AND e.investigation_id = i.investigation_id
 	  LEFT JOIN conversation c ON c.org_id = i.org_id AND c.conversation_id = i.conversation_id` + snapshotTools + `
-			SELECT r.tool_run_id, r.tool, r.outcome, r.started_at, r.finished_at, r.truncated
-			FROM investigation_tool_run r WHERE r.org_id = i.org_id
+			WHERE r.org_id = i.org_id
 			  AND (r.execution_id = e.execution_id OR r.investigation_id = i.investigation_id)` + snapshotToolLimit + `
 	 WHERE i.org_id = $1 AND i.investigation_id = $2 AND ` + webInvestigationSource
 
-func (p *Database) ChatExecutionSnapshot(ctx context.Context, org, chat, id uuid.UUID) (conversation.ExecutionSnapshot, error) {
+func (p *Database) ChatExecutionSnapshot(ctx context.Context, org, chat, id uuid.UUID) (execution.Snapshot, error) {
 	pool, err := p.poolForOrganization(org)
 	if err != nil {
-		return conversation.ExecutionSnapshot{}, err
+		return execution.Snapshot{}, err
 	}
 	return readExecutionSnapshot(pool.QueryRow(ctx, chatSnapshotQuery, org, chat, id), conversation.ErrUnknown)
 }
 
-func (p *Database) InvestigationExecutionSnapshot(ctx context.Context, org, id uuid.UUID) (conversation.ExecutionSnapshot, error) {
+func (p *Database) InvestigationExecutionSnapshot(ctx context.Context, org, id uuid.UUID) (execution.Snapshot, error) {
 	pool, err := p.poolForOrganization(org)
 	if err != nil {
-		return conversation.ExecutionSnapshot{}, err
+		return execution.Snapshot{}, err
 	}
 	return readExecutionSnapshot(pool.QueryRow(ctx, investigationSnapshotQuery, org, id), investigation.ErrUnknown)
 }
@@ -92,37 +98,32 @@ func (p *Database) SaveChatDraft(ctx context.Context, org uuid.UUID, execution A
 	})
 }
 
-func readExecutionSnapshot(row pgx.Row, unknown error) (conversation.ExecutionSnapshot, error) {
-	var snapshot conversation.ExecutionSnapshot
-	var execution, chat, investigationID uuid.NullUUID
+func readExecutionSnapshot(row pgx.Row, unknown error) (execution.Snapshot, error) {
+	var snapshot execution.Snapshot
+	var executionID, chat, investigationID uuid.NullUUID
 	var draft, text *string
 	var sequence *int64
 	var tools []byte
-	err := row.Scan(&execution, &chat, &investigationID, &snapshot.Status, &draft, &sequence, &text, &tools)
+	err := row.Scan(&executionID, &chat, &investigationID, &snapshot.Status, &draft, &sequence, &text, &tools)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return snapshot, unknown
 	}
 	if err != nil {
 		return snapshot, err
 	}
-	snapshot.ExecutionID, snapshot.ConversationID, snapshot.InvestigationID = execution.UUID, chat.UUID, investigationID.UUID
+	snapshot.ExecutionID, snapshot.ConversationID, snapshot.InvestigationID = executionID.UUID, chat.UUID, investigationID.UUID
 	if draft != nil {
 		snapshot.DraftText = *draft
 	}
 	if sequence != nil && text != nil {
-		snapshot.Message = &conversation.ExecutionMessage{Sequence: *sequence, Text: *text}
+		snapshot.Message = &execution.Message{Sequence: *sequence, Text: *text}
 	}
-	if snapshot.Status == "completed" && investigationID.Valid {
-		snapshot.ConclusionURL = "/api/v1/investigations/" + investigationID.UUID.String()
-	}
-	if snapshot.Status == "failed" {
-		snapshot.FailureCode = "execution_failed"
-	}
-	return snapshot, json.Unmarshal(tools, &snapshot.Tools)
+	err = json.Unmarshal(tools, &snapshot.Tools)
+	return snapshot, err
 }
 
-func (p *Database) CancelChatExecution(ctx context.Context, who authz.Principal, org, chat, id uuid.UUID) (conversation.ExecutionSnapshot, error) {
-	var snapshot conversation.ExecutionSnapshot
+func (p *Database) CancelChatExecution(ctx context.Context, who authz.Principal, org, chat, id uuid.UUID) (execution.Snapshot, error) {
+	var snapshot execution.Snapshot
 	if who.Organization() != org || !who.HavePermission(authz.ConversationWrite) {
 		return snapshot, authz.ErrNotAMember
 	}

@@ -3,49 +3,13 @@ package conversation
 import (
 	"context"
 	"net/http"
-	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/api/sse"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/execution"
 )
-
-// ExecutionSnapshot contains only authorized, public execution state.
-type ExecutionSnapshot struct {
-	ExecutionID     uuid.UUID         `json:"executionId,omitzero"`
-	ConversationID  uuid.UUID         `json:"conversationId,omitzero"`
-	InvestigationID uuid.UUID         `json:"investigationId,omitzero"`
-	Status          string            `json:"status"`
-	DraftText       string            `json:"draftText,omitempty"`
-	Message         *ExecutionMessage `json:"message,omitempty"`
-	ConclusionURL   string            `json:"conclusionUrl,omitempty"`
-	FailureCode     string            `json:"failureCode,omitempty"`
-	Tools           []ToolActivity    `json:"tools"`
-}
-
-type ExecutionMessage struct {
-	Sequence int64  `json:"sequence"`
-	Text     string `json:"text"`
-}
-
-type ToolActivity struct {
-	ToolRunID  uuid.UUID  `json:"toolRunId"`
-	Tool       string     `json:"tool"`
-	Status     string     `json:"status"`
-	StartedAt  time.Time  `json:"startedAt"`
-	FinishedAt *time.Time `json:"finishedAt,omitempty"`
-	Truncated  bool       `json:"truncated"`
-}
-
-func (snapshot ExecutionSnapshot) Terminal() bool {
-	switch snapshot.Status {
-	case "completed", "failed", "cancelled":
-		return true
-	default:
-		return false
-	}
-}
 
 func (h Handlers) execution(writer http.ResponseWriter, request *http.Request) {
 	_, org, chat, id, ok := h.executionAddress(writer, request)
@@ -68,7 +32,7 @@ func (h Handlers) streamExecution(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	sse.Stream(writer, request, h.StreamContext, h.Resolve, authz.ConversationRead,
-		func(ctx context.Context) (ExecutionSnapshot, error) {
+		func(ctx context.Context) (execution.Snapshot, error) {
 			return h.Store.ChatExecutionSnapshot(ctx, org, chat, id)
 		}, h.fail)
 }

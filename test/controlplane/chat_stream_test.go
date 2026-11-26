@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,7 +17,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
-	"github.com/open-cluster/oc-control-plane/internal/conversation"
+	"github.com/open-cluster/oc-control-plane/internal/execution"
 )
 
 func TestChatTextStreamsThroughProxyBeforeCommit(t *testing.T) {
@@ -28,7 +29,16 @@ func TestChatTextStreamsThroughProxyBeforeCommit(t *testing.T) {
 	first := make(chan time.Time, 1)
 	var calls atomic.Int32
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if calls.Add(1) != 1 {
+		if call := calls.Add(1); call == 2 {
+			body, err := io.ReadAll(r.Body)
+			if err != nil || strings.Contains(string(body), secret) ||
+				strings.Count(string(body), "Visible preview [redacted]") != 1 {
+				t.Error("the follow-up model request did not contain exactly one redacted assistant answer")
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "data: {\"id\":\"follow-up\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"The reply was retained.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+			return
+		} else if call != 1 {
 			t.Error("reconnecting repeated the provider call")
 			http.Error(w, "unexpected model call", http.StatusBadRequest)
 			return
@@ -109,7 +119,7 @@ func TestChatTextStreamsThroughProxyBeforeCommit(t *testing.T) {
 	defer func() { _ = response.Body.Close() }()
 	close(start)
 	scanner := bufio.NewScanner(response.Body)
-	readSnapshot := func(scanner *bufio.Scanner) (conversation.ExecutionSnapshot, bool) {
+	readSnapshot := func(scanner *bufio.Scanner) (execution.Snapshot, bool) {
 		t.Helper()
 		for scanner.Scan() {
 			data, ok := strings.CutPrefix(scanner.Text(), "data: ")
@@ -119,13 +129,13 @@ func TestChatTextStreamsThroughProxyBeforeCommit(t *testing.T) {
 			if strings.Contains(data, secret[:16]) || strings.Contains(data, private) {
 				t.Fatal("a snapshot exposed the model key or private reasoning")
 			}
-			var snapshot conversation.ExecutionSnapshot
+			var snapshot execution.Snapshot
 			if err := json.Unmarshal([]byte(data), &snapshot); err != nil {
 				t.Fatal(err)
 			}
 			return snapshot, true
 		}
-		return conversation.ExecutionSnapshot{}, false
+		return execution.Snapshot{}, false
 	}
 	for {
 		snapshot, open := readSnapshot(scanner)
@@ -150,7 +160,7 @@ func TestChatTextStreamsThroughProxyBeforeCommit(t *testing.T) {
 		t.Fatal("reconnect lost the current draft or published the Message before commit")
 	}
 	close(tail)
-	var final conversation.ExecutionSnapshot
+	var final execution.Snapshot
 	for snapshot, open := readSnapshot(scanner); open; snapshot, open = readSnapshot(scanner) {
 		final = snapshot
 	}
@@ -171,5 +181,24 @@ func TestChatTextStreamsThroughProxyBeforeCommit(t *testing.T) {
 		latency, writes, reads, chunks)
 	if writes < 2 || writes > 12 || reads < 3 || reads > 12 {
 		t.Fatalf("expected bounded database activity, got %d writes and %d reads", writes, reads)
+	}
+	if calls.Load() != 1 {
+		t.Fatal("reconnect requested a second native reply")
+	}
+	status, body = plane.call(t, http.MethodPost, plane.base(surfaceOrg)+"/conversations/"+chat.ID+"/messages",
+		map[string]string{"clientMessageId": uuid.NewString(), "text": "Confirm the retained reply"})
+	decodeInto(t, body, &accepted)
+	if status != http.StatusAccepted {
+		t.Fatalf("accept follow-up = %d: %s", status, body)
+	}
+	followUp := openSnapshotStream(t, reconnect, accepted.EventsURL)
+	defer func() { _ = followUp.Body.Close() }()
+	scanner = bufio.NewScanner(followUp.Body)
+	for snapshot, open := readSnapshot(scanner); open; snapshot, open = readSnapshot(scanner) {
+		final = snapshot
+	}
+	if final.Status != "completed" || final.Message == nil || final.Message.Text != "The reply was retained." ||
+		calls.Load() != 2 || scanner.Err() != nil {
+		t.Fatalf("native continuation did not complete: %+v, %v", final, scanner.Err())
 	}
 }

@@ -119,7 +119,7 @@ func TestPostmortemLifecycleIsIncidentOwnedAndTenantScoped(t *testing.T) {
 	}
 	historical, err := database.InvestigationExecutionSnapshot(t.Context(), organization, legacyReport)
 	if err != nil || historical.ExecutionID != uuid.Nil || historical.Status != "completed" ||
-		historical.ConclusionURL != "/api/v1/investigations/"+legacyReport.String() ||
+		historical.InvestigationID != legacyReport ||
 		len(historical.Tools) != 1 || historical.Tools[0].ToolRunID != legacyRun {
 		t.Fatalf("the retained Investigation could not reconnect without an execution: %+v, %v", historical, err)
 	}
