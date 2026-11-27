@@ -15,28 +15,28 @@ import (
 const draftFlushInterval = 250 * time.Millisecond
 
 type executionDraft struct {
-	save      func(context.Context, string) error
-	secrets   []string
-	raw       []rune
-	published *string
-	nextWrite time.Time
+	persist     func(context.Context, string) error
+	secretForms []string
+	text        []rune
+	savedText   *string // nil when a write's outcome is unknown and must be retried
+	nextFlush   time.Time
 	timer     *time.Timer
 }
 
-func (d *executionDraft) reset(ctx context.Context) {
+func (d *executionDraft) startModelCall(ctx context.Context) {
 	d.stopTimer()
-	d.raw = d.raw[:0]
+	d.text = d.text[:0]
 	d.flush(ctx)
 }
 
-func (d *executionDraft) append(ctx context.Context, delta string) {
-	if d.save == nil || len(d.raw) == conversation.MaxMessageTextLength {
+func (d *executionDraft) appendText(ctx context.Context, delta string) {
+	if d.persist == nil || len(d.text) == conversation.MaxMessageTextLength {
 		return
 	}
 	for _, r := range delta {
 		if r != 0 {
-			d.raw = append(d.raw, r)
-			if len(d.raw) == conversation.MaxMessageTextLength {
+			d.text = append(d.text, r)
+			if len(d.text) == conversation.MaxMessageTextLength {
 				break
 			}
 		}
@@ -44,14 +44,14 @@ func (d *executionDraft) append(ctx context.Context, delta string) {
 	if d.timer != nil {
 		return
 	}
-	if wait := time.Until(d.nextWrite); wait > 0 {
+	if wait := time.Until(d.nextFlush); wait > 0 {
 		d.timer = time.NewTimer(wait)
 	} else {
 		d.flush(ctx)
 	}
 }
 
-func (d *executionDraft) ready() <-chan time.Time {
+func (d *executionDraft) flushReady() <-chan time.Time {
 	if d.timer != nil {
 		return d.timer.C
 	}
@@ -66,30 +66,30 @@ func (d *executionDraft) stopTimer() {
 }
 
 func (d *executionDraft) flush(ctx context.Context) {
-	if d.save == nil {
+	if d.persist == nil {
 		return
 	}
-	text := conversation.Bounded(safeDraftText(string(d.raw), d.secrets), conversation.MaxMessageTextLength)
-	if d.published != nil && text == *d.published {
+	text := conversation.Bounded(safeDraftText(string(d.text), d.secretForms), conversation.MaxMessageTextLength)
+	if d.savedText != nil && text == *d.savedText {
 		return
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	if err := d.save(writeCtx, text); err != nil {
+	if err := d.persist(writeCtx, text); err != nil {
 		// An error can leave the result of a commit unknown.
-		d.published = nil
+		d.savedText = nil
 		if errors.Is(err, storage.ErrAgentLeaseLost) || errors.Is(err, authz.ErrNotAMember) ||
 			errors.Is(err, storage.ErrAgentToolRunUnavailable) {
-			d.save = nil
+			d.persist = nil
 		} else if ctx.Err() == nil && d.timer == nil {
 			d.timer = time.NewTimer(draftFlushInterval)
 		}
 		return
 	}
-	d.published = &text
-	d.nextWrite = time.Now().Add(draftFlushInterval)
+	d.savedText = &text
+	d.nextFlush = time.Now().Add(draftFlushInterval)
 	if text == "" {
-		d.nextWrite = time.Time{}
+		d.nextFlush = time.Time{}
 	}
 }
 
