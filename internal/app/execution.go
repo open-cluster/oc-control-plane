@@ -328,13 +328,13 @@ func drainExecution(ctx context.Context, stream <-chan event.Event, saveDraft fu
 	modelSecret string,
 ) (executionOutcome, error) {
 	var outcome executionOutcome
-	draft := executionDraft{save: saveDraft, secrets: modelSecretForms(modelSecret), published: new("")}
+	draft := executionDraft{persist: saveDraft, secretForms: modelSecretForms(modelSecret), savedText: new("")}
 	defer draft.stopTimer()
 	for {
 		select {
 		case <-ctx.Done():
 			return outcome, context.Cause(ctx)
-		case <-draft.ready():
+		case <-draft.flushReady():
 			draft.timer = nil
 			draft.flush(ctx)
 		case item, open := <-stream:
@@ -351,9 +351,9 @@ func drainExecution(ctx context.Context, stream <-chan event.Event, saveDraft fu
 			case event.ReplyEndEvent:
 				outcome.completed = item.FinishedReason == types.ReplyCompleted && item.Error == nil
 			case event.ModelCallStartEvent:
-				draft.reset(ctx)
+				draft.startModelCall(ctx)
 			case event.TextBlockDeltaEvent:
-				draft.append(ctx, item.Delta)
+				draft.appendText(ctx, item.Delta)
 			case event.ModelCallEndEvent:
 				outcome.usage.InputTokens += int64(item.InputTokens) + int64(item.CacheCreationTokens) + int64(item.CacheReadTokens)
 				outcome.usage.OutputTokens += int64(item.OutputTokens)
@@ -418,38 +418,35 @@ func terminalReply(state *agent.AgentState) (int, int) {
 }
 
 func replaceFinalReply(native *message.Msg, start int, answer string) *message.Msg {
-	// Preserve native block IDs and the order of provider continuation blocks.
-	msg := *native
-	content := slices.Clone(msg.Content[:start])
-	suffix := msg.Content[start:]
+	// Keep native block identities and opaque provider continuation blocks intact.
+	reply := *native
+	reply.Content = slices.Clone(native.Content)
 	lastText := -1
-	for i, block := range slices.Backward(suffix) {
-		if _, ok := block.(message.TextBlock); ok {
+	for i := start; i < len(reply.Content); i++ {
+		if _, ok := reply.Content[i].(message.TextBlock); ok {
 			lastText = i
-			break
-		}
-	}
-	for i, block := range suffix {
-		text, ok := block.(message.TextBlock)
-		if !ok {
-			content = append(content, block)
-			continue
-		}
-		piece := answer
-		if i != lastText {
-			piece = conversation.Bounded(answer, utf8.RuneCountInString(text.Text))
-		}
-		if piece != "" {
-			text.Text = piece
-			content = append(content, text)
-			answer = answer[len(piece):]
 		}
 	}
 	if lastText < 0 {
-		content = append(content, message.TextBlock{Type: "text", Text: answer})
+		reply.Content = append(reply.Content, message.TextBlock{Type: "text", Text: answer})
+		return &reply
 	}
-	msg.Content = content
-	return &msg
+
+	remaining := []rune(answer)
+	for i := start; i <= lastText; i++ {
+		block, ok := reply.Content[i].(message.TextBlock)
+		if !ok {
+			continue
+		}
+		count := min(utf8.RuneCountInString(block.Text), len(remaining))
+		if i == lastText {
+			count = len(remaining)
+		}
+		block.Text = string(remaining[:count])
+		remaining = remaining[count:]
+		reply.Content[i] = block
+	}
+	return &reply
 }
 
 type executionReply struct {
