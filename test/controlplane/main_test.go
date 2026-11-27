@@ -767,9 +767,32 @@ func TestControlPlane_UnmatchedWebhookRequestsAreCorrelated(t *testing.T) {
 	if !limited {
 		t.Fatal("webhook surface did not enforce its bounded burst")
 	}
+	body := &unreadWebhookBody{}
+	alert, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
+		plane.baseURL+"/webhooks/v1/integrations/00000000-0000-0000-0000-000000000001/alert-events", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alert.ContentLength = 1
+	alert.Header.Set("Expect", "100-continue")
+	refused, err := http.DefaultClient.Do(alert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = refused.Body.Close() }()
+	if refused.StatusCode != http.StatusServiceUnavailable || body.read {
+		t.Fatalf("rate-limited alert status = %d, body read = %t", refused.StatusCode, body.read)
+	}
 	if status, body := plane.get(t, "/healthz"); status != http.StatusOK {
 		t.Fatalf("webhook exhaustion affected health: %d %s", status, body)
 	}
+}
+
+type unreadWebhookBody struct{ read bool }
+
+func (b *unreadWebhookBody) Read([]byte) (int, error) {
+	b.read = true
+	return 0, io.EOF
 }
 
 func TestControlPlane_MetricsAreScrapeableAndLowCardinality(t *testing.T) {
