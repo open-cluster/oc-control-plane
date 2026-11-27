@@ -65,12 +65,12 @@ const investigationSnapshotQuery = `
 			  AND (r.execution_id = e.execution_id OR r.investigation_id = i.investigation_id)` + snapshotToolLimit + `
 	 WHERE i.org_id = $1 AND i.investigation_id = $2 AND ` + webInvestigationSource
 
-func (p *Database) ChatExecutionSnapshot(ctx context.Context, org, chat, id uuid.UUID) (execution.Snapshot, error) {
+func (p *Database) ChatExecutionSnapshot(ctx context.Context, org, conversationID, executionID uuid.UUID) (execution.Snapshot, error) {
 	pool, err := p.poolForOrganization(org)
 	if err != nil {
 		return execution.Snapshot{}, err
 	}
-	return readExecutionSnapshot(pool.QueryRow(ctx, chatSnapshotQuery, org, chat, id), conversation.ErrUnknown)
+	return readExecutionSnapshot(pool.QueryRow(ctx, chatSnapshotQuery, org, conversationID, executionID), conversation.ErrUnknown)
 }
 
 func (p *Database) InvestigationExecutionSnapshot(ctx context.Context, org, id uuid.UUID) (execution.Snapshot, error) {
@@ -100,18 +100,18 @@ func (p *Database) SaveChatDraft(ctx context.Context, org uuid.UUID, execution A
 
 func readExecutionSnapshot(row pgx.Row, unknown error) (execution.Snapshot, error) {
 	var snapshot execution.Snapshot
-	var executionID, chat, investigationID uuid.NullUUID
+	var executionID, conversationID, investigationID uuid.NullUUID
 	var draft, text *string
 	var sequence *int64
 	var tools []byte
-	err := row.Scan(&executionID, &chat, &investigationID, &snapshot.Status, &draft, &sequence, &text, &tools)
+	err := row.Scan(&executionID, &conversationID, &investigationID, &snapshot.Status, &draft, &sequence, &text, &tools)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return snapshot, unknown
 	}
 	if err != nil {
 		return snapshot, err
 	}
-	snapshot.ExecutionID, snapshot.ConversationID, snapshot.InvestigationID = executionID.UUID, chat.UUID, investigationID.UUID
+	snapshot.ExecutionID, snapshot.ConversationID, snapshot.InvestigationID = executionID.UUID, conversationID.UUID, investigationID.UUID
 	if draft != nil {
 		snapshot.DraftText = *draft
 	}
@@ -122,9 +122,9 @@ func readExecutionSnapshot(row pgx.Row, unknown error) (execution.Snapshot, erro
 	return snapshot, err
 }
 
-func (p *Database) CancelChatExecution(ctx context.Context, who authz.Principal, org, chat, id uuid.UUID) (execution.Snapshot, error) {
+func (p *Database) CancelChatExecution(ctx context.Context, principal authz.Principal, org, conversationID, executionID uuid.UUID) (execution.Snapshot, error) {
 	var snapshot execution.Snapshot
-	if who.Organization() != org || !who.HavePermission(authz.ConversationWrite) {
+	if principal.Organization() != org || !principal.HavePermission(authz.ConversationWrite) {
 		return snapshot, authz.ErrNotAMember
 	}
 	pool, err := p.poolForOrganization(org)
@@ -135,13 +135,13 @@ func (p *Database) CancelChatExecution(ctx context.Context, who authz.Principal,
 		var exists int
 		if err := tx.QueryRow(ctx, `SELECT 1 FROM conversation
 			WHERE org_id = $1 AND conversation_id = $2 AND source = 'web' AND deleted_at IS NULL
-			FOR NO KEY UPDATE`, org, chat).Scan(&exists); err != nil {
+			FOR NO KEY UPDATE`, org, conversationID).Scan(&exists); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return conversation.ErrUnknown
 			}
 			return err
 		}
-		found, changed, err := revokeAgentExecution(ctx, tx, org, chat, id, uuid.Nil)
+		found, changed, err := revokeAgentExecution(ctx, tx, org, conversationID, executionID, uuid.Nil)
 		if err != nil {
 			return err
 		}
@@ -150,9 +150,9 @@ func (p *Database) CancelChatExecution(ctx context.Context, who authz.Principal,
 		}
 		if changed {
 			if err := writeEvent(ctx, tx, audit.Event{
-				Organization: org.String(), Actor: who.Actor(), Action: audit.ActionChatExecutionCancelled,
-				Target: audit.Target{Kind: audit.TargetConversation, ID: chat.String()}, Outcome: audit.OutcomeAllowed,
-				SourceAddress: who.SourceAddress(), RequestID: who.RequestID(), Detail: audit.Detail{"executionId": id.String()},
+				Organization: org.String(), Actor: principal.Actor(), Action: audit.ActionChatExecutionCancelled,
+				Target: audit.Target{Kind: audit.TargetConversation, ID: conversationID.String()}, Outcome: audit.OutcomeAllowed,
+				SourceAddress: principal.SourceAddress(), RequestID: principal.RequestID(), Detail: audit.Detail{"executionId": executionID.String()},
 			}); err != nil {
 				return err
 			}
