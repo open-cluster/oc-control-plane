@@ -87,7 +87,7 @@ func (h Handlers) Routes() []authz.Route {
 			Method:     http.MethodGet,
 			Pattern:    execution,
 			Permission: authz.ConversationRead,
-			Handler:    http.HandlerFunc(h.execution),
+			Handler:    http.HandlerFunc(h.readExecution),
 		},
 		{
 			Method:     http.MethodGet,
