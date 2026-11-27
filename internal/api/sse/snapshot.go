@@ -98,7 +98,7 @@ func Stream(writer http.ResponseWriter, request *http.Request, shutdown context.
 			}
 			if last == nil {
 				writer.Header().Set("Content-Type", "text/event-stream")
-				writer.Header().Set("Cache-Control", "no-cache")
+				writer.Header().Set("Cache-Control", "no-store")
 				writer.Header().Set("X-Accel-Buffering", "no")
 			}
 			if changed {
