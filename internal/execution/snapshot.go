@@ -13,12 +13,12 @@ type Snapshot struct {
 	InvestigationID uuid.UUID      `json:"investigationId,omitzero"`
 	Status          string         `json:"status"`
 	DraftText       string         `json:"draftText,omitempty"`
-	Message         *Message       `json:"message,omitempty"`
+	Message         *CommittedMessage `json:"message,omitempty"`
 	ConclusionURL   string         `json:"conclusionUrl,omitempty"`
 	Tools           []ToolActivity `json:"tools"`
 }
 
-type Message struct {
+type CommittedMessage struct {
 	Sequence int64  `json:"sequence"`
 	Text     string `json:"text"`
 }
