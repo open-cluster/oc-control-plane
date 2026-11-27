@@ -267,7 +267,7 @@ func (p *Database) CancelInvestigation(
 }
 
 func cancelInvestigationWork(ctx context.Context, tx pgx.Tx, org, id uuid.UUID) error {
-	if _, err := revokeAgentExecution(ctx, tx, org, uuid.Nil, uuid.Nil, id); err != nil {
+	if _, _, err := revokeAgentExecution(ctx, tx, org, uuid.Nil, uuid.Nil, id); err != nil {
 		return fmt.Errorf("revoking the Investigation lease: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -278,7 +278,7 @@ func cancelInvestigationWork(ctx context.Context, tx pgx.Tx, org, id uuid.UUID) 
 		 WHERE org_id = $1 AND investigation_id = $2 AND status IN (0, 1)`, org, id); err != nil {
 		return fmt.Errorf("cancelling Investigation-owned Relay work: %w", err)
 	}
-	return appendInvestigationEvent(ctx, tx, org, id, investigation.CancelledPayload())
+	return nil
 }
 
 func insertInvestigationReply(ctx context.Context, transaction pgx.Tx, organization, conversationID, id uuid.UUID, assistantReply string) error {
@@ -302,22 +302,6 @@ func insertInvestigationReply(ctx context.Context, transaction pgx.Tx, organizat
 		   SET last_activity_at = now()
 		 WHERE conversation_id = $1 AND org_id = $2`, conversationID, organization); err != nil {
 		return fmt.Errorf("stamping a completed Conversation: %w", err)
-	}
-	return nil
-}
-
-func appendInvestigationEvent(ctx context.Context, tx pgx.Tx, organization, id uuid.UUID, payload investigation.EventPayload) error {
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("encoding Investigation event: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO investigation_event (investigation_id, org_id, sequence, type, payload)
-		SELECT $1, $2, coalesce(max(sequence), 0) + 1, $3, $4
-		  FROM investigation_event
-		 WHERE investigation_id = $1 AND org_id = $2`,
-		id, organization, int16(payload.EventType()), encoded); err != nil {
-		return fmt.Errorf("recording Investigation event: %w", err)
 	}
 	return nil
 }

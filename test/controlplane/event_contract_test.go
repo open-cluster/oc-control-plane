@@ -57,13 +57,8 @@ func (m *eventContractModel) Chat(_ context.Context, prompt []*message.Msg, opts
 	return reportResponse(conclusion)
 }
 
-func TestAvailableToolAndAnswerEventsMatchVersionTwoSchema(t *testing.T) {
-	assertModelEventSchema(t, &eventContractModel{tool: "slack_list_channels"},
-		[]string{"started", "tool_started", "tool_completed", "concluded"})
-}
-
-func assertModelEventSchema(t *testing.T, model *eventContractModel, want []string) {
-	t.Helper()
+func TestCompletedSnapshotKeepsToolRunProvenance(t *testing.T) {
+	model := &eventContractModel{tool: "slack_list_channels"}
 	model.observation = make(chan message.ToolResultBlock, 1)
 	vendor := newVendorFake(t, "xoxb-good-token-1234")
 	vendor.channels = `{"ok":true,"channels":[{"id":"C0INCIDENT","name":"incidents"}]}`
@@ -177,36 +172,23 @@ func assertModelEventSchema(t *testing.T, model *eventContractModel, want []stri
 	if status != http.StatusOK {
 		t.Fatalf("replay = %d: %s", status, body)
 	}
-	seen := make(map[string]bool)
-	for _, event := range assertSerializedEvents(t, body) {
-		kind := event["type"].(string)
-		seen[kind] = true
-		if kind == "tool_started" || kind == "tool_completed" {
-			payload := event["payload"].(map[string]any)
-			if payload["toolRunId"] != runID.String() || payload["ordinal"] != nil {
-				t.Fatalf("Tool event does not use its durable UUID: %v", payload)
-			}
-		}
-		if kind == "started" {
-			if event["payload"].(map[string]any)["text"] != "Reviewing this request and available evidence sources." {
-				t.Fatal("Started event does not describe the initial phase")
-			}
-			event["payload"] = map[string]any{}
-			if err := eventSchema(t).Validate(event); err != nil {
-				t.Fatalf("legacy empty Started payload is no longer readable: %v", err)
-			}
-		}
-		if kind == "concluded" && event["payload"].(map[string]any)["summary"] != final.Summary {
-			t.Fatal("event answer differs from its canonical result")
-		}
+	snapshots := assertSerializedSnapshots(t, body)
+	if len(snapshots) != 1 || snapshots[0]["status"] != "completed" ||
+		snapshots[0]["conclusionUrl"] != "/api/v1/investigations/"+turn {
+		t.Fatalf("terminal snapshot = %s", body)
 	}
-	if len(seen) != len(want) {
-		t.Errorf("event types = %v, want %v", seen, want)
+	tools := snapshots[0]["tools"].([]any)
+	if len(tools) != 1 || tools[0].(map[string]any)["toolRunId"] != runID.String() ||
+		tools[0].(map[string]any)["status"] != "succeeded" {
+		t.Fatalf("Tool activity did not use the committed UUID: %s", body)
 	}
-	for _, kind := range want {
-		if !seen[kind] {
-			t.Errorf("no %s event validated", kind)
-		}
+	if strings.Contains(body, retained.IntegrationName) || strings.Contains(body, "incidents") {
+		t.Fatalf("snapshot exposed Integration or observation content: %s", body)
+	}
+	var legacyEvents int
+	if err := database.QueryRow(t.Context(), `SELECT count(*) FROM investigation_event
+		WHERE org_id = $1 AND investigation_id = $2`, surfaceOrg, turn).Scan(&legacyEvents); err != nil || legacyEvents != 0 {
+		t.Fatalf("web execution wrote %d redundant legacy events: %v", legacyEvents, err)
 	}
 	followUp := plane.seedLegacyTurn(t, conversationID, "Which channel did you find?")
 	if got := plane.awaitInvestigation(t, followUp); !strings.Contains(got, `"status":"concluded"`) ||

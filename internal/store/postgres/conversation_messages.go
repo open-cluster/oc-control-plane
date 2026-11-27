@@ -11,12 +11,14 @@ import (
 )
 
 const conversationMessageColumns = `m.sequence, m.role, m.author_id, m.author_name, m.text, m.source_reference,
-	m.investigation_id, m.created_at, m.window_from, m.window_until`
+	m.investigation_id, m.created_at, m.window_from, m.window_until, e.execution_id`
 
 const visibleConversationMessages = `
 	FROM conversation_message m
 	JOIN conversation c USING (org_id, conversation_id)
 	LEFT JOIN investigation i ON i.org_id = m.org_id AND i.investigation_id = m.investigation_id
+	LEFT JOIN agent_execution e ON e.org_id = m.org_id AND e.conversation_id = m.conversation_id
+	  AND e.message_sequence = m.sequence AND m.role = 1
 	WHERE m.org_id = $1 AND m.conversation_id = $2
 	  AND c.deleted_at IS NULL
 	  AND (c.source <> 'web' OR m.role <> 2 OR ` + webInvestigationSource + `)`
@@ -65,10 +67,12 @@ func readConversationMessages(ctx context.Context, queries querier, limit int, q
 	defer rows.Close()
 	messages := make([]conversation.Message, 0, limit)
 	for rows.Next() {
-		message, err := scanMessage(rows)
+		var execution uuid.NullUUID
+		message, err := scanMessage(rows, &execution)
 		if err != nil {
 			return nil, err
 		}
+		message.ExecutionID = execution.UUID
 		messages = append(messages, message)
 	}
 	return messages, rows.Err()

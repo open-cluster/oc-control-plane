@@ -464,16 +464,17 @@ func scanConversation(row scanned) (conversation.Conversation, error) {
 	return found, nil
 }
 
-func scanMessage(row scanned) (conversation.Message, error) {
+func scanMessage(row scanned, extra ...any) (conversation.Message, error) {
 	var (
 		message         conversation.Message
 		role            int16
 		investigationID *uuid.UUID
 		from, until     *time.Time
 	)
-	if err := row.Scan(&message.Sequence, &role, &message.AuthorID,
+	fields := []any{&message.Sequence, &role, &message.AuthorID,
 		&message.AuthorName, &message.Text, &message.SourceReference, &investigationID,
-		&message.CreatedAt, &from, &until); err != nil {
+		&message.CreatedAt, &from, &until}
+	if err := row.Scan(append(fields, extra...)...); err != nil {
 		return conversation.Message{}, fmt.Errorf("scanning a message: %w", err)
 	}
 	message.Role = conversation.Role(role)

@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,7 +35,7 @@ type liveProgressEventModel struct {
 	calls        int
 	firstStarted chan struct{}
 	releaseFirst chan struct{}
-	thirdStarted chan struct{}
+	nextStarted  chan struct{}
 }
 
 func (m *liveProgressEventModel) Chat(ctx context.Context, _ []*message.Msg, _ ...model.CallOption) (*model.ChatResponse, error) {
@@ -46,26 +48,45 @@ func (m *liveProgressEventModel) Chat(ctx context.Context, _ []*message.Msg, _ .
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
-	case 3:
-		close(m.thirdStarted)
+	default:
+		close(m.nextStarted)
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
-	return toolResponse(fmt.Sprintf("read-%d", m.calls), "slack_list_channels", `{"purpose":"Read evidence","input":{}}`), nil
+	const input = `{"purpose":"Read evidence","input":{"limit":1}}`
+	batch := toolResponse("first-read", "slack_list_channels", input)
+	batch.Content = append(batch.Content, toolResponse("second-read", "slack_list_channels", input).Content...)
+	return batch, nil
 }
 
 func TestLiveToolCompletionMatchesSerializedSchema(t *testing.T) {
 	model := &liveProgressEventModel{
 		firstStarted: make(chan struct{}), releaseFirst: make(chan struct{}),
-		thirdStarted: make(chan struct{}),
+		nextStarted: make(chan struct{}),
 	}
 	vendor := newVendorFake(t, "xoxb-good-token-1234")
-	vendor.channels = `{"ok":true,"channels":[{"id":"C0INCIDENT","name":"incidents"}]}`
+	vendor.channels = `{"ok":true,"channels":[{"id":"C0INCIDENT","name":"incidents"},{"id":"C0OPS","name":"operations"}]}`
+	releaseSlow := make(chan struct{})
+	var reads atomic.Int32
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/conversations.list" && reads.Add(1) == 1 {
+			select {
+			case <-releaseSlow:
+			case <-r.Context().Done():
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"ok":false,"error":"internal_error"}`)
+			return
+		}
+		vendor.Config.Handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(provider.Close)
 	address := freeAddress(t)
 	running := startControlPlaneRunning(t, func(cfg *config.Config) {
 		cfg.HTTPListenAddress = address
 		cfg.ModelProvider, cfg.ModelName, cfg.ModelAPIKey = "openrouter", "z-ai/glm-4.7", "scripted-model-key"
-	}, app.Options{Model: model, SlackAPIURL: vendor.URL})
+	}, app.Options{Model: model, SlackAPIURL: provider.URL})
 	plane := &integrationPlane{controlPlane: running, api: address, intake: address}
 	if status, body := plane.createSlack(t, "Operator testimony", "xoxb-good-token-1234"); status != http.StatusCreated {
 		t.Fatalf("create Slack = %d: %s", status, body)
@@ -76,23 +97,41 @@ func TestLiveToolCompletionMatchesSerializedSchema(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the model did not start")
 	}
-	response := openEventStream(t, plane, turn, "")
+	response := openEventStream(t, plane, turn)
 	defer func() { _ = response.Body.Close() }()
 	close(model.releaseFirst)
 
-	schema := eventSchema(t)
+	schema := snapshotSchema(t)
 	scanner := bufio.NewScanner(response.Body)
-	completions := 0
-	var seen []string
+	var fastID string
+	var failed bool
 	for scanner.Scan() {
 		data, present := strings.CutPrefix(scanner.Text(), "data: ")
 		if !present {
 			continue
 		}
-		event := decodeSerializedEvent(t, schema, data)
-		seen = append(seen, event["type"].(string))
-		if event["type"] == "tool_completed" {
-			completions++
+		snapshot := decodeSerializedSnapshot(t, schema, data)
+		if snapshot["draftText"] != nil {
+			t.Fatal("Investigation published a provisional narrative")
+		}
+		activityRows := snapshot["tools"].([]any)
+		for _, tool := range activityRows {
+			activity := tool.(map[string]any)
+			id := activity["toolRunId"].(string)
+			if activity["status"] == "failed" {
+				failed = true
+			}
+			if activity["status"] != "succeeded" || fastID != "" {
+				continue
+			}
+			if len(activityRows) != 2 || activityRows[0].(map[string]any)["status"] != "running" || activity["truncated"] != true {
+				t.Fatalf("snapshot lost the running peer or fast Tool truncation: %v", activityRows)
+			}
+			select {
+			case <-model.nextStarted:
+				t.Fatal("native model advanced before the held Tool returned")
+			default:
+			}
 			status, body := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/investigations/"+turn, nil)
 			if status != http.StatusOK {
 				t.Fatalf("Tool Run detail = %d: %s", status, body)
@@ -103,7 +142,6 @@ func TestLiveToolCompletionMatchesSerializedSchema(t *testing.T) {
 				} `json:"runs"`
 			}
 			decodeInto(t, body, &detail)
-			id := event["payload"].(map[string]any)["toolRunId"].(string)
 			if !slices.ContainsFunc(detail.Runs, func(run struct {
 				ID string `json:"id"`
 			}) bool {
@@ -117,16 +155,18 @@ func TestLiveToolCompletionMatchesSerializedSchema(t *testing.T) {
 			if status != http.StatusOK || retained.ObservationText == nil {
 				t.Fatal("live completion has no committed prepared observation")
 			}
-			if completions == 2 {
-				break
-			}
+			fastID = id
+			close(releaseSlow)
+		}
+		if failed && fastID != "" {
+			break
 		}
 	}
-	if completions != 2 {
-		t.Fatalf("live stream ended before both Tool completions; events=%v: %v", seen, scanner.Err())
+	if !failed || fastID == "" {
+		t.Fatalf("live stream ended before a successful and a failed Tool completion: %v", scanner.Err())
 	}
 	select {
-	case <-model.thirdStarted:
+	case <-model.nextStarted:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the model did not receive the second Tool result")
 	}
@@ -150,8 +190,8 @@ func TestFailedEventMatchesSerializedSchema(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("replay = %d: %s", status, body)
 	}
-	events := assertSerializedEvents(t, body)
-	if events[len(events)-1]["type"] != "failed" {
+	events := assertSerializedSnapshots(t, body)
+	if events[len(events)-1]["status"] != "failed" {
 		t.Fatal("no failed ending validated")
 	}
 }
@@ -167,19 +207,19 @@ func TestCancelledEventMatchesSerializedSchema(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("replay = %d: %s", status, body)
 	}
-	assertSerializedEvents(t, body)
+	assertSerializedSnapshots(t, body)
 }
 
-func assertSerializedEvents(t *testing.T, stream string) []map[string]any {
+func assertSerializedSnapshots(t *testing.T, stream string) []map[string]any {
 	t.Helper()
-	schema := eventSchema(t)
+	schema := snapshotSchema(t)
 	var events []map[string]any
 	for _, line := range strings.Split(stream, "\n") {
 		data, present := strings.CutPrefix(line, "data: ")
 		if !present {
 			continue
 		}
-		events = append(events, decodeSerializedEvent(t, schema, data))
+		events = append(events, decodeSerializedSnapshot(t, schema, data))
 	}
 	if len(events) == 0 {
 		t.Fatal("no serialized events were validated")
@@ -187,20 +227,20 @@ func assertSerializedEvents(t *testing.T, stream string) []map[string]any {
 	return events
 }
 
-func decodeSerializedEvent(t *testing.T, schema *jsonschema.Schema, data string) map[string]any {
+func decodeSerializedSnapshot(t *testing.T, schema *jsonschema.Schema, data string) map[string]any {
 	t.Helper()
 	var event map[string]any
 	if err := json.Unmarshal([]byte(data), &event); err != nil {
 		t.Fatal(err)
 	}
 	if err := schema.Validate(event); err != nil {
-		t.Errorf("serialized %v event violates OpenAPI: %v", event["type"], err)
+		t.Errorf("serialized %v event violates OpenAPI: %v", event["status"], err)
 	}
 	return event
 }
 
-func eventSchema(t *testing.T) *jsonschema.Schema {
-	return serializedSchema(t, "InvestigationEvent")
+func snapshotSchema(t *testing.T) *jsonschema.Schema {
+	return serializedSchema(t, "ExecutionSnapshot")
 }
 
 func serializedSchema(t *testing.T, name string) *jsonschema.Schema {

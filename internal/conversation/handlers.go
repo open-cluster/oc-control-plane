@@ -27,10 +27,13 @@ type Handlers struct {
 	Store          Store
 	Logger         *slog.Logger
 	AgentAvailable bool
+	Resolve        func(*http.Request) (authz.Principal, error)
+	StreamContext  context.Context
 }
 
 func (h Handlers) Routes() []authz.Route {
 	const base = "/api/v1/conversations"
+	const execution = base + "/{conversation}/executions/{execution}"
 	return []authz.Route{
 		{
 			Method:     http.MethodGet,
@@ -79,6 +82,24 @@ func (h Handlers) Routes() []authz.Route {
 			Pattern:    base + "/{conversation}/messages",
 			Permission: authz.ConversationWrite,
 			Handler:    http.HandlerFunc(h.say),
+		},
+		{
+			Method:     http.MethodGet,
+			Pattern:    execution,
+			Permission: authz.ConversationRead,
+			Handler:    http.HandlerFunc(h.readExecution),
+		},
+		{
+			Method:     http.MethodGet,
+			Pattern:    execution + "/events",
+			Permission: authz.ConversationRead,
+			Handler:    http.HandlerFunc(h.streamExecution),
+		},
+		{
+			Method:     http.MethodPost,
+			Pattern:    execution + "/cancel",
+			Permission: authz.ConversationWrite,
+			Handler:    http.HandlerFunc(h.cancelExecution),
 		},
 	}
 }
@@ -180,6 +201,7 @@ func (h Handlers) say(writer http.ResponseWriter, request *http.Request) {
 		Message:     messageViewOf(accepted.Message),
 		ExecutionID: accepted.ExecutionID,
 		Status:      accepted.Status,
+		EventsURL:   "/api/v1/conversations/" + id.String() + "/executions/" + accepted.ExecutionID.String() + "/events",
 	})
 }
 

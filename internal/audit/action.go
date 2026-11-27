@@ -35,11 +35,12 @@ const (
 	ActionInvestigationOpened    Action = "investigation.opened"
 	ActionInvestigationCancelled Action = "investigation.cancelled"
 
-	ActionConversationOpened    Action = "conversation.opened"
-	ActionConversationMessage   Action = "conversation.message-sent"
-	ActionConversationRenamed   Action = "conversation.renamed"
-	ActionConversationDeleted   Action = "conversation.deleted"
-	ActionSlackMessageRecovered Action = "slack-message.recovered"
+	ActionConversationOpened     Action = "conversation.opened"
+	ActionConversationMessage    Action = "conversation.message-sent"
+	ActionConversationRenamed    Action = "conversation.renamed"
+	ActionConversationDeleted    Action = "conversation.deleted"
+	ActionChatExecutionCancelled Action = "conversation.execution-cancelled"
+	ActionSlackMessageRecovered  Action = "slack-message.recovered"
 
 	ActionAuthorizationRefused Action = "authorization.refused"
 	ActionCollaborationReplied Action = "collaboration.replied"

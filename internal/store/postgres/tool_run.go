@@ -189,7 +189,7 @@ func (p *Database) BeginAgentToolRun(
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp())`,
 			org, id, execution.ID, nullableUUID(run.IntegrationID), run.Tool, run.Purpose,
 			arguments, run.WindowFrom, run.WindowUntil)
-		if err != nil || execution.InvestigationID == uuid.Nil {
+		if err != nil || !execution.HasAssignedInput() {
 			return err
 		}
 		run.ID = id
@@ -197,7 +197,7 @@ func (p *Database) BeginAgentToolRun(
 		if access != nil {
 			name = access.Integration.Name
 		}
-		return appendInvestigationEvent(ctx, tx, org, execution.InvestigationID,
+		return appendSlackInvestigationEvent(ctx, tx, org, execution.InvestigationID,
 			investigation.ToolStartedPayload(run, run.IntegrationID.String(), name))
 	})
 	if err != nil {
@@ -241,19 +241,21 @@ func (p *Database) CompleteAgentToolRun(
 		if err != nil {
 			return err
 		}
-		if execution.InvestigationID == uuid.Nil {
+		if !execution.HasAssignedInput() {
 			return nil
 		}
-		return appendInvestigationEvent(ctx, tx, org, execution.InvestigationID, investigation.ToolCompletedPayload(run))
+		return appendSlackInvestigationEvent(ctx, tx, org, execution.InvestigationID, investigation.ToolCompletedPayload(run))
 	})
 }
+
+const interruptedToolRunReason = "execution ended before Tool completion"
 
 func interruptAgentToolRuns(ctx context.Context, tx pgx.Tx, org, executionID uuid.UUID) error {
 	// A later claim can replay the read but must allocate a new attempt.
 	_, err := tx.Exec(ctx, `
 		WITH interrupted AS (
 		    UPDATE investigation_tool_run SET outcome = $3, finished_at = clock_timestamp(),
-		           error = 'execution ended before Tool completion'
+		           error = $7
 		     WHERE org_id = $1 AND execution_id = $2 AND outcome IS NULL
 		)
 		UPDATE relay_job job
@@ -264,6 +266,6 @@ func interruptAgentToolRuns(ctx context.Context, tx pgx.Tx, org, executionID uui
 		 WHERE job.org_id = $1 AND run.org_id = job.org_id AND run.tool_run_id = job.tool_run_id
 		   AND run.execution_id = $2 AND job.status IN ($4, $5)`,
 		org, executionID, int16(investigation.RunFailed),
-		int16(JobPending), int16(JobLeased), int16(JobCancelled))
+		int16(JobPending), int16(JobLeased), int16(JobCancelled), interruptedToolRunReason)
 	return err
 }

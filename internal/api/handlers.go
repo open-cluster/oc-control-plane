@@ -124,6 +124,8 @@ func (h Handlers) Routes() []authz.Route {
 		MaxPending:     h.MaxWaitingTurns,
 	}.Routes()...)
 	routes = append(routes, conversation.Handlers{
+		Resolve:        h.Identity.Resolve,
+		StreamContext:  h.StreamContext,
 		Store:          h.Database,
 		Logger:         h.Logger,
 		AgentAvailable: h.AgentAvailable,

@@ -18,6 +18,56 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/config"
 )
 
+func TestChatExecutionSnapshotUsesCommittedMessage(t *testing.T) {
+	plane, _ := agentPlane(t, concludingModel{})
+	base := plane.base(surfaceOrg) + "/conversations"
+	status, body := plane.call(t, http.MethodPost, base, map[string]string{"title": "Snapshot"})
+	var chat struct{ ID string }
+	decodeInto(t, body, &chat)
+	if status != http.StatusCreated {
+		t.Fatalf("create Chat = %d: %s", status, body)
+	}
+	messages := "/conversations/" + chat.ID + "/messages"
+	status, body = plane.call(t, http.MethodPost, plane.base(surfaceOrg)+messages,
+		map[string]string{"clientMessageId": uuid.NewString(), "text": "What happened?"})
+	var accepted struct{ ExecutionID, EventsURL string }
+	decodeInto(t, body, &accepted)
+	path := base + "/" + chat.ID + "/executions/" + accepted.ExecutionID
+	if status != http.StatusAccepted || accepted.EventsURL != strings.TrimPrefix(path, "http://"+plane.api)+"/events" {
+		t.Fatalf("admission did not expose the execution stream: %d %s", status, body)
+	}
+	awaitChatMessages(t, plane, messages, 2)
+	status, body = plane.call(t, http.MethodGet, path, nil)
+	var snapshot struct {
+		Status, DraftText string
+		Message           struct {
+			Sequence int64
+			Text     string
+		}
+	}
+	decodeInto(t, body, &snapshot)
+	if status != http.StatusOK || snapshot.Status != "completed" || snapshot.DraftText != "" ||
+		snapshot.Message.Sequence != 2 || snapshot.Message.Text != "No cause established." {
+		t.Fatalf("snapshot did not use the committed Message: %d %s", status, body)
+	}
+	status, body = plane.call(t, http.MethodPost, path+"/cancel", nil)
+	if status != http.StatusOK || !strings.Contains(body, `"status":"completed"`) {
+		t.Fatalf("cancellation replaced a committed reply: %d %s", status, body)
+	}
+	mismatched := base + "/" + uuid.NewString() + "/executions/" + accepted.ExecutionID
+	if code, _ := plane.call(t, http.MethodGet, mismatched, nil); code != http.StatusNotFound {
+		t.Fatalf("execution visible under an unrelated Conversation: %d", code)
+	}
+	status, body = plane.call(t, http.MethodGet, plane.base(surfaceOrg)+messages, nil)
+	var history struct {
+		Items []struct{ ExecutionID string }
+	}
+	decodeInto(t, body, &history)
+	if status != http.StatusOK || len(history.Items) != 2 || history.Items[0].ExecutionID != accepted.ExecutionID || history.Items[1].ExecutionID != "" {
+		t.Fatalf("history did not link the user Message to its execution: %d %s", status, body)
+	}
+}
+
 func TestExplicitInvestigationDoesNotOwnChatContext(t *testing.T) {
 	plane, _ := agentPlane(t, concludingModel{})
 	base := plane.base(surfaceOrg)

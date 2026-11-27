@@ -161,38 +161,45 @@ func (p *Database) GenerationInput(
 		}
 	}
 
-	events, err := pool.Query(ctx, `
-		SELECT e.investigation_id, e.sequence, e.at, e.type, e.payload
-		  FROM investigation_event e
-		  JOIN investigation i
-		    ON i.org_id = e.org_id AND i.investigation_id = e.investigation_id
-		 WHERE i.incident_id = $1 AND e.org_id = $2 AND `+webInvestigationSource+`
-		 ORDER BY i.created_at, e.sequence`, incidentID, organization)
+	timeline, err := pool.Query(ctx, `
+		SELECT i.investigation_id::text, point.at, point.description
+		  FROM investigation i
+		  LEFT JOIN agent_execution e ON e.org_id = i.org_id AND e.investigation_id = i.investigation_id
+		  LEFT JOIN LATERAL (
+		      SELECT v.at FROM investigation_event v
+		       WHERE v.org_id = i.org_id AND v.investigation_id = i.investigation_id AND v.type = 1
+		       ORDER BY v.sequence LIMIT 1
+		  ) historical_start ON true
+		  LEFT JOIN LATERAL (
+		      SELECT v.at FROM investigation_event v
+		       WHERE v.org_id = i.org_id AND v.investigation_id = i.investigation_id
+		         AND v.type = CASE i.status WHEN 2 THEN 6 WHEN 3 THEN 7 WHEN 4 THEN 9 END
+		       ORDER BY v.sequence LIMIT 1
+		  ) historical_end ON true
+		  CROSS JOIN LATERAL (VALUES
+		      (coalesce(historical_start.at, e.started_at), 'Investigation started'),
+		      (coalesce(historical_end.at, i.concluded_at),
+		       CASE i.status WHEN 2 THEN 'Investigation concluded'
+		                     WHEN 3 THEN 'Investigation failed'
+		                     WHEN 4 THEN 'Investigation cancelled' END)
+		  ) point(at, description)
+		 WHERE i.incident_id = $1 AND i.org_id = $2 AND point.at IS NOT NULL AND point.description IS NOT NULL
+		   AND `+webInvestigationSource+` ORDER BY point.at, i.investigation_id`, incidentID, organization)
 	if err != nil {
-		return postmortem.GenerationInput{}, fmt.Errorf("reading postmortem events: %w", err)
+		return postmortem.GenerationInput{}, fmt.Errorf("reading Postmortem Investigation timeline: %w", err)
 	}
-	for events.Next() {
-		var evidence postmortem.EventEvidence
-		var eventType int16
-		var payload []byte
-		if err = events.Scan(&evidence.InvestigationID, &evidence.Event.Sequence,
-			&evidence.Event.At, &eventType, &payload); err != nil {
-			events.Close()
-			return postmortem.GenerationInput{}, fmt.Errorf("scanning postmortem event: %w", err)
+	for timeline.Next() {
+		var entry postmortem.TimelineEntry
+		if err := timeline.Scan(&entry.InvestigationID, &entry.At, &entry.Description); err != nil {
+			timeline.Close()
+			return postmortem.GenerationInput{}, fmt.Errorf("scanning Postmortem Investigation timeline: %w", err)
 		}
-		evidence.Event.Type = investigation.EventType(eventType)
-		if len(payload) > 0 {
-			if err = json.Unmarshal(payload, &evidence.Event.Payload); err != nil {
-				events.Close()
-				return postmortem.GenerationInput{}, fmt.Errorf("decoding postmortem event: %w", err)
-			}
-		}
-		input.Events = append(input.Events, evidence)
+		input.InvestigationTimeline = append(input.InvestigationTimeline, entry)
 	}
-	err = events.Err()
-	events.Close()
+	err = timeline.Err()
+	timeline.Close()
 	if err != nil {
-		return postmortem.GenerationInput{}, fmt.Errorf("reading postmortem events: %w", err)
+		return postmortem.GenerationInput{}, fmt.Errorf("reading Postmortem Investigation timeline: %w", err)
 	}
 
 	messages, err := pool.Query(ctx, `

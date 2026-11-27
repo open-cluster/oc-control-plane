@@ -257,32 +257,21 @@ func TestEvidenceReferencesResolveDistinctRunsAndSurvivePruning(t *testing.T) {
 		}
 	}
 
-	if _, err := database.Exec(ctx, `
-		INSERT INTO investigation_event (org_id, investigation_id, sequence, type, payload)
-		VALUES ($1, $2, 1, $3, '{"text":"visible progress"}')`,
-		surfaceOrg, current, int16(investigation.EventProgress)); err != nil {
-		t.Fatal(err)
-	}
-	stream := openEventStream(t, plane, current.String(), "")
+	stream := openEventStream(t, plane, current.String())
 	defer func() { _ = stream.Body.Close() }()
 	reader := bufio.NewReader(stream.Body)
-	if first, err := reader.ReadString('\n'); err != nil || first != "id: 1\n" {
-		t.Fatalf("the open stream did not emit public progress: %q, %v", first, err)
+	if first, err := reader.ReadString('\n'); err != nil || first != "event: snapshot\n" {
+		t.Fatalf("the open stream did not emit a snapshot: %q, %v", first, err)
 	}
 	if _, err := database.Exec(ctx, `
-		WITH concluded AS (
-		    UPDATE investigation SET status = 2, concluded_at = now(),
-		        conclusion = jsonb_build_object('findings', jsonb_build_array(jsonb_build_object('evidenceRefs',
-		            jsonb_build_array(jsonb_build_object('toolRunId', $3::uuid)))))
-		    WHERE org_id = $1 AND investigation_id = $2 RETURNING org_id, investigation_id
-		)
-		INSERT INTO investigation_event (org_id, investigation_id, sequence, type, payload)
-		SELECT org_id, investigation_id, 2, $4, '{"summary":"restricted terminal summary"}'
-		FROM concluded`, surfaceOrg, current, runIDs[1], int16(investigation.EventConcluded)); err != nil {
+		UPDATE investigation SET status = 2, concluded_at = now(),
+		    conclusion = jsonb_build_object('findings', jsonb_build_array(jsonb_build_object('evidenceRefs',
+		        jsonb_build_array(jsonb_build_object('toolRunId', $3::uuid)))))
+		WHERE org_id = $1 AND investigation_id = $2`, surfaceOrg, current, runIDs[1]); err != nil {
 		t.Fatal(err)
 	}
 	events, err := io.ReadAll(reader)
-	if err != nil || strings.Contains(string(events), "restricted terminal summary") {
-		t.Fatalf("an open web stream exposed a restricted terminal event: %q, %v", events, err)
+	if err != nil || strings.Contains(string(events), `"status":"completed"`) {
+		t.Fatalf("an open web stream exposed a restricted terminal state: %q, %v", events, err)
 	}
 }

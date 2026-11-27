@@ -31,7 +31,7 @@ func (p assembled) runAgentWorkers(ctx context.Context) {
 			// The first-question excerpt is already durable.
 		}
 	}
-	runExecutions(ctx, p.database, workers, p.executionWake, p.prepareExecution, p.logger, suggestTitle)
+	runExecutions(ctx, p.database, workers, p.executionWake, p.prepareExecution, p.logger, suggestTitle, p.config.ModelAPIKey)
 	titles.Wait()
 }
 

@@ -94,24 +94,16 @@ func TestInvestigationCancellationIsTerminalAttributedAndAudited(t *testing.T) {
 	if ended.Status != investigation.StatusCancelled {
 		t.Fatalf("investigation status = %s, want cancelled", ended.Status)
 	}
-	activity, err := database.Events(context.Background(), organization,
-		turn.InvestigationID, 0, 10)
-	if err != nil {
-		t.Fatalf("reading the cancelled investigation's activity: %v", err)
-	}
-	if len(activity) != 1 || activity[0].Type != investigation.EventCancelled ||
-		!activity[0].Type.Terminal() {
-		t.Fatalf("cancellation produced no explicit terminal semantic event: %+v", activity)
-	}
-	if activity[0].Payload["message"] != "Investigation cancelled by an operator" {
-		t.Fatalf("terminal cancellation activity is not safe and explicit: %+v", activity[0])
+	snapshot, err := database.InvestigationExecutionSnapshot(t.Context(), organization, turn.InvestigationID)
+	if err != nil || snapshot.Status != "cancelled" || !snapshot.Terminal() || snapshot.InvestigationID != turn.InvestigationID {
+		t.Fatalf("cancellation did not expose terminal state: %+v, %v", snapshot, err)
 	}
 	if _, _, err := database.ClaimNextAgentExecution(context.Background(), time.Minute); !errors.Is(err, storage.ErrAgentExecutionUnavailable) {
 		t.Fatalf("a worker claimed a terminal cancellation: %v", err)
 	}
-	activity, err = database.Events(context.Background(), organization, turn.InvestigationID, 0, 10)
-	if err != nil || len(activity) != 1 || !activity[len(activity)-1].Type.Terminal() {
-		t.Fatalf("the cancellation stream is not terminal: %+v, %v", activity, err)
+	activity, err := database.Events(t.Context(), organization, turn.InvestigationID, 0, 10)
+	if err != nil || len(activity) != 0 {
+		t.Fatalf("web cancellation produced redundant legacy events: %+v, %v", activity, err)
 	}
 	if _, err = database.CancelInvestigation(context.Background(), principal, organization,
 		turn.InvestigationID); !errors.Is(err, investigation.ErrAlreadyEnded) {

@@ -58,6 +58,26 @@ func TestPostmortemLifecycleIsIncidentOwnedAndTenantScoped(t *testing.T) {
 		organization, legacyRun, legacyReport); err != nil {
 		t.Fatal(err)
 	}
+	nativeReport := uuid.New()
+	base := time.Date(2026, 8, 27, 9, 0, 0, 0, time.UTC)
+	if _, err := pool.Exec(t.Context(), `
+		INSERT INTO investigation_event (org_id, investigation_id, sequence, at, type)
+		VALUES ($1, $2, 1, $3, 1), ($1, $2, 2, $3::timestamptz + interval '1 minute', 6)`,
+		organization, legacyReport, base); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), `
+		WITH report AS (
+		    INSERT INTO investigation (org_id, investigation_id, incident_id, subject, window_from,
+		        window_until, status, concluded_at, error)
+		    VALUES ($1, $2, $3, 'native report', $4::timestamptz - interval '1 hour', $4, 3, $4, 'execution failed')
+		    RETURNING investigation_id
+		)
+		INSERT INTO agent_execution (org_id, execution_id, investigation_id, status, started_at)
+		SELECT $1, gen_random_uuid(), investigation_id, 'failed', $4::timestamptz - interval '1 minute' FROM report`,
+		organization, nativeReport, incident, base.Add(3*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = pool.Exec(t.Context(), `
 		WITH chat AS (
 		    INSERT INTO conversation (org_id, conversation_id, incident_id, source, title)
@@ -79,6 +99,30 @@ func TestPostmortemLifecycleIsIncidentOwnedAndTenantScoped(t *testing.T) {
 		t.Fatalf("generation input = %+v err=%v", input, err)
 	}
 	draft := postmortem.DraftFrom(input)
+	if len(input.InvestigationTimeline) != 4 {
+		t.Fatalf("expected exactly two lifecycle entries per Investigation: %+v", input.InvestigationTimeline)
+	}
+	for index, expected := range []struct {
+		id          uuid.UUID
+		description string
+	}{
+		{legacyReport, "Investigation started"},
+		{legacyReport, "Investigation concluded"},
+		{nativeReport, "Investigation started"},
+		{nativeReport, "Investigation failed"},
+	} {
+		entry := input.InvestigationTimeline[index]
+		if entry.InvestigationID != expected.id.String() || entry.Description != expected.description ||
+			!entry.At.Equal(base.Add(time.Duration(index)*time.Minute)) {
+			t.Fatalf("timeline entry %d did not preserve the lifecycle facts: %+v", index, entry)
+		}
+	}
+	historical, err := database.InvestigationExecutionSnapshot(t.Context(), organization, legacyReport)
+	if err != nil || historical.ExecutionID != uuid.Nil || historical.Status != "completed" ||
+		historical.InvestigationID != legacyReport ||
+		len(historical.Tools) != 1 || historical.Tools[0].ToolRunID != legacyRun {
+		t.Fatalf("the retained Investigation could not reconnect without an execution: %+v, %v", historical, err)
+	}
 	if len(draft.RootCauses) != 1 || len(draft.RootCauses[0].EvidenceRefs) != 1 ||
 		draft.RootCauses[0].EvidenceRefs[0].ToolRunID != legacyRun ||
 		len(draft.ActionItems) != 1 || len(draft.ActionItems[0].EvidenceRefs) != 1 ||

@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"io"
@@ -98,11 +99,12 @@ func TestCompletionSurvivesProcessInterruption(t *testing.T) {
 	_, err = database.Exec(ctx, `
 		CREATE FUNCTION pause_completion() RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN
-			IF NEW.type = 6 THEN PERFORM pg_advisory_xact_lock(4867); END IF;
+			PERFORM pg_advisory_xact_lock(4867);
 			RETURN NEW;
 		END $$;
-		CREATE TRIGGER pause_completion BEFORE INSERT ON investigation_event
-		FOR EACH ROW EXECUTE FUNCTION pause_completion();
+		CREATE TRIGGER pause_completion BEFORE UPDATE OF status ON investigation
+		FOR EACH ROW WHEN (OLD.status = 1 AND NEW.status = 2)
+		EXECUTE FUNCTION pause_completion();
 		SELECT pg_advisory_lock(4867)`)
 	if err != nil {
 		t.Fatal(err)
@@ -124,9 +126,20 @@ func TestCompletionSurvivesProcessInterruption(t *testing.T) {
 	if !paused {
 		t.Fatal("completion never reached the paused terminal transaction")
 	}
+	pending := openEventStream(t, plane, interrupted)
+	scanner := bufio.NewScanner(pending.Body)
+	if !scanner.Scan() || scanner.Text() != "event: snapshot" || !scanner.Scan() {
+		_ = pending.Body.Close()
+		t.Fatalf("reading the uncommitted snapshot: %v", scanner.Err())
+	}
+	snapshots := assertSerializedSnapshots(t, scanner.Text())
+	_ = pending.Body.Close()
+	if snapshots[0]["status"] != "running" || snapshots[0]["conclusionUrl"] != nil {
+		t.Fatalf("stream saw a partial completion: %v", snapshots[0])
+	}
 	kill()
 	if _, err := database.Exec(ctx, `SELECT pg_advisory_unlock(4867);
-		DROP TRIGGER pause_completion ON investigation_event; DROP FUNCTION pause_completion()`); err != nil {
+		DROP TRIGGER pause_completion ON investigation; DROP FUNCTION pause_completion()`); err != nil {
 		t.Fatal(err)
 	}
 	var status int
@@ -144,13 +157,13 @@ func TestCompletionSurvivesProcessInterruption(t *testing.T) {
 		t.Fatal(err)
 	}
 	plane.api, kill = startCompletionProcess(t, cfg)
-	response := openEventStream(t, plane, interrupted, "")
+	response := openEventStream(t, plane, interrupted)
 	_, err = io.Copy(io.Discard, response.Body)
 	_ = response.Body.Close()
 	if err != nil {
 		t.Fatalf("waiting for the resumed reply: %v", err)
 	}
-	assertOneEnding(t, plane, interrupted, "concluded")
+	assertCompletedSnapshot(t, plane, interrupted)
 	_, completed := plane.openConversation(t, "committed completion", "investigate checkout")
 	before := plane.awaitInvestigation(t, completed)
 	kill()
@@ -159,26 +172,18 @@ func TestCompletionSurvivesProcessInterruption(t *testing.T) {
 	if code != http.StatusOK || before != after {
 		t.Fatalf("restart changed the committed outcome: status=%d, before=%s, after=%s", code, before, after)
 	}
-	assertOneEnding(t, plane, completed, "concluded")
+	assertCompletedSnapshot(t, plane, completed)
 }
 
-func assertOneEnding(t *testing.T, plane *integrationPlane, turn, ending string) {
+func assertCompletedSnapshot(t *testing.T, plane *integrationPlane, turn string) {
 	t.Helper()
 	status, body := plane.call(t, http.MethodGet, plane.base(surfaceOrg)+"/investigations/"+turn+"/events", nil)
 	if status != http.StatusOK {
 		t.Fatalf("replay = %d: %s", status, body)
 	}
-	endings := 0
-	for _, event := range assertSerializedEvents(t, body) {
-		kind := event["type"]
-		if kind == "concluded" || kind == "failed" || kind == "cancelled" {
-			endings++
-			if kind != ending {
-				t.Errorf("ending=%v, want %s", kind, ending)
-			}
-		}
-	}
-	if endings != 1 {
-		t.Fatalf("terminal events=%d, want one", endings)
+	snapshots := assertSerializedSnapshots(t, body)
+	if len(snapshots) != 1 || snapshots[0]["status"] != "completed" ||
+		snapshots[0]["conclusionUrl"] != "/api/v1/investigations/"+turn {
+		t.Fatalf("expected one completed snapshot after restart: %s", body)
 	}
 }
