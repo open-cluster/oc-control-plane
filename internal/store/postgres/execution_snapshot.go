@@ -157,7 +157,7 @@ func (p *Database) CancelChatExecution(ctx context.Context, principal authz.Prin
 				return err
 			}
 		}
-		snapshot, err = readExecutionSnapshot(tx.QueryRow(ctx, chatSnapshotQuery, org, chat, id), conversation.ErrUnknown)
+		snapshot, err = readExecutionSnapshot(tx.QueryRow(ctx, chatSnapshotQuery, org, conversationID, executionID), conversation.ErrUnknown)
 		return err
 	})
 	return snapshot, err
