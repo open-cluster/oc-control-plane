@@ -20,7 +20,7 @@ type executionDraft struct {
 	text        []rune
 	savedText   *string // nil when a write's outcome is unknown and must be retried
 	nextFlush   time.Time
-	timer     *time.Timer
+	timer       *time.Timer
 }
 
 func (d *executionDraft) startModelCall(ctx context.Context) {
