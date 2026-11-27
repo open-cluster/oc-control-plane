@@ -3,9 +3,9 @@ title: "Core concepts"
 description: "Understand conversations, investigations, incidents, and connected evidence."
 ---
 
-A Conversation is where you ask operational questions and follow up on answers. Start one through Slack or the Conversation API, with or without an incident.
+A **Conversation** is where you ask operational questions and follow up on answers. Web Chat keeps the context of earlier replies without starting a new Investigation for each Message. A Conversation can optionally refer to an Incident. The Slack Chat cutover is still in progress.
 
-An Investigation gathers evidence to answer a question or explain an incident. OpenCluster reads connected systems, reports findings with citations, and identifies what remains unknown. Follow-ups start new investigations while retaining useful context from earlier answers.
+An **Investigation** is a separate task that gathers evidence and produces a structured Conclusion. It can be started by an alert or explicitly requested for an Incident or question. An Investigation can be linked to a Conversation, but it has its own execution and context. Asking another Chat question does not automatically create another Investigation.
 
 ## Connected sources
 
