@@ -95,7 +95,7 @@ func TestNativeToolkitCommitsFastReadBeforeTheBatchCompletes(t *testing.T) {
 			t.Error("a provider credential crossed the model boundary")
 		}
 		if requests.Add(1) == 1 {
-			_, _ = fmt.Fprint(w, `data: {"choices":[{"index":0,"delta":{"content":"Checking metrics."},"finish_reason":null}]}` + "\n\n")
+			_, _ = fmt.Fprint(w, `data: {"choices":[{"index":0,"delta":{"content":"Checking metrics."},"finish_reason":null}]}`+"\n\n")
 			for index, name := range []string{"slow", "fast", "third"} {
 				args := fmt.Sprintf(`{"input":{"query":%q,"mode":"instant"}}`, name)
 				_, _ = fmt.Fprintf(w, `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":%d,"id":%q,"type":"function","function":{"name":"prometheus_query","arguments":%q}}]},"finish_reason":null}]}`+"\n\n", index, name, args)
