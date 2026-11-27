@@ -75,6 +75,15 @@ func TestNativeToolkitCommitsFastReadBeforeTheBatchCompletes(t *testing.T) {
 		t.Fatal(err)
 	}
 	var requests atomic.Int32
+	secondCall := make(chan struct{})
+	releaseSecond := make(chan struct{})
+	defer func() {
+		select {
+		case <-releaseSecond:
+		default:
+			close(releaseSecond)
+		}
+	}()
 	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		body, err := io.ReadAll(r.Body)
@@ -86,6 +95,7 @@ func TestNativeToolkitCommitsFastReadBeforeTheBatchCompletes(t *testing.T) {
 			t.Error("a provider credential crossed the model boundary")
 		}
 		if requests.Add(1) == 1 {
+			_, _ = fmt.Fprint(w, "data: {\\\"choices\\\":[{\\\"index\\\":0,\\\"delta\\\":{\\\"content\\\":\\\"Checking metrics.\\\"},\\\"finish_reason\\\":null}]}\\n\\n")
 			for index, name := range []string{"slow", "fast", "third"} {
 				args := fmt.Sprintf(`{"input":{"query":%q,"mode":"instant"}}`, name)
 				_, _ = fmt.Fprintf(w, `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":%d,"id":%q,"type":"function","function":{"name":"prometheus_query","arguments":%q}}]},"finish_reason":null}]}`+"\n\n", index, name, args)
@@ -95,6 +105,12 @@ func TestNativeToolkitCommitsFastReadBeforeTheBatchCompletes(t *testing.T) {
 		}
 		if !strings.Contains(string(body), "checkout") {
 			t.Error("the model did not receive the committed observation")
+		}
+		close(secondCall)
+		select {
+		case <-releaseSecond:
+		case <-r.Context().Done():
+			return
 		}
 		writeAgentAnswer(w, "Reads completed.")
 	}))
@@ -144,7 +160,7 @@ func TestNativeToolkitCommitsFastReadBeforeTheBatchCompletes(t *testing.T) {
 		t.Fatal("the fast observation was not committed safely before native batch publication")
 	}
 	snapshot, err := database.ChatExecutionSnapshot(ctx, org, chat.ID, execution.ID)
-	if err != nil || !slices.ContainsFunc(snapshot.Tools, func(run executionview.ToolActivity) bool {
+	if err != nil || snapshot.DraftText != "Checking metrics." || !slices.ContainsFunc(snapshot.Tools, func(run executionview.ToolActivity) bool {
 		return run.ToolRunID == id && run.Status == "succeeded" && run.FinishedAt != nil
 	}) || !slices.ContainsFunc(snapshot.Tools, func(run executionview.ToolActivity) bool {
 		return run.ToolRunID != id && run.Status == "running" && run.FinishedAt == nil
@@ -152,6 +168,26 @@ func TestNativeToolkitCommitsFastReadBeforeTheBatchCompletes(t *testing.T) {
 		t.Fatalf("snapshot did not expose the fast result alongside the blocked read: %+v, %v", snapshot.Tools, err)
 	}
 	close(slow)
+	select {
+	case <-secondCall:
+	case <-ctx.Done():
+		t.Fatal("the model did not start a new call after Tool completion")
+	}
+	for {
+		current, err := database.ChatExecutionSnapshot(ctx, org, chat.ID, execution.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current.DraftText == "" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("the next native ModelCallStart did not clear the earlier provisional text")
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	close(releaseSecond)
 	awaitAgentResult(t, ctx, pool, org, execution.ID, "Reads completed.", &requests, 2)
 }
 
