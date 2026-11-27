@@ -90,6 +90,31 @@ func TestRedactedReplyPreservesNativeContentOrder(t *testing.T) {
 	}
 }
 
+func TestRedactedReplyKeepsShorterNativeTextBlocks(t *testing.T) {
+	const originalText = "The original text is much longer than the replacement."
+	original := message.NewMsg("agent", message.RoleAssistant, []message.ContentBlock{
+		message.TextBlock{Type: "text", ID: "first", Text: originalText},
+		message.ThinkingBlock{Type: "thinking", Extra: map[string]any{"signature": "signed"}},
+		message.TextBlock{Type: "text", ID: "second", Text: " Additional text."},
+	})
+
+	updated := replaceFinalReply(original, 0, "[redacted]")
+	if updated.ID != original.ID || len(updated.Content) != 3 {
+		t.Fatalf("native message structure changed: %#v", updated)
+	}
+	first, firstOK := updated.Content[0].(message.TextBlock)
+	signed, signedOK := updated.Content[1].(message.ThinkingBlock)
+	second, secondOK := updated.Content[2].(message.TextBlock)
+	if !firstOK || !signedOK || !secondOK || first.ID != "first" ||
+		first.Text != "[redacted]" || signed.Extra["signature"] != "signed" ||
+		second.ID != "second" || second.Text != "" {
+		t.Fatalf("a shorter redaction lost native block identities or metadata: %#v", updated.Content)
+	}
+	if original.Content[0].(message.TextBlock).Text != originalText {
+		t.Fatal("redacting a reply mutated its original AgentScope message")
+	}
+}
+
 func TestNativeModelCallReplacesChatDraft(t *testing.T) {
 	stream := make(chan event.Event, 8)
 	stream <- event.ModelCallStartEvent{}
