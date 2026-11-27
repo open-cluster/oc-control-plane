@@ -11,7 +11,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/execution"
 )
 
-func (h Handlers) execution(writer http.ResponseWriter, request *http.Request) {
+func (h Handlers) readExecution(writer http.ResponseWriter, request *http.Request) {
 	_, org, conversationID, executionID, ok := h.executionAddress(writer, request)
 	if !ok {
 		return
