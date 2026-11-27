@@ -8,14 +8,14 @@ import (
 
 // Snapshot is the public projection of an authorized Chat or Investigation execution.
 type Snapshot struct {
-	ExecutionID     uuid.UUID      `json:"executionId,omitzero"`
-	ConversationID  uuid.UUID      `json:"conversationId,omitzero"`
-	InvestigationID uuid.UUID      `json:"investigationId,omitzero"`
-	Status          string         `json:"status"`
-	DraftText       string         `json:"draftText,omitempty"`
+	ExecutionID     uuid.UUID         `json:"executionId,omitzero"`
+	ConversationID  uuid.UUID         `json:"conversationId,omitzero"`
+	InvestigationID uuid.UUID         `json:"investigationId,omitzero"`
+	Status          string            `json:"status"`
+	DraftText       string            `json:"draftText,omitempty"`
 	Message         *CommittedMessage `json:"message,omitempty"`
-	ConclusionURL   string         `json:"conclusionUrl,omitempty"`
-	Tools           []ToolActivity `json:"tools"`
+	ConclusionURL   string            `json:"conclusionUrl,omitempty"`
+	Tools           []ToolActivity    `json:"tools"`
 }
 
 type CommittedMessage struct {
