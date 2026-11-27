@@ -116,7 +116,7 @@ func readExecutionSnapshot(row pgx.Row, unknown error) (execution.Snapshot, erro
 		snapshot.DraftText = *draft
 	}
 	if sequence != nil && text != nil {
-		snapshot.Message = &execution.Message{Sequence: *sequence, Text: *text}
+		snapshot.Message = &execution.CommittedMessage{Sequence: *sequence, Text: *text}
 	}
 	err = json.Unmarshal(tools, &snapshot.Tools)
 	return snapshot, err
