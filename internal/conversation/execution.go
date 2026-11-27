@@ -23,6 +23,7 @@ func (h Handlers) readExecution(writer http.ResponseWriter, request *http.Reques
 		h.fail(writer, request, err)
 		return
 	}
+	writer.Header().Set("Cache-Control", "no-store")
 	writeJSON(writer, http.StatusOK, snapshot)
 }
 
@@ -49,6 +50,7 @@ func (h Handlers) cancelExecution(writer http.ResponseWriter, request *http.Requ
 		h.fail(writer, request, err)
 		return
 	}
+	writer.Header().Set("Cache-Control", "no-store")
 	writeJSON(writer, http.StatusOK, snapshot)
 }
 
