@@ -1287,7 +1287,7 @@ func TestAskUserCheckpointAndAnswerCommitBoundaries(t *testing.T) {
 	}
 	first := claim()
 	const replyID = "reply-with-clarification"
-	call := message.ToolCallBlock{Type: "tool_call", Name: "AskUser", ID: "target", State: message.ToolCallSubmitted,
+	call := message.ToolCallBlock{Type: "tool_call", Name: "askuser", ID: "target", State: message.ToolCallSubmitted,
 		Input: `{"questions":[{"question":"Which target?","header":"Target","options":[{"label":"A","description":"Target A"},{"label":"B","description":"Target B"}]}]}`}
 	var input tool.AskUserParams
 	if err := json.Unmarshal([]byte(call.Input), &input); err != nil {
