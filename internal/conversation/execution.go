@@ -74,7 +74,7 @@ func (h Handlers) answerExecutionInput(writer http.ResponseWriter, request *http
 		return
 	}
 	var input struct {
-		OccurrenceID uuid.UUID           `json:"occurrenceId"`
+		OccurrenceID uuid.UUID            `json:"occurrenceId"`
 		Answers      []tool.AskUserAnswer `json:"answers"`
 	}
 	if !h.decode(writer, request, &input) {
