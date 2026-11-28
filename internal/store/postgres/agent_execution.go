@@ -371,7 +371,7 @@ func endAgentLease(ctx context.Context, tx pgx.Tx, organization uuid.UUID, execu
 		UPDATE agent_execution SET status = $3, lease_token = NULL, lease_expires_at = NULL, draft_text = NULL,
 		       reply_message_sequence = nullif($4::bigint, 0),
 		       pending_input = CASE
-		           WHEN $3 = 'cancelled' OR ($3 = 'failed' AND NOT coalesce(pending_input ? 'answerKeyDigest', false)) THEN NULL
+		           WHEN $3 = 'cancelled' OR ($3 = 'failed' AND NOT coalesce(pending_input ? 'answerDigest', false)) THEN NULL
 		           WHEN $3 IN ('failed', 'completed') THEN pending_input - ARRAY['answer', 'questions', 'replyId', 'toolCallId', 'iteration', 'parkedMicros']
 		           ELSE pending_input END
 		 WHERE org_id = $1 AND execution_id = $2`, organization, execution.ID, status, replySequence); err != nil {
