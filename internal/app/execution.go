@@ -366,7 +366,7 @@ func drainExecution(ctx context.Context, stream <-chan event.Event, saveDraft fu
 				outcome.unsupportedInput = true
 				return outcome, nil
 			case event.RequireExternalExecutionEvent:
-				if askUser == nil || len(item.ToolCalls) != 1 || item.ToolCalls[0].Name != "AskUser" {
+				if askUser == nil || len(item.ToolCalls) != 1 || !strings.EqualFold(item.ToolCalls[0].Name, "AskUser") {
 					outcome.unsupportedInput = true
 					return outcome, nil
 				}
