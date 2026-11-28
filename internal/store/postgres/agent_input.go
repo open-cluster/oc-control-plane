@@ -8,6 +8,7 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
@@ -30,8 +31,7 @@ type agentInput struct {
 	WaitingSince    *time.Time            `json:"waitingSince,omitempty"`
 	ParkedMicros    int64                 `json:"parkedMicros"`
 	Answer          *tool.AskUserMetadata `json:"answer,omitempty"`
-	AnswerKeyDigest string                `json:"answerKeyDigest,omitempty"`
-	AnswerDigest    string                `json:"answerDigest,omitempty"`
+	AnswerDigest string `json:"answerDigest,omitempty"`
 }
 
 func (input *agentInput) result() (*message.ToolResultBlock, error) {
@@ -114,30 +114,37 @@ func (s *AgentStateSaver) ValidateAskUserResume(state *agent.AgentState) error {
 	return nil
 }
 
-func (s *AgentStateSaver) acknowledgeAskUser(ctx context.Context, tx pgx.Tx, state *agent.AgentState) error {
+func (s *AgentStateSaver) acknowledgeAskUser(ctx context.Context, tx pgx.Tx, state *agent.AgentState) (bool, error) {
 	input := s.execution.pendingInput
 	if input == nil || input.Answer == nil {
-		return nil
+		return false, nil
 	}
 	call, result := checkpointAskUser(state, input.ReplyID, input.ToolCallID)
 	if call.State != message.ToolCallFinished || result == nil {
-		return nil
+		return false, nil
 	}
 	expected, err := input.result()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if result.State != message.ToolResultSuccess || result.GetOutputText() != expected.GetOutputText() {
-		return ErrAgentCheckpoint
+		return false, ErrAgentCheckpoint
 	}
 	updated, err := tx.Exec(ctx, `UPDATE agent_execution
 		SET pending_input = pending_input - ARRAY['answer', 'questions', 'replyId', 'toolCallId', 'iteration']
 		WHERE org_id = $1 AND execution_id = $2 AND pending_input ->> 'occurrenceId' = $3
-		  AND pending_input ? 'answer'`, s.organization, s.execution.ID, input.OccurrenceID.String())
-	if err != nil || updated.RowsAffected() == 0 {
-		return err
+		  AND pending_input ->> 'answerDigest' = $4 AND pending_input ? 'answer'`,
+		s.organization, s.execution.ID, input.OccurrenceID.String(), input.AnswerDigest)
+	if err != nil {
+		return false, err
 	}
-	return authorizeAskUserExecution(ctx, tx, s.organization, s.execution)
+	if updated.RowsAffected() != 1 {
+		return false, ErrAgentCheckpoint
+	}
+	if err := authorizeAskUserExecution(ctx, tx, s.organization, s.execution); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func checkpointAskUser(state *agent.AgentState, replyID, callID string) (message.ToolCallBlock, *message.ToolResultBlock) {
@@ -184,7 +191,7 @@ func authorizeAskUserExecution(ctx context.Context, tx pgx.Tx, org uuid.UUID, ex
 }
 
 func (p *Database) AnswerChatInput(ctx context.Context, principal authz.Principal, org, chat, id, occurrence uuid.UUID,
-	key string, answer tool.AskUserMetadata,
+	answer tool.AskUserMetadata,
 ) error {
 	if principal.Organization() != org || !principal.HavePermission(authz.ConversationWrite) {
 		return authz.ErrNotAMember
@@ -252,16 +259,14 @@ func (p *Database) AnswerChatInput(ctx context.Context, principal authz.Principa
 			return err
 		}
 		for _, item := range answer.Answers {
-			if strings.ContainsRune(item.Other, 0) {
+			if strings.ContainsRune(item.Other, 0) || utf8.RuneCountInString(item.Other) > conversation.MaxMessageTextLength {
 				return conversation.ErrInvalidInputAnswer
 			}
 		}
 		sum := sha256.Sum256(body)
 		digest := hex.EncodeToString(sum[:])
-		keySum := sha256.Sum256([]byte(key))
-		keyDigest := hex.EncodeToString(keySum[:])
-		if input.AnswerKeyDigest != "" {
-			if input.AnswerKeyDigest == keyDigest && input.AnswerDigest == digest {
+		if input.AnswerDigest != "" {
+			if input.AnswerDigest == digest {
 				return nil
 			}
 			return conversation.ErrInputConflict
@@ -269,7 +274,7 @@ func (p *Database) AnswerChatInput(ctx context.Context, principal authz.Principa
 		if status != string(AgentExecutionNeedsInput) || input.WaitingSince == nil {
 			return conversation.ErrInputConflict
 		}
-		input.Answer, input.AnswerKeyDigest, input.AnswerDigest = &answer, keyDigest, digest
+		input.Answer, input.AnswerDigest = &answer, digest
 		result, err := input.result()
 		if err != nil {
 			return err
