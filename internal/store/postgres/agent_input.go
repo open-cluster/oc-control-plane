@@ -25,13 +25,13 @@ import (
 
 type agentInput struct {
 	execution.PendingInput
-	ReplyID         string                `json:"replyId"`
-	ToolCallID      string                `json:"toolCallId"`
-	Iteration       int                   `json:"iteration"`
-	WaitingSince    *time.Time            `json:"waitingSince,omitempty"`
-	ParkedMicros    int64                 `json:"parkedMicros"`
-	Answer          *tool.AskUserMetadata `json:"answer,omitempty"`
-	AnswerDigest string `json:"answerDigest,omitempty"`
+	ReplyID      string                `json:"replyId"`
+	ToolCallID   string                `json:"toolCallId"`
+	Iteration    int                   `json:"iteration"`
+	WaitingSince *time.Time            `json:"waitingSince,omitempty"`
+	ParkedMicros int64                 `json:"parkedMicros"`
+	Answer       *tool.AskUserMetadata `json:"answer,omitempty"`
+	AnswerDigest string                `json:"answerDigest,omitempty"`
 }
 
 func (input *agentInput) result() (*message.ToolResultBlock, error) {
