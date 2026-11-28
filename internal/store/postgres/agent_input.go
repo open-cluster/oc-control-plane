@@ -160,14 +160,14 @@ func checkpointAskUser(state *agent.AgentState, replyID, callID string) (message
 		for _, block := range msg.Content {
 			switch block := block.(type) {
 			case message.ToolCallBlock:
-				if block.ID == callID && block.Name == "AskUser" {
+				if block.ID == callID && strings.EqualFold(block.Name, "AskUser") {
 					if call.ID != "" {
 						return message.ToolCallBlock{}, nil
 					}
 					call = block
 				}
 			case message.ToolResultBlock:
-				if call.ID != "" && block.ID == callID && block.Name == "AskUser" {
+				if call.ID != "" && block.ID == callID && strings.EqualFold(block.Name, "AskUser") {
 					result = &block
 				}
 			}
