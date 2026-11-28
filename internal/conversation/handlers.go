@@ -103,7 +103,7 @@ func (h Handlers) Routes() []authz.Route {
 		},
 		{
 			Method:     http.MethodPost,
-			Pattern:    execution + "/inputs/{occurrence}/answer",
+			Pattern:    execution + "/input",
 			Permission: authz.ConversationWrite,
 			Handler:    http.HandlerFunc(h.answerExecutionInput),
 		},
