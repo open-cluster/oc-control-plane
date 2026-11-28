@@ -190,7 +190,8 @@ func authorizeAskUserExecution(ctx context.Context, tx pgx.Tx, org uuid.UUID, ex
 	return nil
 }
 
-func (p *Database) AnswerChatInput(ctx context.Context, principal authz.Principal, org, conversationID, executionID, occurrenceID uuid.UUID,
+func (p *Database) AnswerChatInput(
+	ctx context.Context, principal authz.Principal, org, conversationID, executionID, occurrenceID uuid.UUID,
 	answer tool.AskUserMetadata,
 ) error {
 	if principal.Organization() != org || !principal.HavePermission(authz.ConversationWrite) {
