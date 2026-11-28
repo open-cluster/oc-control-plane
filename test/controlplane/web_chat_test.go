@@ -433,12 +433,11 @@ func TestChatAskUserParksAndResumesTheAcceptedExecution(t *testing.T) {
 	}
 
 	address = restarted.base(surfaceOrg) + "/conversations/" + chat + "/executions/" + admission.ExecutionID
-	headers := http.Header{"Idempotency-Key": {uuid.NewString()}}
 	answer := func(option string) map[string]any {
-		return map[string]any{"answers": []map[string]any{{"question": "Which region?", "selected": []string{option},
+		return map[string]any{"occurrenceId": occurrence, "answers": []map[string]any{{"question": "Which region?", "selected": []string{option},
 			"other": "Grant permission to query the revoked metrics Integration."}}}
 	}
-	answerURL := address + "/inputs/" + occurrence + "/answer"
+	answerURL := address + "/input"
 	conn, err := pgx.Connect(t.Context(), plane.dsn)
 	if err != nil {
 		t.Fatal(err)
@@ -465,7 +464,7 @@ func TestChatAskUserParksAndResumesTheAcceptedExecution(t *testing.T) {
 	if code, body := other.call(t, http.MethodGet, address, nil); code != http.StatusOK || strings.Contains(body, "pendingInput") {
 		t.Fatalf("other respondent can see the question: %d %s", code, body)
 	}
-	if code, body := other.call(t, http.MethodPost, answerURL, answer("West"), headers); code != http.StatusNotFound {
+	if code, body := other.call(t, http.MethodPost, answerURL, answer("West")); code != http.StatusNotFound {
 		t.Fatalf("other respondent can answer: %d %s", code, body)
 	}
 
@@ -478,20 +477,25 @@ func TestChatAskUserParksAndResumesTheAcceptedExecution(t *testing.T) {
 	if code, body := restarted.call(t, http.MethodGet, address, nil); code != http.StatusOK || strings.Contains(body, "pendingInput") {
 		t.Fatalf("downgraded respondent can see the question: %d %s", code, body)
 	}
-	if code, body := restarted.call(t, http.MethodPost, answerURL, answer("West"), headers); code != http.StatusForbidden {
+	if code, body := restarted.call(t, http.MethodPost, answerURL, answer("West")); code != http.StatusForbidden {
 		t.Fatalf("downgraded respondent can answer: %d %s", code, body)
 	}
 	setRole("admin")
+	oversized := answer("West")
+	oversized["answers"].([]map[string]any)[0]["other"] = strings.Repeat("x", 8193)
+	if code, body := restarted.call(t, http.MethodPost, answerURL, oversized); code != http.StatusBadRequest {
+		t.Fatalf("oversized clarification answer = %d %s", code, body)
+	}
 	execute(`UPDATE integration SET verification_grants = '{}' WHERE org_id = $1 AND integration_id = $2`, org, integration.ID)
-	if code, body := restarted.call(t, http.MethodPost, answerURL, answer("elsewhere"), headers); code != http.StatusBadRequest {
+	if code, body := restarted.call(t, http.MethodPost, answerURL, answer("elsewhere")); code != http.StatusBadRequest {
 		t.Fatalf("invalid SDK answer = %d %s", code, body)
 	}
 	for range 2 {
-		if status, body = restarted.call(t, http.MethodPost, answerURL, answer("West"), headers); status != http.StatusAccepted {
+		if status, body = restarted.call(t, http.MethodPost, answerURL, answer("West")); status != http.StatusAccepted {
 			t.Fatalf("answer = %d %s", status, body)
 		}
 	}
-	if code, body := restarted.call(t, http.MethodPost, answerURL, answer("East"), headers); code != http.StatusConflict {
+	if code, body := restarted.call(t, http.MethodPost, answerURL, answer("East")); code != http.StatusConflict {
 		t.Fatalf("conflicting retry = %d %s", code, body)
 	}
 	if code, body := restarted.call(t, http.MethodGet, address, nil); code != http.StatusOK ||
@@ -508,7 +512,7 @@ func TestChatAskUserParksAndResumesTheAcceptedExecution(t *testing.T) {
 		strings.Contains(body, "pendingInput") || questioner.calls.Load() != 4 {
 		t.Fatalf("same Chat did not resume before queued work: %d %s, calls=%d", status, body, questioner.calls.Load())
 	}
-	status, body = running.call(t, http.MethodPost, address+"/inputs/"+occurrence+"/answer", answer("West"), headers)
+	status, body = running.call(t, http.MethodPost, address+"/input", answer("West"))
 	if status != http.StatusAccepted {
 		t.Fatalf("retry after consumption and completion = %d %s", status, body)
 	}
