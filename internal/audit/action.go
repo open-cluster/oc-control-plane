@@ -40,6 +40,7 @@ const (
 	ActionConversationRenamed    Action = "conversation.renamed"
 	ActionConversationDeleted    Action = "conversation.deleted"
 	ActionChatExecutionCancelled Action = "conversation.execution-cancelled"
+	ActionChatInputAnswered      Action = "conversation.input-answered"
 	ActionSlackMessageRecovered  Action = "slack-message.recovered"
 
 	ActionAuthorizationRefused Action = "authorization.refused"

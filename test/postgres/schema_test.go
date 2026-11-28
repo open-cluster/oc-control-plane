@@ -107,6 +107,7 @@ func TestIssue150MigrationConvertsSupportedRetainedData(t *testing.T) {
 		"0014_investigation_requester",
 		"0015_web_chat",
 		"0016_agent_execution_draft",
+		"0017_agent_execution_input",
 	}) {
 		t.Fatalf("applied migrations = %v", applied)
 	}
@@ -422,6 +423,7 @@ func TestCleanupMigrationValidatesAndConvertsPostmortemReviewers(t *testing.T) {
 		"0014_investigation_requester",
 		"0015_web_chat",
 		"0016_agent_execution_draft",
+		"0017_agent_execution_input",
 	}) {
 		t.Fatalf("repaired reviewer migration applied %v: %v", applied, err)
 	}
@@ -613,6 +615,7 @@ func TestFreshSchemaUsesCurrentContract(t *testing.T) {
 		"0014_investigation_requester",
 		"0015_web_chat",
 		"0016_agent_execution_draft",
+		"0017_agent_execution_input",
 	}) {
 		t.Fatalf("fresh migration applied %v, want every schema migration", applied)
 	}

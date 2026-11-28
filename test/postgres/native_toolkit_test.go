@@ -159,7 +159,7 @@ func TestNativeToolkitCommitsFastReadBeforeTheBatchCompletes(t *testing.T) {
 	if id == uuid.Nil || !strings.Contains(observation, "checkout") || strings.Contains(observation, toolkitCredential) || requests.Load() != 1 {
 		t.Fatal("the fast observation was not committed safely before native batch publication")
 	}
-	snapshot, err := database.ChatExecutionSnapshot(ctx, org, chat.ID, execution.ID)
+	snapshot, err := database.ChatExecutionSnapshot(ctx, authz.Principal{}, org, chat.ID, execution.ID)
 	if err != nil || snapshot.DraftText != "Checking metrics." || !slices.ContainsFunc(snapshot.Tools, func(run executionview.ToolActivity) bool {
 		return run.ToolRunID == id && run.Status == "succeeded" && run.FinishedAt != nil
 	}) || !slices.ContainsFunc(snapshot.Tools, func(run executionview.ToolActivity) bool {
@@ -174,7 +174,7 @@ func TestNativeToolkitCommitsFastReadBeforeTheBatchCompletes(t *testing.T) {
 		t.Fatal("the model did not start a new call after Tool completion")
 	}
 	for {
-		current, err := database.ChatExecutionSnapshot(ctx, org, chat.ID, execution.ID)
+		current, err := database.ChatExecutionSnapshot(ctx, authz.Principal{}, org, chat.ID, execution.ID)
 		if err != nil {
 			t.Fatal(err)
 		}

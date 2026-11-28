@@ -66,6 +66,9 @@ func NewAgent(config Config, checkpoint *agent.AgentState) (*agent.UnifiedAgent,
 	}
 	if config.Toolkit != nil {
 		options = append(options, agent.WithToolkit(config.Toolkit))
+		if config.Toolkit.Get("AskUser") != nil {
+			options = append(options, agent.WithExclusiveTools("AskUser"))
+		}
 	}
 	if config.Permissions != nil {
 		options = append(options, agent.WithPermissionContext(config.Permissions))

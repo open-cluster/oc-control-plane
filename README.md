@@ -102,7 +102,7 @@ Message for a legacy assigned turn. Explicit and autonomous Investigations recor
 they conclude. Web Chat commits the assistant Message and Conversation checkpoint together.
 A crash before commit can regenerate the report from the completed checkpoint without resuming
 the investigative reply.
-Stop older control-plane instances before applying the web Chat and execution draft migrations. The upgraded
+Stop older control-plane instances before applying the web Chat and execution migrations. The upgraded
 control plane can resume recoverable legacy Investigation work that was already accepted.
 
 Findings require citations to successful reads. Failed or skipped reads can explain
@@ -112,7 +112,9 @@ provisional text from the current model call. A terminal snapshot links to the c
 Investigation or includes the committed Chat Message. Expired executions available for
 another claim appear as queued. Active Tools stay above recent results, and interrupted
 attempts are distinguishable from failed reads. Tool completion appears after the
-Tool Run's provenance is recorded.
+Tool Run's provenance is recorded. When Chat needs an essential clarification, the original
+Message author can answer the pending question after reconnecting. The answer resumes the same
+execution. Later Chat Messages remain queued until that execution finishes or is cancelled.
 Operational JSON logs correlate Investigations and Tool executions with trace identifiers.
 Routine requests and successful health probes log at DEBUG, with durations in milliseconds.
 

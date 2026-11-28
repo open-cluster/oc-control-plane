@@ -34,6 +34,9 @@ func (s *AgentStateSaver) SaveState(ctx context.Context, session string, state *
 		return err
 	}
 	return s.database.withAgentLease(ctx, s.organization, s.execution, func(tx pgx.Tx) error {
+		if err := s.acknowledgeAskUser(ctx, tx, state); err != nil {
+			return err
+		}
 		return writeAgentCheckpoint(ctx, tx, s.organization, s.execution, checkpoint)
 	})
 }

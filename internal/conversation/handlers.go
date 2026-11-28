@@ -101,6 +101,12 @@ func (h Handlers) Routes() []authz.Route {
 			Permission: authz.ConversationWrite,
 			Handler:    http.HandlerFunc(h.cancelExecution),
 		},
+		{
+			Method:     http.MethodPost,
+			Pattern:    execution + "/inputs/{occurrence}/answer",
+			Permission: authz.ConversationWrite,
+			Handler:    http.HandlerFunc(h.answerExecutionInput),
+		},
 	}
 }
 
@@ -331,7 +337,7 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		logger = logger.With(slog.String("conversation_id", id.String()))
 	}
 	switch {
-	case errors.Is(err, ErrInvalidWindow):
+	case errors.Is(err, ErrInvalidWindow), errors.Is(err, ErrInvalidInputAnswer):
 		writeJSON(writer, http.StatusBadRequest, errorView{Error: err.Error()})
 	case errors.Is(err, authz.ErrNotAMember):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "organization not found"})
@@ -339,7 +345,7 @@ func (h Handlers) fail(writer http.ResponseWriter, request *http.Request, err er
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "conversation not found"})
 	case errors.Is(err, ErrIncidentUnknown):
 		writeJSON(writer, http.StatusNotFound, errorView{Error: "incident not found"})
-	case errors.Is(err, ErrClientMessageConflict), errors.Is(err, ErrLegacyHistory):
+	case errors.Is(err, ErrClientMessageConflict), errors.Is(err, ErrLegacyHistory), errors.Is(err, ErrInputConflict):
 		writeJSON(writer, http.StatusConflict, errorView{Error: err.Error()})
 	case errors.Is(err, ErrChatUnavailable):
 		writeJSON(writer, http.StatusServiceUnavailable, errorView{Error: err.Error()})

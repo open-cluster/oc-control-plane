@@ -843,6 +843,34 @@ paths:
       responses:
         "200": { $ref: "#/components/responses/ExecutionSnapshot" }
         default: { $ref: "#/components/responses/ErrorResponse" }
+  /api/v1/conversations/{conversation}/executions/{execution}/inputs/{occurrence}/answer:
+    parameters:
+      - { $ref: "#/components/parameters/ConversationID" }
+      - { $ref: "#/components/parameters/ExecutionID" }
+      - { name: occurrence, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+    post:
+      <<: *privileged-write
+      operationId: answerChatExecutionInput
+      summary: Answer a pending Chat question
+      description: Only the author of the original Message can submit an answer. An identical retry with the same key returns the same acceptance until the occurrence is superseded or cancelled, or the Conversation is deleted. The answer resumes the existing execution and carries no Tool permissions.
+      tags: [Conversations]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatInputAnswer" }
+      responses:
+        "202": { description: The answer was durably accepted. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        default: { $ref: "#/components/responses/ErrorResponse" }
   /api/v1/incidents/{incident}/postmortem:
     parameters: *incident-path
     get:
@@ -1789,6 +1817,9 @@ components:
         investigationId: { $ref: "#/components/schemas/UUID" }
         status: { type: string, enum: [queued, running, needs_input, completed, failed, cancelled], description: An expired execution available for another claim appears as queued. }
         draftText: { type: string, maxLength: 8192, description: Provisional Chat text. Replace it on each snapshot. }
+        pendingInput:
+          $ref: "#/components/schemas/PendingChatInput"
+          description: Present while awaiting input from the authorized author of the original Chat Message.
         message:
           type: object
           additionalProperties: false
@@ -1802,6 +1833,58 @@ components:
           maxItems: 32
           description: Active Tools first, then newest activity by start or finish time.
           items: { $ref: "#/components/schemas/ExecutionToolActivity" }
+    PendingChatInput:
+      type: object
+      additionalProperties: false
+      required: [occurrenceId, questions]
+      properties:
+        occurrenceId: { $ref: "#/components/schemas/UUID" }
+        questions:
+          type: array
+          minItems: 1
+          maxItems: 4
+          items:
+            type: object
+            additionalProperties: false
+            required: [question, header, options]
+            properties:
+              question: { type: string, minLength: 1 }
+              header: { type: string, minLength: 1, maxLength: 12 }
+              context: { type: string }
+              multi_select: { type: boolean, default: false }
+              options:
+                type: array
+                minItems: 2
+                maxItems: 4
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [label, description]
+                  properties:
+                    label: { type: string, minLength: 1 }
+                    description: { type: string, minLength: 1 }
+                    preview: { type: string }
+    ChatInputAnswer:
+      type: object
+      additionalProperties: false
+      required: [answers]
+      properties:
+        answers:
+          type: array
+          minItems: 1
+          maxItems: 4
+          description: Supply one answer per question, using its exact text and option labels. Each answer needs a selection or nonblank free text.
+          items:
+            type: object
+            additionalProperties: false
+            required: [question]
+            properties:
+              question: { type: string, minLength: 1 }
+              selected:
+                type: array
+                uniqueItems: true
+                items: { type: string }
+              other: { type: string }
     ExecutionToolActivity:
       type: object
       additionalProperties: false

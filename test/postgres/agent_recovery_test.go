@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/agent"
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/message"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/model"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/permission"
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/tool"
@@ -29,6 +30,7 @@ import (
 	"github.com/open-cluster/oc-control-plane/internal/app"
 	"github.com/open-cluster/oc-control-plane/internal/config"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
+	"github.com/open-cluster/oc-control-plane/internal/execution"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
 	storage "github.com/open-cluster/oc-control-plane/internal/store/postgres"
 )
@@ -1251,5 +1253,174 @@ func TestAgentClaimSkipsLockedConversation(t *testing.T) {
 	owner, execution, err := database.ClaimNextAgentExecution(claimCtx, time.Minute)
 	if err != nil || owner != org || execution.ConversationID != ready.ID {
 		t.Fatalf("locked Conversation stalled unrelated execution: %s, %v", execution.ConversationID, err)
+	}
+}
+
+func TestAskUserCheckpointAndAnswerCommitBoundaries(t *testing.T) {
+	database, org, _ := twoOrganizationsInOneDatabase(t)
+	pool, err := poolForTest(database, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	principal := executionOwner(t, database, org)
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`INSERT INTO session (session_id, user_id, credential_digest, created_at, expires_at)
+		VALUES ($1, $2, $3, now(), now() + interval '1 hour')`, principal.SessionID(), principal.UserID(), make([]byte, 32))
+	chat := openConversation(t, database, org, "Confirm the target")
+	queued, err := database.AdmitAgentChat(ctx, principal, org, chat.ID, uuid.New(), conversation.NewMessage{Text: "Check the target."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := func() storage.AgentExecution {
+		t.Helper()
+		claimed, err := database.ClaimAgentExecution(ctx, org, queued.ID, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return claimed
+	}
+	first := claim()
+	const replyID = "reply-with-clarification"
+	call := message.ToolCallBlock{Type: "tool_call", Name: "AskUser", ID: "target", State: message.ToolCallSubmitted,
+		Input: `{"questions":[{"question":"Which target?","header":"Target","options":[{"label":"A","description":"Target A"},{"label":"B","description":"Target B"}]}]}`}
+	var input tool.AskUserParams
+	if err := json.Unmarshal([]byte(call.Input), &input); err != nil {
+		t.Fatal(err)
+	}
+	assistant := message.AssistantMsg("chat", []message.ContentBlock{call})
+	assistant.ID = replyID
+	state := &agent.AgentState{
+		SchemaVersion: agent.StateSchemaVersion, SessionID: first.SessionID(), ReplyID: replyID,
+		ReplyRecovery: &agent.ReplyRecoveryState{Version: 1, Active: true, ReplyID: replyID},
+		Context:       []*message.Msg{assistant},
+	}
+	firstSaver := database.AgentStateSaver(org, first)
+	if _, err := firstSaver.ParkAskUser(ctx, replyID, call, input.Questions); !errors.Is(err, storage.ErrAgentCheckpoint) {
+		t.Fatalf("park without a submitted checkpoint = %v", err)
+	}
+	if err := firstSaver.SaveState(ctx, first.SessionID(), state); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot := func(status string) *execution.PendingInput {
+		t.Helper()
+		snapshot, err := database.ChatExecutionSnapshot(ctx, principal, org, chat.ID, queued.ID)
+		if err != nil || snapshot.Status != status {
+			t.Fatalf("snapshot = %+v, want %s: %v", snapshot, status, err)
+		}
+		return snapshot.PendingInput
+	}
+	expireAgentClaim(t, pool, org, first.ID)
+	if pending := snapshot("queued"); pending != nil {
+		t.Fatalf("checkpoint alone published a question: %+v", pending)
+	}
+	parking := claim()
+	parker := database.AgentStateSaver(org, parking)
+	if result, err := parker.ParkAskUser(ctx, replyID, call, input.Questions); err != nil || result != nil {
+		t.Fatalf("park from a recovered checkpoint = %v, %v", result, err)
+	}
+	pending := snapshot("needs_input")
+	if pending == nil || pending.OccurrenceID == uuid.Nil {
+		t.Fatal("committed park did not publish an occurrence")
+	}
+	if _, err := database.ClaimAgentExecution(ctx, org, queued.ID, time.Minute); !errors.Is(err, storage.ErrAgentExecutionUnavailable) {
+		t.Fatalf("a parked execution was still runnable: %v", err)
+	}
+	if err := parker.SaveState(ctx, parking.SessionID(), state); !errors.Is(err, storage.ErrAgentLeaseLost) {
+		t.Fatalf("retired writer can overwrite the waiting checkpoint: %v", err)
+	}
+
+	answer := tool.AskUserMetadata{Answers: []tool.AskUserAnswer{{Question: "Which target?", Selected: []string{"A"}}}}
+	accept := func(occurrence uuid.UUID) error {
+		return database.AnswerChatInput(ctx, principal, org, chat.ID, queued.ID, occurrence, "fixture-retry", answer)
+	}
+	exec(`ALTER TABLE agent_execution ADD CONSTRAINT fixture_requeue_failure
+		CHECK (status <> 'queued' OR pending_input IS NULL) NOT VALID`)
+	if err := accept(pending.OccurrenceID); err == nil {
+		t.Fatal("acceptance succeeded when requeue could not commit")
+	}
+	if retained := snapshot("needs_input"); retained == nil || retained.OccurrenceID != pending.OccurrenceID {
+		t.Fatal("failed requeue changed the visible occurrence")
+	}
+	exec(`ALTER TABLE agent_execution DROP CONSTRAINT fixture_requeue_failure`)
+	if err := accept(pending.OccurrenceID); err != nil {
+		t.Fatal(err)
+	}
+
+	resume := func() (storage.AgentExecution, *storage.AgentStateSaver, *message.ToolResultBlock) {
+		t.Helper()
+		claimed := claim()
+		if claimed.LeaseToken == parking.LeaseToken || !claimed.StartedAt.Equal(*first.StartedAt) || claimed.ParkedDuration() <= 0 {
+			t.Fatalf("claim did not preserve timing and renew ownership: %+v", claimed)
+		}
+		saver := database.AgentStateSaver(org, claimed)
+		prior, writer, err := saver.Restore(ctx)
+		if err != nil || writer != queued.ID || saver.ValidateAskUserResume(prior) != nil {
+			t.Fatalf("accepted answer lost its waiting checkpoint: %s, %v", writer, err)
+		}
+		result, err := saver.ParkAskUser(ctx, replyID, call, input.Questions)
+		if err != nil || result == nil || result.ID != call.ID || !strings.Contains(result.GetOutputText(), `"A"`) {
+			t.Fatalf("restored native answer = %v, %v", result, err)
+		}
+		return claimed, saver, result
+	}
+	delivered, _, _ := resume()
+	expireAgentClaim(t, pool, org, delivered.ID)
+	consuming, consumer, result := resume()
+	finished := call
+	finished.State = message.ToolCallFinished
+	assistant.Content = []message.ContentBlock{finished, *result}
+	state.ReplyRecovery.NextIteration = 1
+
+	exec(`ALTER TABLE agent_checkpoint ADD CONSTRAINT fixture_checkpoint_failure
+		CHECK (coalesce(state ->> 'summary', '') <> 'reject fixture checkpoint') NOT VALID`)
+	state.Summary = "reject fixture checkpoint"
+	if err := consumer.SaveState(ctx, consuming.SessionID(), state); err == nil {
+		t.Fatal("the result checkpoint unexpectedly committed")
+	}
+	expireAgentClaim(t, pool, org, consuming.ID)
+	consuming, consumer, _ = resume()
+	state.Summary = ""
+	if err := consumer.SaveState(ctx, consuming.SessionID(), state); err != nil {
+		t.Fatal(err)
+	}
+	expireAgentClaim(t, pool, org, consuming.ID)
+	reconciled := claim()
+	saver := database.AgentStateSaver(org, reconciled)
+	restored, _, err := saver.Restore(ctx)
+	if err != nil || len(restored.Context[0].Content) != 2 || saver.ValidateAskUserResume(restored) != nil {
+		t.Fatalf("consumed checkpoint was not restored: %v", err)
+	}
+	if err := accept(pending.OccurrenceID); err != nil {
+		t.Fatalf("retry after the result checkpoint: %v", err)
+	}
+
+	call.ID = "another-target"
+	assistant.Content = append(assistant.Content, call)
+	if err := saver.SaveState(ctx, reconciled.SessionID(), state); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := saver.ParkAskUser(ctx, replyID, call, input.Questions); err != nil || result != nil {
+		t.Fatalf("park subsequent occurrence = %v, %v", result, err)
+	}
+	next := snapshot("needs_input")
+	if next == nil || next.OccurrenceID == pending.OccurrenceID {
+		t.Fatal("a later native call reused an earlier occurrence")
+	}
+	if err := accept(pending.OccurrenceID); !errors.Is(err, conversation.ErrInputConflict) {
+		t.Fatalf("obsolete occurrence = %v", err)
+	}
+	if cancelled, err := database.CancelChatExecution(ctx, principal, org, chat.ID, queued.ID); err != nil ||
+		cancelled.Status != "cancelled" || cancelled.PendingInput != nil {
+		t.Fatalf("cancel parked question = %+v, %v", cancelled, err)
+	}
+	if err := accept(next.OccurrenceID); !errors.Is(err, conversation.ErrInputConflict) {
+		t.Fatalf("cancelled occurrence = %v", err)
 	}
 }

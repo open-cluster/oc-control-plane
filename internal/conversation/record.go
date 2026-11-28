@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/tool"
 	"github.com/google/uuid"
 
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
@@ -62,6 +63,8 @@ var (
 	ErrClientMessageConflict = errors.New("client message ID already names different input")
 	ErrLegacyHistory         = errors.New("this Conversation is read-only; create a new Conversation to continue")
 	ErrChatUnavailable       = errors.New("this deployment has no model provider configured for Chat")
+	ErrInputConflict         = errors.New("the question is no longer pending or already has a different answer")
+	ErrInvalidInputAnswer    = errors.New("the answer does not match the pending questions")
 )
 
 type Conversation struct {
@@ -171,7 +174,8 @@ type Store interface {
 	ConversationTurns(ctx context.Context, org uuid.UUID, id uuid.UUID,
 		limit int, cursor string) (TurnPage, error)
 	AdmitConversationMessage(ctx context.Context, who authz.Principal, org, id, clientMessageID uuid.UUID, input NewMessage, replayOnly bool) (AcceptedMessage, error)
-	ChatExecutionSnapshot(ctx context.Context, org, chat, id uuid.UUID) (execution.Snapshot, error)
+	ChatExecutionSnapshot(ctx context.Context, viewer authz.Principal, org, chat, id uuid.UUID) (execution.Snapshot, error)
+	AnswerChatInput(ctx context.Context, who authz.Principal, org, chat, id, occurrence uuid.UUID, key string, answer tool.AskUserMetadata) error
 	CancelChatExecution(ctx context.Context, who authz.Principal, org, chat, id uuid.UUID) (execution.Snapshot, error)
 }
 

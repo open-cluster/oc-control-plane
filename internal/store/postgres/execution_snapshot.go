@@ -10,6 +10,7 @@ import (
 
 	"github.com/open-cluster/oc-control-plane/internal/audit"
 	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/conversation"
 	"github.com/open-cluster/oc-control-plane/internal/execution"
 	"github.com/open-cluster/oc-control-plane/internal/investigation"
@@ -43,7 +44,19 @@ const snapshotToolLimit = `
 const chatSnapshotQuery = `
 	SELECT e.execution_id, c.conversation_id, NULL::uuid, ` + snapshotExecutionStatus + `,
 	       CASE WHEN ` + activeSnapshotLease + ` THEN e.draft_text END,
-	       m.sequence, m.text, activity.tools
+	       m.sequence, m.text, activity.tools,
+	       (SELECT jsonb_build_object('role', member.role, 'occurrenceId', e.pending_input -> 'occurrenceId',
+	                                  'questions', e.pending_input -> 'questions')
+	            FROM conversation_message input_message
+	           JOIN organization_membership member ON member.org_id = input_message.org_id
+	           JOIN app_user person ON person.user_id = member.user_id
+	           JOIN session s ON s.user_id = person.user_id
+	           WHERE input_message.org_id = e.org_id AND input_message.conversation_id = e.conversation_id
+	             AND input_message.sequence = e.message_sequence AND input_message.role = 1
+	             AND input_message.author_id = $4::uuid::text AND member.user_id = $4
+	             AND person.disabled_at IS NULL AND s.session_id = $5
+	             AND LEAST(s.expires_at, s.created_at + $6::interval) > statement_timestamp()
+	             AND e.status = 'needs_input' AND e.pending_input IS NOT NULL)
 	  FROM agent_execution e
 	  JOIN conversation c ON c.org_id = e.org_id AND c.conversation_id = e.conversation_id
 	  LEFT JOIN conversation_message m ON m.org_id = c.org_id AND m.conversation_id = c.conversation_id
@@ -57,7 +70,7 @@ const investigationSnapshotQuery = `
 	       i.investigation_id,
 	       CASE i.status WHEN 2 THEN 'completed' WHEN 3 THEN 'failed' WHEN 4 THEN 'cancelled'
 	                     ELSE coalesce(` + snapshotExecutionStatus + `, 'queued') END,
-	       NULL::text, NULL::bigint, NULL::text, activity.tools
+	       NULL::text, NULL::bigint, NULL::text, activity.tools, NULL::jsonb
 	  FROM investigation i
 	  LEFT JOIN agent_execution e ON e.org_id = i.org_id AND e.investigation_id = i.investigation_id
 	  LEFT JOIN conversation c ON c.org_id = i.org_id AND c.conversation_id = i.conversation_id` + snapshotTools + `
@@ -65,12 +78,17 @@ const investigationSnapshotQuery = `
 			  AND (r.execution_id = e.execution_id OR r.investigation_id = i.investigation_id)` + snapshotToolLimit + `
 	 WHERE i.org_id = $1 AND i.investigation_id = $2 AND ` + webInvestigationSource
 
-func (p *Database) ChatExecutionSnapshot(ctx context.Context, org, conversationID, executionID uuid.UUID) (execution.Snapshot, error) {
+func (p *Database) ChatExecutionSnapshot(ctx context.Context, viewer authz.Principal, org, conversationID, executionID uuid.UUID) (execution.Snapshot, error) {
 	pool, err := p.poolForOrganization(org)
 	if err != nil {
 		return execution.Snapshot{}, err
 	}
-	return readExecutionSnapshot(pool.QueryRow(ctx, chatSnapshotQuery, org, conversationID, executionID), conversation.ErrUnknown)
+	if viewer.Organization() != org {
+		viewer = authz.Principal{}
+	}
+	_, maximum := session.Lifetimes()
+	return readExecutionSnapshot(pool.QueryRow(ctx, chatSnapshotQuery, org, conversationID, executionID,
+		viewer.UserID(), viewer.SessionID(), maximum), conversation.ErrUnknown)
 }
 
 func (p *Database) InvestigationExecutionSnapshot(ctx context.Context, org, id uuid.UUID) (execution.Snapshot, error) {
@@ -104,7 +122,11 @@ func readExecutionSnapshot(row pgx.Row, unknown error) (execution.Snapshot, erro
 	var draft, text *string
 	var sequence *int64
 	var tools []byte
-	err := row.Scan(&executionID, &conversationID, &investigationID, &snapshot.Status, &draft, &sequence, &text, &tools)
+	var pending *struct {
+		execution.PendingInput
+		Role string
+	}
+	err := row.Scan(&executionID, &conversationID, &investigationID, &snapshot.Status, &draft, &sequence, &text, &tools, &pending)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return snapshot, unknown
 	}
@@ -117,6 +139,11 @@ func readExecutionSnapshot(row pgx.Row, unknown error) (execution.Snapshot, erro
 	}
 	if sequence != nil && text != nil {
 		snapshot.Message = &execution.CommittedMessage{Sequence: *sequence, Text: *text}
+	}
+	if pending != nil {
+		if role, ok := authz.ParseRole(pending.Role); ok && role.Grants(authz.ConversationWrite) {
+			snapshot.PendingInput = &pending.PendingInput
+		}
 	}
 	err = json.Unmarshal(tools, &snapshot.Tools)
 	return snapshot, err
@@ -157,7 +184,9 @@ func (p *Database) CancelChatExecution(ctx context.Context, principal authz.Prin
 				return err
 			}
 		}
-		snapshot, err = readExecutionSnapshot(tx.QueryRow(ctx, chatSnapshotQuery, org, conversationID, executionID), conversation.ErrUnknown)
+		_, maximum := session.Lifetimes()
+		snapshot, err = readExecutionSnapshot(tx.QueryRow(ctx, chatSnapshotQuery, org, conversationID, executionID,
+			principal.UserID(), principal.SessionID(), maximum), conversation.ErrUnknown)
 		return err
 	})
 	return snapshot, err

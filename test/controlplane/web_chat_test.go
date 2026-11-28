@@ -1,11 +1,14 @@
 package controlplane
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,7 +18,11 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-cluster/oc-control-plane/internal/app"
+	"github.com/open-cluster/oc-control-plane/internal/audit"
+	"github.com/open-cluster/oc-control-plane/internal/auth/authz"
+	"github.com/open-cluster/oc-control-plane/internal/auth/session"
 	"github.com/open-cluster/oc-control-plane/internal/config"
+	"github.com/open-cluster/oc-control-plane/internal/integrations"
 )
 
 func TestChatExecutionSnapshotUsesCommittedMessage(t *testing.T) {
@@ -329,4 +336,255 @@ func TestChatTitleDoesNotBlockRepliesOrReplaceRename(t *testing.T) {
 	if len(model.started) != 0 {
 		t.Fatal("a follow-up requested a title")
 	}
+}
+
+func TestChatAskUserParksAndResumesTheAcceptedExecution(t *testing.T) {
+	questioner := &askUserModel{}
+	plane, _ := agentPlane(t, questioner)
+	org := uuid.MustParse(surfaceOrg)
+	db := openDatabase(t, plane.dsn)
+	signed, err := db.SessionByToken(t.Context(), session.Digest(session.Token(plane.sessionCookie)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := authz.NewPrincipal(signed.User.ID, signed.Session.ID, signed.User.DisplayName, signed.User.Email, signed.Membership)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var providerCalls atomic.Int32
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		providerCalls.Add(1)
+		http.Error(w, "unexpected fixture provider call", http.StatusBadRequest)
+	}))
+	t.Cleanup(provider.Close)
+	integration, err := db.CreateIntegration(t.Context(), principal, org, integrations.NewIntegration{
+		Provider: "prometheus", Name: "Rollout metrics",
+		Configuration: map[string]any{"url": provider.URL},
+		Verification:  &integrations.Verification{Status: integrations.StatusVerified, Grants: []string{"prometheus:query"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat, _ := plane.openConversation(t, "Clarify rollout scope", "")
+	path := plane.base(surfaceOrg) + "/conversations/" + chat
+	status, body := plane.call(t, http.MethodPost, path+"/messages",
+		map[string]string{"clientMessageId": uuid.NewString(), "text": "Check the rollout."})
+	var admission struct{ ExecutionID, EventsURL string }
+	decodeInto(t, body, &admission)
+	if status != http.StatusAccepted || admission.ExecutionID == "" {
+		t.Fatalf("accepted Chat = %d %s", status, body)
+	}
+	address := path + "/executions/" + admission.ExecutionID
+	var pending struct {
+		Status       string
+		PendingInput *struct {
+			OccurrenceID string
+			Questions    []struct{ Question string }
+		}
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		status, body = plane.call(t, http.MethodGet, address, nil)
+		decodeInto(t, body, &pending)
+		if status != http.StatusOK || pending.Status == "failed" || time.Now().After(deadline) {
+			t.Fatalf("Chat did not park for AskUser: %d %s", status, body)
+		}
+		if pending.Status == "needs_input" {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if pending.PendingInput == nil || pending.PendingInput.OccurrenceID == "" ||
+		len(pending.PendingInput.Questions) != 1 || pending.PendingInput.Questions[0].Question != "Which region?" {
+		t.Fatalf("parked snapshot = %s", body)
+	}
+	occurrence := pending.PendingInput.OccurrenceID
+	if code, body := plane.call(t, http.MethodPost, path+"/messages",
+		map[string]string{"clientMessageId": uuid.NewString(), "text": "Check the next rollout too."}); code != http.StatusAccepted ||
+		!strings.Contains(body, `"status":"queued"`) {
+		t.Fatalf("queue follow-up = %d %s", code, body)
+	}
+
+	start := func(options app.Options) *integrationPlane {
+		t.Helper()
+		listen := freeAddress(t)
+		process := startControlPlaneRunning(t, func(cfg *config.Config) {
+			cfg.DatabaseDSN, cfg.HTTPListenAddress = plane.dsn, listen
+			cfg.InvestigationWorkers = 1
+		}, options)
+		process.sessionCookie = plane.sessionCookie
+		return &integrationPlane{controlPlane: process, api: listen, dsn: plane.dsn}
+	}
+	plane.shutdown()
+	restarted := start(app.Options{})
+	response := openSnapshotStream(t, restarted, admission.EventsURL)
+	scanner := bufio.NewScanner(response.Body)
+	var reconnected string
+	for scanner.Scan() {
+		if data, ok := strings.CutPrefix(scanner.Text(), "data: "); ok {
+			reconnected = data
+			break
+		}
+	}
+	_ = response.Body.Close()
+	if !strings.Contains(reconnected, occurrence) || !strings.Contains(reconnected, `"status":"needs_input"`) ||
+		questioner.calls.Load() != 1 {
+		t.Fatalf("restart changed the pending occurrence: %q (calls=%d)", reconnected, questioner.calls.Load())
+	}
+
+	address = restarted.base(surfaceOrg) + "/conversations/" + chat + "/executions/" + admission.ExecutionID
+	headers := http.Header{"Idempotency-Key": {uuid.NewString()}}
+	answer := func(option string) map[string]any {
+		return map[string]any{"answers": []map[string]any{{"question": "Which region?", "selected": []string{option},
+			"other": "Grant permission to query the revoked metrics Integration."}}}
+	}
+	answerURL := address + "/inputs/" + occurrence + "/answer"
+	conn, err := pgx.Connect(t.Context(), plane.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close(context.Background()) })
+	execute := func(sql string, parameters ...any) {
+		t.Helper()
+		if _, err := conn.Exec(t.Context(), sql, parameters...); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	token, digest, err := session.NewToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherID := uuid.New()
+	execute(`INSERT INTO app_user (user_id, issuer, subject, email) VALUES ($1, 'ask-user-fixture', $2, 'other@example.test')`,
+		otherID, otherID.String())
+	execute(`INSERT INTO organization_membership (org_id, user_id, role) VALUES ($1, $2, 'editor')`, surfaceOrg, otherID)
+	execute(`INSERT INTO session (user_id, credential_digest, created_at, expires_at) VALUES ($1, $2, now(), now() + interval '1 hour')`, otherID, digest)
+	other := *restarted
+	other.controlPlane = &controlPlane{sessionCookie: string(token)}
+	if code, body := other.call(t, http.MethodGet, address, nil); code != http.StatusOK || strings.Contains(body, "pendingInput") {
+		t.Fatalf("other respondent can see the question: %d %s", code, body)
+	}
+	if code, body := other.call(t, http.MethodPost, answerURL, answer("West"), headers); code != http.StatusNotFound {
+		t.Fatalf("other respondent can answer: %d %s", code, body)
+	}
+
+	setRole := func(role string) {
+		execute(`UPDATE organization_membership SET role = $1
+			WHERE org_id = $2 AND user_id = (SELECT user_id FROM session WHERE credential_digest = $3)`,
+			role, surfaceOrg, session.Digest(session.Token(restarted.sessionCookie)))
+	}
+	setRole("viewer")
+	if code, body := restarted.call(t, http.MethodGet, address, nil); code != http.StatusOK || strings.Contains(body, "pendingInput") {
+		t.Fatalf("downgraded respondent can see the question: %d %s", code, body)
+	}
+	if code, body := restarted.call(t, http.MethodPost, answerURL, answer("West"), headers); code != http.StatusForbidden {
+		t.Fatalf("downgraded respondent can answer: %d %s", code, body)
+	}
+	setRole("admin")
+	execute(`UPDATE integration SET verification_grants = '{}' WHERE org_id = $1 AND integration_id = $2`, org, integration.ID)
+	if code, body := restarted.call(t, http.MethodPost, answerURL, answer("elsewhere"), headers); code != http.StatusBadRequest {
+		t.Fatalf("invalid SDK answer = %d %s", code, body)
+	}
+	for range 2 {
+		if status, body = restarted.call(t, http.MethodPost, answerURL, answer("West"), headers); status != http.StatusAccepted {
+			t.Fatalf("answer = %d %s", status, body)
+		}
+	}
+	if code, body := restarted.call(t, http.MethodPost, answerURL, answer("East"), headers); code != http.StatusConflict {
+		t.Fatalf("conflicting retry = %d %s", code, body)
+	}
+	if code, body := restarted.call(t, http.MethodGet, address, nil); code != http.StatusOK ||
+		!strings.Contains(body, `"status":"queued"`) || strings.Contains(body, "pendingInput") || questioner.calls.Load() != 1 {
+		t.Fatalf("committed answer without a worker = %d %s (calls=%d)", code, body, questioner.calls.Load())
+	}
+	restarted.shutdown()
+
+	running := start(app.Options{Model: questioner})
+	awaitChatMessages(t, running, "/conversations/"+chat+"/messages", 4)
+	address = running.base(surfaceOrg) + "/conversations/" + chat + "/executions/" + admission.ExecutionID
+	status, body = running.call(t, http.MethodGet, address, nil)
+	if status != http.StatusOK || !strings.Contains(body, "The West rollout was selected.") ||
+		strings.Contains(body, "pendingInput") || questioner.calls.Load() != 4 {
+		t.Fatalf("same Chat did not resume before queued work: %d %s, calls=%d", status, body, questioner.calls.Load())
+	}
+	status, body = running.call(t, http.MethodPost, address+"/inputs/"+occurrence+"/answer", answer("West"), headers)
+	if status != http.StatusAccepted {
+		t.Fatalf("retry after consumption and completion = %d %s", status, body)
+	}
+	if providerCalls.Load() != 0 {
+		t.Fatal("the answer restored the revoked Integration grant")
+	}
+	var acceptedEvents int
+	err = conn.QueryRow(t.Context(), `SELECT count(*) FROM audit_event
+		WHERE org_id = $1 AND action = $2 AND target_id = $3
+		  AND detail = jsonb_build_object('executionId', $4::text, 'occurrenceId', $5::text)`,
+		org, audit.ActionChatInputAnswered, chat, admission.ExecutionID, occurrence).Scan(&acceptedEvents)
+	if err != nil || acceptedEvents != 1 {
+		t.Fatalf("audit events for the accepted answer = %d, %v", acceptedEvents, err)
+	}
+	if code, body := running.call(t, http.MethodDelete, running.base(surfaceOrg)+"/conversations/"+chat, nil); code != http.StatusNoContent {
+		t.Fatalf("delete completed Chat = %d %s", code, body)
+	}
+	var receiptRetained bool
+	err = conn.QueryRow(t.Context(), `SELECT pending_input IS NOT NULL FROM agent_execution WHERE org_id = $1 AND execution_id = $2`,
+		org, admission.ExecutionID).Scan(&receiptRetained)
+	if err != nil || receiptRetained {
+		t.Fatalf("receipt after Conversation deletion = %t, %v", receiptRetained, err)
+	}
+}
+
+type askUserModel struct {
+	bufferedModel
+	calls atomic.Int32
+}
+
+func (m *askUserModel) Chat(_ context.Context, prompt []*message.Msg, opts ...model.CallOption) (*model.ChatResponse, error) {
+	call := m.calls.Add(1)
+	var options model.CallOptions
+	for _, option := range opts {
+		option(&options)
+	}
+	var offersMetrics, offersAskUser bool
+	for _, offered := range options.Tools {
+		offersMetrics = offersMetrics || offered.Function.Name == "prometheus_query"
+		offersAskUser = offersAskUser || offered.Function.Name == "AskUser"
+	}
+	if call == 1 {
+		if offersAskUser && offersMetrics {
+			return toolResponse("ask-region", "AskUser", `{"questions":[{"question":"Which region?","header":"Region","options":[{"label":"West","description":"Western region"},{"label":"East","description":"Eastern region"}]}]}`), nil
+		}
+		return nil, errors.New("interactive Chat did not offer AskUser and the verified Integration Tool")
+	}
+	if offersMetrics {
+		return nil, errors.New("the revoked Integration Tool was offered after recovery")
+	}
+	if call == 4 {
+		for _, msg := range prompt {
+			if body := msg.GetTextContent(""); msg.Role == message.RoleUser && body != nil && strings.Contains(*body, "Check the next rollout too.") {
+				return investigationRecap(), nil
+			}
+		}
+		return nil, errors.New("queued Chat Message was not passed to its own reply")
+	}
+	for _, msg := range prompt {
+		if body := msg.GetTextContent(""); msg.Role == message.RoleUser && body != nil && strings.Contains(*body, "Check the next rollout too.") {
+			return nil, errors.New("queued Chat Message entered the paused reply")
+		}
+		for _, block := range msg.Content {
+			result, ok := block.(message.ToolResultBlock)
+			if !ok {
+				continue
+			}
+			if call == 2 && result.ID == "ask-region" && result.State == message.ToolResultSuccess &&
+				strings.Contains(result.GetOutputText(), "West") {
+				return toolResponse("disallowed-operation", "prometheus_query", `{"input":{"query":"up"}}`), nil
+			}
+			if call == 3 && result.ID == "disallowed-operation" && result.State != message.ToolResultSuccess {
+				return &model.ChatResponse{IsLast: true, StopReason: model.StopReasonStop,
+					Content: []message.ContentBlock{message.TextBlock{Type: "text", Text: "The West rollout was selected."}}}, nil
+			}
+		}
+	}
+	return nil, errors.New("native reply did not preserve AskUser correlation and permissions")
 }

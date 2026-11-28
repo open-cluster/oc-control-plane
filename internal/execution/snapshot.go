@@ -3,6 +3,7 @@ package execution
 import (
 	"time"
 
+	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/tool"
 	"github.com/google/uuid"
 )
 
@@ -16,6 +17,12 @@ type Snapshot struct {
 	Message         *CommittedMessage `json:"message,omitempty"`
 	ConclusionURL   string            `json:"conclusionUrl,omitempty"`
 	Tools           []ToolActivity    `json:"tools"`
+	PendingInput    *PendingInput     `json:"pendingInput,omitempty"`
+}
+
+type PendingInput struct {
+	OccurrenceID uuid.UUID              `json:"occurrenceId"`
+	Questions    []tool.AskUserQuestion `json:"questions"`
 }
 
 type CommittedMessage struct {
