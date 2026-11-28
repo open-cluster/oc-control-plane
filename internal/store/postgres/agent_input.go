@@ -190,7 +190,7 @@ func authorizeAskUserExecution(ctx context.Context, tx pgx.Tx, org uuid.UUID, ex
 	return nil
 }
 
-func (p *Database) AnswerChatInput(ctx context.Context, principal authz.Principal, org, chat, id, occurrence uuid.UUID,
+func (p *Database) AnswerChatInput(ctx context.Context, principal authz.Principal, org, conversationID, executionID, occurrenceID uuid.UUID,
 	answer tool.AskUserMetadata,
 ) error {
 	if principal.Organization() != org || !principal.HavePermission(authz.ConversationWrite) {
@@ -210,7 +210,7 @@ func (p *Database) AnswerChatInput(ctx context.Context, principal authz.Principa
 		if err != nil {
 			return err
 		}
-		if err := lockConversation(ctx, tx, org, chat); err != nil {
+		if err := lockConversation(ctx, tx, org, conversationID); err != nil {
 			return err
 		}
 		var status string
@@ -222,7 +222,7 @@ func (p *Database) AnswerChatInput(ctx context.Context, principal authz.Principa
 			    AND m.sequence = e.message_sequence
 			WHERE e.org_id = $1 AND e.conversation_id = $2 AND e.execution_id = $3
 			  AND c.source = 'web' AND c.deleted_at IS NULL AND m.role = $4 AND m.author_id = $5
-			FOR UPDATE OF e`, org, chat, id, int16(conversation.RoleUser), principal.UserID().String()).
+			FOR UPDATE OF e`, org, conversationID, executionID, int16(conversation.RoleUser), principal.UserID().String()).
 			Scan(&status, &input)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return conversation.ErrUnknown
@@ -251,7 +251,7 @@ func (p *Database) AnswerChatInput(ctx context.Context, principal authz.Principa
 		if !now.Before(expires) {
 			return authz.ErrNotAMember
 		}
-		if input == nil || input.OccurrenceID != occurrence {
+		if input == nil || input.OccurrenceID != occurrenceID {
 			return conversation.ErrInputConflict
 		}
 		body, err := json.Marshal(answer)
@@ -286,14 +286,14 @@ func (p *Database) AnswerChatInput(ctx context.Context, principal authz.Principa
 		input.ParkedMicros += max(0, now.Sub(*input.WaitingSince).Microseconds())
 		input.WaitingSince = nil
 		if _, err := tx.Exec(ctx, `UPDATE agent_execution SET status = 'queued', pending_input = $3::jsonb
-			WHERE org_id = $1 AND execution_id = $2`, org, id, input); err != nil {
+			WHERE org_id = $1 AND execution_id = $2`, org, executionID, input); err != nil {
 			return err
 		}
 		return writeEvent(ctx, tx, audit.Event{
 			Organization: org.String(), Actor: principal.Actor(), Action: audit.ActionChatInputAnswered,
-			Target: audit.Target{Kind: audit.TargetConversation, ID: chat.String()}, Outcome: audit.OutcomeAllowed,
+			Target: audit.Target{Kind: audit.TargetConversation, ID: conversationID.String()}, Outcome: audit.OutcomeAllowed,
 			SourceAddress: principal.SourceAddress(), RequestID: principal.RequestID(),
-			Detail: audit.Detail{"executionId": id.String(), "occurrenceId": occurrence.String()},
+			Detail: audit.Detail{"executionId": executionID.String(), "occurrenceId": occurrenceID.String()},
 		})
 	})
 }
