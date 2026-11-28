@@ -1338,7 +1338,7 @@ func TestAskUserCheckpointAndAnswerCommitBoundaries(t *testing.T) {
 
 	answer := tool.AskUserMetadata{Answers: []tool.AskUserAnswer{{Question: "Which target?", Selected: []string{"A"}}}}
 	accept := func(occurrence uuid.UUID) error {
-		return database.AnswerChatInput(ctx, principal, org, chat.ID, queued.ID, occurrence, "fixture-retry", answer)
+		return database.AnswerChatInput(ctx, principal, org, chat.ID, queued.ID, occurrence, answer)
 	}
 	exec(`ALTER TABLE agent_execution ADD CONSTRAINT fixture_requeue_failure
 		CHECK (status <> 'queued' OR pending_input IS NULL) NOT VALID`)
@@ -1387,6 +1387,18 @@ func TestAskUserCheckpointAndAnswerCommitBoundaries(t *testing.T) {
 	expireAgentClaim(t, pool, org, consuming.ID)
 	consuming, consumer, _ = resume()
 	state.Summary = ""
+	var expectedDigest string
+	if err := pool.QueryRow(ctx, `SELECT pending_input ->> 'answerDigest' FROM agent_execution
+		WHERE org_id = $1 AND execution_id = $2`, org, queued.ID).Scan(&expectedDigest); err != nil {
+		t.Fatal(err)
+	}
+	exec(`UPDATE agent_execution SET pending_input = jsonb_set(pending_input, '{answerDigest}', '"mismatched"')
+		WHERE org_id = $1 AND execution_id = $2`, org, queued.ID)
+	if err := consumer.SaveState(ctx, consuming.SessionID(), state); !errors.Is(err, storage.ErrAgentCheckpoint) {
+		t.Fatalf("checkpoint acknowledged an inconsistent answer: %v", err)
+	}
+	exec(`UPDATE agent_execution SET pending_input = jsonb_set(pending_input, '{answerDigest}', to_jsonb($3::text))
+		WHERE org_id = $1 AND execution_id = $2`, org, queued.ID, expectedDigest)
 	if err := consumer.SaveState(ctx, consuming.SessionID(), state); err != nil {
 		t.Fatal(err)
 	}
