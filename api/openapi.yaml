@@ -843,22 +843,15 @@ paths:
       responses:
         "200": { $ref: "#/components/responses/ExecutionSnapshot" }
         default: { $ref: "#/components/responses/ErrorResponse" }
-  /api/v1/conversations/{conversation}/executions/{execution}/inputs/{occurrence}/answer:
-    parameters:
-      - { $ref: "#/components/parameters/ConversationID" }
-      - { $ref: "#/components/parameters/ExecutionID" }
-      - { name: occurrence, in: path, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+  /api/v1/conversations/{conversation}/executions/{execution}/input:
+    parameters: *chat-execution-path
     post:
       <<: *privileged-write
+      x-opencluster-idempotency: occurrence-and-answer
       operationId: answerChatExecutionInput
       summary: Answer a pending Chat question
-      description: Only the author of the original Message can submit an answer. An identical retry with the same key returns the same acceptance until the occurrence is superseded or cancelled, or the Conversation is deleted. The answer resumes the existing execution and carries no Tool permissions.
+      description: Only the original Message author can answer a pending question. Retrying the same occurrence with identical answers returns the original acceptance. A different answer or an obsolete occurrence is rejected. The answer resumes the existing execution and grants no Tool permissions.
       tags: [Conversations]
-      parameters:
-        - name: Idempotency-Key
-          in: header
-          required: true
-          schema: { type: string, minLength: 1, maxLength: 128 }
       requestBody:
         required: true
         content:
@@ -1867,8 +1860,9 @@ components:
     ChatInputAnswer:
       type: object
       additionalProperties: false
-      required: [answers]
+      required: [occurrenceId, answers]
       properties:
+        occurrenceId: { $ref: "#/components/schemas/UUID" }
         answers:
           type: array
           minItems: 1
@@ -1884,7 +1878,7 @@ components:
                 type: array
                 uniqueItems: true
                 items: { type: string }
-              other: { type: string }
+              other: { type: string, maxLength: 8192 }
     ExecutionToolActivity:
       type: object
       additionalProperties: false
