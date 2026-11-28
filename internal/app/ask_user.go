@@ -43,8 +43,11 @@ func handleAskUser(ctx context.Context, runtime *agent.UnifiedAgent, saver *stor
 		return false, err
 	}
 	result, err := saver.ParkAskUser(ctx, request.ReplyID, call, input.Questions)
-	if err != nil || result == nil {
-		return err == nil, err
+	if err != nil {
+		return false, err
+	}
+	if result == nil {
+		return true, nil
 	}
 	answer := event.NewExternalExecutionResultEvent(
 		request.ReplyID, []message.ToolResultBlock{*result},
