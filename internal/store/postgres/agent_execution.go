@@ -47,6 +47,14 @@ type AgentExecution struct {
 	StartedAt                   *time.Time
 	investigationConversationID uuid.UUID
 	acceptedMessage             conversation.Message
+	pendingInput                *agentInput
+}
+
+func (execution AgentExecution) ParkedDuration() time.Duration {
+	if execution.pendingInput == nil {
+		return 0
+	}
+	return time.Duration(execution.pendingInput.ParkedMicros) * time.Microsecond
 }
 
 func (execution AgentExecution) SessionID() string {
@@ -76,14 +84,14 @@ const legacyInvestigationConversation = `CASE WHEN i.turn IS NOT NULL AND EXISTS
 
 const agentExecutionColumns = "e.execution_id, e.conversation_id, e.investigation_id, " +
 	"coalesce(e.message_sequence, 0), e.status, e.lease_token, e.lease_expires_at, e.started_at, coalesce(e.reply_message_sequence, 0), " +
-	"(SELECT " + legacyInvestigationConversation + " FROM investigation i WHERE i.org_id = e.org_id AND i.investigation_id = e.investigation_id)"
+	"(SELECT " + legacyInvestigationConversation + " FROM investigation i WHERE i.org_id = e.org_id AND i.investigation_id = e.investigation_id), e.pending_input"
 
 func scanAgentExecution(row pgx.Row, extra ...any) (AgentExecution, error) {
 	var execution AgentExecution
 	var conversationID, investigationID, investigationConversation, leaseToken uuid.NullUUID
 	fields := []any{&execution.ID, &conversationID, &investigationID,
 		&execution.MessageSequence, &execution.Status, &leaseToken, &execution.LeaseExpiresAt, &execution.StartedAt,
-		&execution.ReplyMessageSequence, &investigationConversation}
+		&execution.ReplyMessageSequence, &investigationConversation, &execution.pendingInput}
 	err := row.Scan(append(fields, extra...)...)
 	execution.ConversationID, execution.InvestigationID, execution.LeaseToken = conversationID.UUID, investigationID.UUID, leaseToken.UUID
 	execution.investigationConversationID = investigationConversation.UUID
@@ -361,7 +369,11 @@ func claimEligibleAgentExecution(
 func endAgentLease(ctx context.Context, tx pgx.Tx, organization uuid.UUID, execution AgentExecution, status AgentExecutionStatus, replySequence int64) error {
 	if _, err := tx.Exec(ctx, `
 		UPDATE agent_execution SET status = $3, lease_token = NULL, lease_expires_at = NULL, draft_text = NULL,
-		       reply_message_sequence = nullif($4::bigint, 0)
+		       reply_message_sequence = nullif($4::bigint, 0),
+		       pending_input = CASE
+		           WHEN $3 = 'cancelled' OR ($3 = 'failed' AND NOT coalesce(pending_input ? 'answerDigest', false)) THEN NULL
+		           WHEN $3 IN ('failed', 'completed') THEN pending_input - ARRAY['answer', 'questions', 'replyId', 'toolCallId', 'iteration', 'parkedMicros']
+		           ELSE pending_input END
 		 WHERE org_id = $1 AND execution_id = $2`, organization, execution.ID, status, replySequence); err != nil {
 		return err
 	}
@@ -672,7 +684,7 @@ func revokeAgentExecution(ctx context.Context, tx pgx.Tx, org, conversationID, i
 	var revoked uuid.NullUUID
 	err = tx.QueryRow(ctx, `
 		WITH revoked AS (
-		    UPDATE agent_execution SET status = 'cancelled', lease_token = NULL, lease_expires_at = NULL, draft_text = NULL
+		    UPDATE agent_execution SET status = 'cancelled', lease_token = NULL, lease_expires_at = NULL, draft_text = NULL, pending_input = NULL
 		     WHERE org_id = $1 AND ((conversation_id = $2 AND execution_id = $3) OR investigation_id = $4)
 		       AND status IN ('queued', 'running', 'needs_input')
 		     RETURNING execution_id

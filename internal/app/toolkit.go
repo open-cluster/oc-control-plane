@@ -69,6 +69,9 @@ func (profile *ExecutionProfile) UseIntegrationTools(
 		}
 	}
 	var tools []tool.Tool
+	if execution.ConversationID != uuid.Nil && origin == nil {
+		tools = append(tools, tool.AskUserTool())
+	}
 	for _, name := range slices.Sorted(maps.Keys(operations)) {
 		operation := operations[name]
 		definition := operation.definition.Definition().WithInputEnvelope(operation.sources)

@@ -114,6 +114,9 @@ func runClaimedExecution(processCtx context.Context, db *storage.Database, org u
 
 	saver := db.AgentStateSaver(org, execution)
 	checkpoint, writer, err := saver.Restore(ctx)
+	if err == nil {
+		err = saver.ValidateAskUserResume(checkpoint)
+	}
 	if errors.Is(err, storage.ErrAgentCheckpoint) {
 		return failAgentExecution(ctx, db, org, execution, investigation.Usage{})
 	}
@@ -139,7 +142,7 @@ func runClaimedExecution(processCtx context.Context, db *storage.Database, org u
 		recoveredUsage = checkpointUsage(checkpoint)
 	}
 
-	runCtx, stop := context.WithDeadline(ctx, execution.StartedAt.Add(executionBudget))
+	runCtx, stop := context.WithDeadline(ctx, execution.StartedAt.Add(executionBudget+execution.ParkedDuration()))
 	defer stop()
 	if runCtx.Err() != nil {
 		if ctx.Err() != nil {
@@ -199,9 +202,16 @@ func runClaimedExecution(processCtx context.Context, db *storage.Database, org u
 			return db.SaveChatDraft(ctx, org, execution, text)
 		}
 	}
-	outcome, runErr := drainExecution(runCtx, stream, saveDraft, modelSecret)
+	var askUser func(event.RequireExternalExecutionEvent) (bool, error)
+	if profile.Toolkit != nil && profile.Toolkit.Get("AskUser") != nil {
+		secretForms := modelSecretForms(modelSecret)
+		askUser = func(request event.RequireExternalExecutionEvent) (bool, error) {
+			return handleAskUser(runCtx, runtime, saver, request, secretForms)
+		}
+	}
+	outcome, runErr := drainExecution(runCtx, stream, saveDraft, askUser, modelSecret)
 	outcome.usage = recoveredUsage.Add(outcome.usage)
-	if outcome.unsupportedInput {
+	if outcome.unsupportedInput || outcome.parked || runErr != nil {
 		stop()
 	}
 	// The outward stream can close while native workers still own Tool calls.
@@ -210,10 +220,16 @@ func runClaimedExecution(processCtx context.Context, db *storage.Database, org u
 		return processCtx.Err()
 	case <-lifecycle.done:
 	}
+	if outcome.parked {
+		for range stream {
+		}
+		return nil
+	}
 	if ctx.Err() != nil {
 		return context.Cause(ctx)
 	}
-	if outcome.unsupportedInput || errors.Is(runErr, context.DeadlineExceeded) {
+	if outcome.unsupportedInput || errors.Is(runErr, context.DeadlineExceeded) ||
+		errors.Is(runErr, storage.ErrAgentCheckpoint) || errors.Is(runErr, authz.ErrNotAMember) {
 		return failAgentExecution(ctx, db, org, execution, outcome.usage)
 	}
 	if runErr != nil {
@@ -321,11 +337,12 @@ func renewExecution(ctx context.Context, db *storage.Database, org uuid.UUID, ex
 type executionOutcome struct {
 	completed        bool
 	unsupportedInput bool
+	parked           bool
 	usage            investigation.Usage
 }
 
 func drainExecution(ctx context.Context, stream <-chan event.Event, saveDraft func(context.Context, string) error,
-	modelSecret string,
+	askUser func(event.RequireExternalExecutionEvent) (bool, error), modelSecret string,
 ) (executionOutcome, error) {
 	var outcome executionOutcome
 	draft := executionDraft{persist: saveDraft, secretForms: modelSecretForms(modelSecret), savedText: new("")}
@@ -345,9 +362,19 @@ func drainExecution(ctx context.Context, stream <-chan event.Event, saveDraft fu
 				return outcome, nil
 			}
 			switch item := item.(type) {
-			case event.RequireUserConfirmEvent, event.RequireExternalExecutionEvent:
+			case event.RequireUserConfirmEvent:
 				outcome.unsupportedInput = true
 				return outcome, nil
+			case event.RequireExternalExecutionEvent:
+				if askUser == nil || len(item.ToolCalls) != 1 || !strings.EqualFold(item.ToolCalls[0].Name, "AskUser") {
+					outcome.unsupportedInput = true
+					return outcome, nil
+				}
+				parked, err := askUser(item)
+				if parked || err != nil {
+					outcome.parked = parked
+					return outcome, err
+				}
 			case event.ReplyEndEvent:
 				outcome.completed = item.FinishedReason == types.ReplyCompleted && item.Error == nil
 			case event.ModelCallStartEvent:

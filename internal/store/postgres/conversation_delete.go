@@ -43,6 +43,10 @@ func deleteWebConversation(ctx context.Context, tx pgx.Tx, org, id uuid.UUID) er
 	if _, err := tx.Exec(ctx, `DELETE FROM agent_checkpoint WHERE org_id = $1 AND conversation_id = $2`, org, id); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(ctx, `UPDATE agent_execution SET pending_input = NULL
+		WHERE org_id = $1 AND conversation_id = $2 AND pending_input IS NOT NULL`, org, id); err != nil {
+		return err
+	}
 	// Execution and Tool Run foreign keys retain the Message identities.
 	if _, err := tx.Exec(ctx, `UPDATE conversation_message
 		SET text = '', author_id = '', author_name = '', source_reference = '', client_message_id = NULL

@@ -33,9 +33,19 @@ func (s *AgentStateSaver) SaveState(ctx context.Context, session string, state *
 	if err != nil {
 		return err
 	}
-	return s.database.withAgentLease(ctx, s.organization, s.execution, func(tx pgx.Tx) error {
+	var consumed bool
+	err = s.database.withAgentLease(ctx, s.organization, s.execution, func(tx pgx.Tx) error {
+		var err error
+		consumed, err = s.acknowledgeAskUser(ctx, tx, state)
+		if err != nil {
+			return err
+		}
 		return writeAgentCheckpoint(ctx, tx, s.organization, s.execution, checkpoint)
 	})
+	if err == nil && consumed {
+		s.execution.pendingInput.Answer = nil
+	}
+	return err
 }
 
 func encodeAgentCheckpoint(session string, state *agent.AgentState) ([]byte, error) {

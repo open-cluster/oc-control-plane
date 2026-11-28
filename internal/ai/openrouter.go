@@ -40,7 +40,7 @@ func newOpenRouterChatModel(
 	options := []sdk.SDKOption{
 		sdk.WithClient(client),
 		sdk.WithSecurity(key),
-		sdk.WithRetryConfig(retry.Config{Strategy: "none"}), //either backoff, none or ""
+		sdk.WithRetryConfig(retry.Config{Strategy: "none"}), // Other choices: "backoff" or the SDK default.
 	}
 	if baseURL != "" {
 		options = append(options, sdk.WithServerURL(baseURL))

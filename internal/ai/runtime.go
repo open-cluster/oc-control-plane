@@ -26,11 +26,8 @@ type Config struct {
 	Hooks           []loop.Hook
 }
 
-// NewAgent builds a streaming UnifiedAgent. A nil checkpoint starts a new
-// session. To restore a session, load its state with agent.LoadCheckpoint and
-// propagate load errors before calling NewAgent. The host scopes the saver
-// and supplies a checkpoint, toolkit, permission context and hooks owned by
-// this agent. Only permissions supplied by the host apply on restore.
+// NewAgent builds a native streaming agent from the host-selected checkpoint.
+// Current host permissions, not restored agent state, determine Tool access.
 func NewAgent(config Config, checkpoint *agent.AgentState) (*agent.UnifiedAgent, error) {
 	if strings.TrimSpace(config.Name) == "" || strings.TrimSpace(config.SessionID) == "" || config.Model == nil {
 		return nil, errors.New("agent name, session identity and model are required")
@@ -61,11 +58,13 @@ func NewAgent(config Config, checkpoint *agent.AgentState) (*agent.UnifiedAgent,
 		agent.WithState(checkpoint),
 		agent.WithContextConfig(&config.Context),
 		agent.WithToolConcurrencyLimit(config.ToolConcurrency),
-		// Legacy middleware disables native provider streaming.
 		agent.WithLoopHooks(config.Hooks...),
 	}
 	if config.Toolkit != nil {
 		options = append(options, agent.WithToolkit(config.Toolkit))
+		if config.Toolkit.Get("AskUser") != nil {
+			options = append(options, agent.WithExclusiveTools("AskUser"))
+		}
 	}
 	if config.Permissions != nil {
 		options = append(options, agent.WithPermissionContext(config.Permissions))

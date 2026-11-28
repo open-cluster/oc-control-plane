@@ -68,7 +68,7 @@ func TestAgentToolRunsSurviveLeaseTakeover(t *testing.T) {
 	}
 	assertActivity := func(draft, executionStatus, toolStatus string) {
 		t.Helper()
-		snapshot, err := database.ChatExecutionSnapshot(ctx, org, chat.ID, claim.ID)
+		snapshot, err := database.ChatExecutionSnapshot(ctx, principal, org, chat.ID, claim.ID)
 		if err != nil || snapshot.Status != executionStatus || snapshot.DraftText != draft || len(snapshot.Tools) != 3 {
 			t.Fatalf("unexpected execution snapshot: %+v, %v", snapshot, err)
 		}

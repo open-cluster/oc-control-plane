@@ -1282,6 +1282,40 @@ paths:
       description: Return the terminal state. Repeated cancellation preserves any already committed reply.
       tags:
         - Conversations
+  /api/v1/conversations/{conversation}/executions/{execution}/input:
+    parameters:
+      - $ref: '#/components/parameters/ConversationID'
+      - $ref: '#/components/parameters/ExecutionID'
+    post:
+      security:
+        - SessionCookie: []
+      x-opencluster-access: privileged
+      x-opencluster-cookie-csrf: required-for-unsafe-cookie-request
+      x-opencluster-idempotency: occurrence-and-answer
+      responses:
+        '202':
+          description: The answer was durably accepted.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+      operationId: answerChatExecutionInput
+      summary: Answer a pending Chat question
+      description: Only the original Message author can answer a pending question. Retrying the same occurrence with identical answers returns the original acceptance. A different answer or an obsolete occurrence is rejected. The answer resumes the existing execution and grants no Tool permissions.
+      tags:
+        - Conversations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatInputAnswer'
   /api/v1/incidents/{incident}/postmortem:
     parameters:
       - $ref: '#/components/parameters/IncidentID'
@@ -3754,6 +3788,9 @@ components:
           type: string
           maxLength: 8192
           description: Provisional Chat text. Replace it on each snapshot.
+        pendingInput:
+          $ref: '#/components/schemas/PendingChatInput'
+          description: Present while awaiting input from the authorized author of the original Chat Message.
         message:
           type: object
           additionalProperties: false
@@ -3778,6 +3815,89 @@ components:
           description: Active Tools first, then newest activity by start or finish time.
           items:
             $ref: '#/components/schemas/ExecutionToolActivity'
+    PendingChatInput:
+      type: object
+      additionalProperties: false
+      required:
+        - occurrenceId
+        - questions
+      properties:
+        occurrenceId:
+          $ref: '#/components/schemas/UUID'
+        questions:
+          type: array
+          minItems: 1
+          maxItems: 4
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - question
+              - header
+              - options
+            properties:
+              question:
+                type: string
+                minLength: 1
+              header:
+                type: string
+                minLength: 1
+                maxLength: 12
+              context:
+                type: string
+              multi_select:
+                type: boolean
+                default: false
+              options:
+                type: array
+                minItems: 2
+                maxItems: 4
+                items:
+                  type: object
+                  additionalProperties: false
+                  required:
+                    - label
+                    - description
+                  properties:
+                    label:
+                      type: string
+                      minLength: 1
+                    description:
+                      type: string
+                      minLength: 1
+                    preview:
+                      type: string
+    ChatInputAnswer:
+      type: object
+      additionalProperties: false
+      required:
+        - occurrenceId
+        - answers
+      properties:
+        occurrenceId:
+          $ref: '#/components/schemas/UUID'
+        answers:
+          type: array
+          minItems: 1
+          maxItems: 4
+          description: Supply one answer per question, using its exact text and option labels. Each answer needs a selection or nonblank free text.
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - question
+            properties:
+              question:
+                type: string
+                minLength: 1
+              selected:
+                type: array
+                uniqueItems: true
+                items:
+                  type: string
+              other:
+                type: string
+                maxLength: 8192
     ExecutionToolActivity:
       type: object
       additionalProperties: false
