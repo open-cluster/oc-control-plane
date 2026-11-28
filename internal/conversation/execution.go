@@ -3,7 +3,6 @@ package conversation
 import (
 	"context"
 	"net/http"
-	"strings"
 
 	"github.com/agentscope-ai/agentscope-go/v2/pkg/agentscope/tool"
 	"github.com/google/uuid"
@@ -74,23 +73,21 @@ func (h Handlers) answerExecutionInput(writer http.ResponseWriter, request *http
 	if !ok {
 		return
 	}
-	occurrence, err := uuid.Parse(request.PathValue("occurrence"))
-	if err != nil || occurrence == uuid.Nil {
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: "occurrence is not an identity"})
+	var input struct {
+		OccurrenceID uuid.UUID           `json:"occurrenceId"`
+		Answers      []tool.AskUserAnswer `json:"answers"`
+	}
+	if !h.decode(writer, request, &input) {
 		return
 	}
-	keys := request.Header.Values("Idempotency-Key")
-	if len(keys) != 1 || strings.TrimSpace(keys[0]) == "" || len(keys[0]) > 128 {
-		writeJSON(writer, http.StatusBadRequest, errorView{Error: "give one Idempotency-Key of at most 128 bytes"})
-		return
-	}
-	var answer tool.AskUserMetadata
-	if !h.decode(writer, request, &answer) {
+	if input.OccurrenceID == uuid.Nil {
+		writeJSON(writer, http.StatusBadRequest, errorView{Error: "give a valid occurrenceId"})
 		return
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), readTimeout)
 	defer cancel()
-	if err := h.Store.AnswerChatInput(ctx, principal, org, conversationID, executionID, occurrence, strings.TrimSpace(keys[0]), answer); err != nil {
+	if err := h.Store.AnswerChatInput(ctx, principal, org, conversationID, executionID,
+		input.OccurrenceID, tool.AskUserMetadata{Answers: input.Answers}); err != nil {
 		h.fail(writer, request, err)
 		return
 	}
