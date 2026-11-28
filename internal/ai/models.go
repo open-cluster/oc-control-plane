@@ -22,7 +22,6 @@ const (
 	modelRequestTimeout = 5 * time.Minute
 )
 
-// AgentScope's structured-output fallback recognizes this sanitized provider error.
 var errModelToolChoice = errors.New("AI provider rejected tool_choice")
 
 // NewChatModel assembles a model from the deployment's AI configuration.

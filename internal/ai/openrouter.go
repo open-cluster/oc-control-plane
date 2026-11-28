@@ -40,7 +40,7 @@ func newOpenRouterChatModel(
 	options := []sdk.SDKOption{
 		sdk.WithClient(client),
 		sdk.WithSecurity(key),
-		sdk.WithRetryConfig(retry.Config{Strategy: "none"}),
+		sdk.WithRetryConfig(retry.Config{Strategy: "none"}), //either backoff, none or ""
 	}
 	if baseURL != "" {
 		options = append(options, sdk.WithServerURL(baseURL))
@@ -93,7 +93,8 @@ func (m *openRouterChatModel) Chat(ctx context.Context,
 			Input: tool.Function.Arguments,
 		})
 	}
-	return openRouterReply(result.ID, result.Model, string(*choice.FinishReason), text, calls, choice.Message.ReasoningDetails, result.Usage)
+	return openRouterReply(result.ID, result.Model, string(*choice.FinishReason),
+		text, calls, choice.Message.ReasoningDetails, result.Usage)
 }
 
 func (m *openRouterChatModel) ChatStream(ctx context.Context, msgs []*message.Msg, opts ...model.CallOption,
@@ -195,7 +196,8 @@ func (m *openRouterChatModel) ChatStream(ctx context.Context, msgs []*message.Ms
 }
 
 func openRouterReply(id, name, stop, text string,
-	calls []message.ToolCallBlock, details []components.ReasoningDetailUnion, usage *components.ChatUsage) (*model.ChatResponse, error,
+	calls []message.ToolCallBlock, details []components.ReasoningDetailUnion,
+	usage *components.ChatUsage) (*model.ChatResponse, error,
 ) {
 	if stop != model.StopReasonStop && stop != model.StopReasonToolCalls ||
 		(len(calls) > 0) != (stop == model.StopReasonToolCalls) || text == "" && len(calls) == 0 {
@@ -337,8 +339,8 @@ func (s *openRouterStreamEnd) finishLine() {
 
 func (s *openRouterStreamEnd) complete() bool { return s.done && !s.failed }
 
-func (m *openRouterChatModel) request(
-	msgs []*message.Msg, streaming bool, opts []model.CallOption) (components.ChatRequest, error) {
+func (m *openRouterChatModel) request(msgs []*message.Msg, streaming bool, opts []model.CallOption,
+) (components.ChatRequest, error) {
 	var parameters model.CallOptions
 	for _, opt := range opts {
 		opt(&parameters)
