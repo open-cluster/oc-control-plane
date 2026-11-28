@@ -175,7 +175,7 @@ type Store interface {
 		limit int, cursor string) (TurnPage, error)
 	AdmitConversationMessage(ctx context.Context, who authz.Principal, org, id, clientMessageID uuid.UUID, input NewMessage, replayOnly bool) (AcceptedMessage, error)
 	ChatExecutionSnapshot(ctx context.Context, viewer authz.Principal, org, chat, id uuid.UUID) (execution.Snapshot, error)
-	AnswerChatInput(ctx context.Context, who authz.Principal, org, chat, id, occurrence uuid.UUID, key string, answer tool.AskUserMetadata) error
+	AnswerChatInput(ctx context.Context, who authz.Principal, org, chat, id, occurrence uuid.UUID, answer tool.AskUserMetadata) error
 	CancelChatExecution(ctx context.Context, who authz.Principal, org, chat, id uuid.UUID) (execution.Snapshot, error)
 }
 
